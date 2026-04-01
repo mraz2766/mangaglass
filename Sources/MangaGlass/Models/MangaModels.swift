@@ -1,6 +1,6 @@
 import Foundation
 
-struct MangaSiteConfig: Hashable {
+struct MangaSiteConfig: Hashable, Codable {
     let displayName: String
     let webBase: URL
     let apiBaseURLs: [URL]
@@ -126,14 +126,14 @@ enum CopyMangaMirror: String, CaseIterable, Identifiable {
     }
 }
 
-struct ComicVolume: Identifiable, Hashable {
+struct ComicVolume: Identifiable, Hashable, Codable {
     let id: String
     let displayName: String
     let pathWord: String
     let chapters: [ComicChapter]
 }
 
-struct ComicChapter: Identifiable, Hashable {
+struct ComicChapter: Identifiable, Hashable, Codable {
     let id: String
     let uuid: String
     let displayName: String
@@ -166,7 +166,7 @@ func canonicalGroupKey(_ raw: String) -> String {
     )
 }
 
-struct ComicInfo {
+struct ComicInfo: Codable {
     let slug: String
     let name: String
     let coverURL: URL?
@@ -176,8 +176,8 @@ struct ComicInfo {
     let apiBaseURL: URL
 }
 
-struct DownloadTaskItem: Identifiable {
-    enum State: Equatable {
+struct DownloadTaskItem: Identifiable, Codable {
+    enum State: Equatable, Codable {
         case queued
         case running
         case done
@@ -185,10 +185,43 @@ struct DownloadTaskItem: Identifiable {
         case failed(String)
     }
 
-    let id = UUID()
+    let id: UUID
     let comic: ComicInfo
     let chapter: ComicChapter
     var state: State
     let destination: URL
     let cookie: String?
+
+    init(id: UUID = UUID(), comic: ComicInfo, chapter: ComicChapter, state: State, destination: URL, cookie: String?) {
+        self.id = id
+        self.comic = comic
+        self.chapter = chapter
+        self.state = state
+        self.destination = destination
+        self.cookie = cookie
+    }
+
+    var queueIdentity: String {
+        [
+            comic.slug.lowercased(),
+            chapter.id.lowercased(),
+            destination.path.lowercased()
+        ].joined(separator: "::")
+    }
+}
+
+struct RecentComicRecord: Identifiable, Codable, Hashable {
+    let id: UUID
+    let title: String
+    let input: String
+    let siteName: String
+    let updatedAt: Date
+
+    init(id: UUID = UUID(), title: String, input: String, siteName: String, updatedAt: Date = Date()) {
+        self.id = id
+        self.title = title
+        self.input = input
+        self.siteName = siteName
+        self.updatedAt = updatedAt
+    }
 }

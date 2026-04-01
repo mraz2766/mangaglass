@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 @MainActor
 final class DownloadCoordinator: ObservableObject {
@@ -8,6 +9,7 @@ final class DownloadCoordinator: ObservableObject {
     @Published var isPaused = false
     @Published var message = ""
     @Published var speedText = ""
+    @Published var currentTaskTitle = ""
 
     private let api: CopyMangaAPI
     private let fileManager = FileManager.default
@@ -32,10 +34,20 @@ final class DownloadCoordinator: ObservableObject {
     private var manhuaGuiPreferredHost: String?
     private var chapterExpectedPages: [UUID: Int] = [:]
     private var chapterCompletedPages: [UUID: Int] = [:]
+    private var chapterResolvedPageCounts: Set<UUID> = []
     private var shouldUseGroupFolder = true
     private var sleepActivity: NSObjectProtocol?
     private var downloadStartTime: Date?
-    private var processedPagesTotal = 0
+    private var lastSpeedSampleTime: Date?
+    private var lastSpeedSampleCompletedPages = 0
+    private var smoothedPagesPerSecond: Double?
+
+    private let speedSampleInterval: TimeInterval = 1.0
+    private let etaWarmupDuration: TimeInterval = 5
+    private let etaMinimumCompletedPages = 8
+    private let etaResolvedChapterThreshold = 3
+    private let etaKnownPageThreshold = 60
+    private let speedSmoothingFactor = 0.3
 
     init(api: CopyMangaAPI) {
         self.api = api
@@ -63,10 +75,36 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     func add(chapters: [ComicChapter], comic: ComicInfo, destination: URL, cookie: String?) {
-        let newItems = chapters.map { DownloadTaskItem(comic: comic, chapter: $0, state: .queued, destination: destination, cookie: cookie) }
+        let existing = Set(taskItems.map(\.queueIdentity))
+        let newItems = chapters.compactMap { chapter -> DownloadTaskItem? in
+            let item = DownloadTaskItem(comic: comic, chapter: chapter, state: .queued, destination: destination, cookie: cookie)
+            return existing.contains(item.queueIdentity) ? nil : item
+        }
         taskItems.append(contentsOf: newItems)
+        updateCurrentTaskTitle()
+        if newItems.isEmpty {
+            message = "所选章节已在队列中。"
+            log("添加任务跳过：\(comic.name) 所选章节均已在队列中")
+            return
+        }
         message = "队列共 \(taskItems.count) 话。"
-        log("添加任务：由 \(comic.name) 添加 \(chapters.count) 话，当前队列共 \(taskItems.count) 话")
+        log("添加任务：由 \(comic.name) 添加 \(newItems.count) 话，当前队列共 \(taskItems.count) 话")
+    }
+
+    func restoreQueue(_ items: [DownloadTaskItem]) {
+        taskItems = items.map { item in
+            var restored = item
+            if restored.state == .running {
+                restored.state = .queued
+            }
+            return restored
+        }
+        pruneProgressTracking()
+        updateCurrentTaskTitle()
+        updateProgress()
+        if !taskItems.isEmpty {
+            message = "已恢复上次未完成队列，共 \(taskItems.count) 话。"
+        }
     }
 
     func resetQueueIfIdle() -> Bool {
@@ -82,6 +120,7 @@ final class DownloadCoordinator: ObservableObject {
         if removed > 0 {
             pruneProgressTracking()
             updateProgress()
+            updateCurrentTaskTitle()
             if taskItems.isEmpty && !isRunning {
                 message = ""
                 speedText = ""
@@ -97,17 +136,19 @@ final class DownloadCoordinator: ObservableObject {
         progress = 0
         isPaused = false
         message = ""
+        currentTaskTitle = ""
         manhuaGuiPreferredHost = nil
         chapterExpectedPages = [:]
         chapterCompletedPages = [:]
-        speedText = ""
-        processedPagesTotal = 0
+        chapterResolvedPageCounts = []
+        resetSpeedEstimateState()
     }
 
     private func pruneProgressTracking() {
         let alive = Set(taskItems.map(\.id))
         chapterExpectedPages = chapterExpectedPages.filter { alive.contains($0.key) }
         chapterCompletedPages = chapterCompletedPages.filter { alive.contains($0.key) }
+        chapterResolvedPageCounts = chapterResolvedPageCounts.intersection(alive)
     }
 
     func failedItems() -> [DownloadTaskItem] {
@@ -134,13 +175,13 @@ final class DownloadCoordinator: ObservableObject {
         isRunning = true
         isPaused = false
         message = "下载开始..."
+        updateCurrentTaskTitle()
         log("下载开始：并发 \(maxConcurrent)")
         applySleepAssertion(active: true)
         
         if progress == 0 || downloadStartTime == nil {
             downloadStartTime = Date()
-            processedPagesTotal = 0
-            speedText = "计算中..."
+            resetSpeedEstimateState(placeholder: "计算中...")
         }
 
         let items = taskItems
@@ -177,7 +218,8 @@ final class DownloadCoordinator: ObservableObject {
                 self.isRunning = false
                 self.isPaused = false
                 self.applySleepAssertion(active: false)
-                self.speedText = ""
+                self.resetSpeedEstimateState()
+                self.updateCurrentTaskTitle()
                 let failed = self.taskItems.filter {
                     switch $0.state {
                     case .failed, .canceled:
@@ -188,6 +230,7 @@ final class DownloadCoordinator: ObservableObject {
                 }.count
                 self.message = failed == 0 ? "全部下载完成。" : "完成，失败/取消 \(failed) 话。"
                 self.log(failed == 0 ? "下载全部完成" : "下载完成，失败/取消 \(failed) 话")
+                self.notifyCompletion(failedCount: failed)
             }
         }
     }
@@ -209,7 +252,7 @@ final class DownloadCoordinator: ObservableObject {
         log("下载继续")
         applySleepAssertion(active: true)
         downloadStartTime = Date()
-        processedPagesTotal = 0
+        resetSpeedEstimateState(placeholder: "计算中...")
         Task { await pauseGate.resume() }
     }
 
@@ -232,7 +275,8 @@ final class DownloadCoordinator: ObservableObject {
         isRunning = false
         isPaused = false
         message = "已取消。"
-        speedText = ""
+        resetSpeedEstimateState()
+        updateCurrentTaskTitle()
         applySleepAssertion(active: false)
         log("下载已取消")
     }
@@ -251,8 +295,9 @@ final class DownloadCoordinator: ObservableObject {
 
         await MainActor.run {
             self.setState(.running, for: item.id)
-            self.setChapterExpectedPages(1, for: item.id)
+            self.setChapterExpectedPages(1, for: item.id, resolved: false)
             self.setChapterCompletedPages(0, for: item.id)
+            self.currentTaskTitle = "[\(item.chapter.volumeName)] \(item.chapter.displayName)"
             self.updateProgress()
         }
         log("开始章节：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName)")
@@ -268,7 +313,7 @@ final class DownloadCoordinator: ObservableObject {
                 cookie: item.cookie
             )
             await MainActor.run {
-                self.setChapterExpectedPages(max(1, imageURLs.count), for: item.id)
+                self.setChapterExpectedPages(max(1, imageURLs.count), for: item.id, resolved: true)
                 self.setChapterCompletedPages(min(self.chapterCompletedPages[item.id] ?? 0, max(1, imageURLs.count)), for: item.id)
                 self.updateProgress()
             }
@@ -318,21 +363,14 @@ final class DownloadCoordinator: ObservableObject {
         }
 
         progress = total == 0 ? 0 : min(1, completedWeighted / Double(total))
+        updateCurrentTaskTitle()
         
         if isRunning && !isPaused, let start = downloadStartTime {
             let elapsed = Date().timeIntervalSince(start)
-            if elapsed > 3 && total > 0 {
-                let currentCompleted = taskItems.reduce(0) { sum, item in sum + (chapterCompletedPages[item.id] ?? 0) }
-                if currentCompleted > 0 {
-                    let rate = Double(currentCompleted - processedPagesTotal) / elapsed
-                    if rate > 0 {
-                        let remaining = Double(total - currentCompleted) / rate
-                        let remMin = Int(remaining) / 60
-                        let remSec = Int(remaining) % 60
-                        speedText = String(format: "约 %.1f 页/秒 · 剩余 %02d:%02d", rate, remMin, remSec)
-                    }
-                }
+            let currentCompleted = taskItems.reduce(0) { sum, item in
+                sum + (chapterCompletedPages[item.id] ?? 0)
             }
+            updateSpeedEstimate(elapsed: elapsed, currentCompleted: currentCompleted)
         }
     }
 
@@ -550,8 +588,13 @@ final class DownloadCoordinator: ObservableObject {
         logger?("[下载] \(message)")
     }
 
-    private func setChapterExpectedPages(_ count: Int, for id: UUID) {
+    private func setChapterExpectedPages(_ count: Int, for id: UUID, resolved: Bool = false) {
         chapterExpectedPages[id] = max(1, count)
+        if resolved {
+            chapterResolvedPageCounts.insert(id)
+        } else {
+            chapterResolvedPageCounts.remove(id)
+        }
     }
 
     private func setChapterCompletedPages(_ count: Int, for id: UUID) {
@@ -565,6 +608,164 @@ final class DownloadCoordinator: ObservableObject {
     private func markChapterFinished(for id: UUID) {
         let expected = max(1, chapterExpectedPages[id] ?? 1)
         chapterCompletedPages[id] = expected
+    }
+
+    private func resetSpeedEstimateState(placeholder: String = "") {
+        speedText = placeholder
+        lastSpeedSampleTime = nil
+        lastSpeedSampleCompletedPages = 0
+        smoothedPagesPerSecond = nil
+    }
+
+    private func updateSpeedEstimate(elapsed: TimeInterval, currentCompleted: Int) {
+        let now = Date()
+        if lastSpeedSampleTime == nil {
+            lastSpeedSampleTime = now
+            lastSpeedSampleCompletedPages = currentCompleted
+        } else if let lastSampleTime = lastSpeedSampleTime,
+                  now.timeIntervalSince(lastSampleTime) >= speedSampleInterval {
+            let deltaTime = now.timeIntervalSince(lastSampleTime)
+            let deltaPages = max(0, currentCompleted - lastSpeedSampleCompletedPages)
+            if deltaTime > 0, deltaPages > 0 {
+                let instantRate = Double(deltaPages) / deltaTime
+                if let previous = smoothedPagesPerSecond {
+                    smoothedPagesPerSecond = previous * (1 - speedSmoothingFactor) + instantRate * speedSmoothingFactor
+                } else {
+                    smoothedPagesPerSecond = instantRate
+                }
+            }
+            lastSpeedSampleTime = now
+            lastSpeedSampleCompletedPages = currentCompleted
+        }
+
+        guard let rate = smoothedPagesPerSecond, rate > 0 else {
+            speedText = elapsed >= etaWarmupDuration ? "剩余时间预估中" : "计算中..."
+            return
+        }
+
+        let (knownExpectedPages, completedKnownPages, unresolvedChapters, resolvedCount) = estimateInputs()
+
+        guard elapsed >= etaWarmupDuration, currentCompleted >= etaMinimumCompletedPages else {
+            speedText = String(format: "约 %.1f 页/秒 · 剩余时间预估中", rate)
+            return
+        }
+
+        let canShowETA = unresolvedChapters == 0
+            || resolvedCount >= etaResolvedChapterThreshold
+            || knownExpectedPages >= etaKnownPageThreshold
+
+        guard canShowETA, knownExpectedPages > 0 else {
+            speedText = String(format: "约 %.1f 页/秒 · 剩余时间预估中", rate)
+            return
+        }
+
+        let averagePagesPerResolvedChapter = Double(knownExpectedPages) / Double(max(1, resolvedCount))
+        let estimatedTotalPages = Double(knownExpectedPages) + averagePagesPerResolvedChapter * Double(unresolvedChapters)
+        let remainingPages = max(0, estimatedTotalPages - Double(completedKnownPages))
+        let remaining = remainingPages / rate
+        let remMin = Int(remaining) / 60
+        let remSec = Int(remaining) % 60
+        speedText = String(format: "约 %.1f 页/秒 · 剩余 %02d:%02d", rate, remMin, remSec)
+    }
+
+    private func estimateInputs() -> (knownExpectedPages: Int, completedKnownPages: Int, unresolvedChapters: Int, resolvedCount: Int) {
+        let relevantItems = taskItems.filter { item in
+            switch item.state {
+            case .queued, .running, .done:
+                return true
+            case .failed, .canceled:
+                return false
+            }
+        }
+
+        let resolvedIDs = chapterResolvedPageCounts.intersection(Set(relevantItems.map(\.id)))
+        let knownExpectedPages = resolvedIDs.reduce(0) { partial, id in
+            partial + max(1, chapterExpectedPages[id] ?? 1)
+        }
+        let completedKnownPages = resolvedIDs.reduce(0) { partial, id in
+            partial + min(max(1, chapterExpectedPages[id] ?? 1), max(0, chapterCompletedPages[id] ?? 0))
+        }
+        let unresolvedChapters = relevantItems.reduce(0) { partial, item in
+            partial + (resolvedIDs.contains(item.id) ? 0 : 1)
+        }
+        return (knownExpectedPages, completedKnownPages, unresolvedChapters, resolvedIDs.count)
+    }
+
+    func countsSummary() -> (queued: Int, running: Int, failed: Int, done: Int) {
+        taskItems.reduce(into: (queued: 0, running: 0, failed: 0, done: 0)) { partial, item in
+            switch item.state {
+            case .queued:
+                partial.queued += 1
+            case .running:
+                partial.running += 1
+            case .done:
+                partial.done += 1
+            case .failed, .canceled:
+                partial.failed += 1
+            }
+        }
+    }
+
+    func failureSummary() -> [(reason: String, count: Int)] {
+        let buckets = taskItems.reduce(into: [String: Int]()) { partial, item in
+            let key: String
+            switch item.state {
+            case .failed(let reason):
+                key = classifyFailure(reason)
+            case .canceled:
+                key = "已取消"
+            default:
+                return
+            }
+            partial[key, default: 0] += 1
+        }
+        return buckets
+            .map { (reason: $0.key, count: $0.value) }
+            .sorted { lhs, rhs in
+                if lhs.count == rhs.count {
+                    return lhs.reason < rhs.reason
+                }
+                return lhs.count > rhs.count
+            }
+    }
+
+    private func classifyFailure(_ reason: String) -> String {
+        let normalized = reason.lowercased()
+        if normalized.contains("403") || normalized.contains("429") || normalized.contains("503") || normalized.contains("风控") {
+            return "403/限流/风控"
+        }
+        if normalized.contains("timed out") || normalized.contains("timeout") || normalized.contains("超时") {
+            return "网络超时"
+        }
+        if normalized.contains("图片") || normalized.contains("image") || normalized.contains("404") {
+            return "图片资源异常"
+        }
+        return "其他错误"
+    }
+
+    private func updateCurrentTaskTitle() {
+        if let running = taskItems.first(where: { $0.state == .running }) {
+            currentTaskTitle = "[\(running.chapter.volumeName)] \(running.chapter.displayName)"
+            return
+        }
+        if let queued = taskItems.first(where: { $0.state == .queued }) {
+            currentTaskTitle = "待下载：[\(queued.chapter.volumeName)] \(queued.chapter.displayName)"
+            return
+        }
+        currentTaskTitle = ""
+    }
+
+    private func notifyCompletion(failedCount: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = failedCount == 0 ? "MangaGlass 下载完成" : "MangaGlass 下载结束"
+        content.body = failedCount == 0 ? "全部章节已完成下载。" : "下载完成，但有 \(failedCount) 话失败或被取消。"
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "mangaglass.download.complete.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     private func candidateImageURLs(for original: URL, site: MangaSiteConfig) -> [URL] {

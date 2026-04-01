@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 
@@ -9,23 +10,63 @@ enum SortDirection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private enum StorageKey {
+    static let inputURL = "inputURL"
+    static let authCookie = "authCookie"
+    static let proxyType = "proxyType"
+    static let proxyHost = "proxyHost"
+    static let proxyPort = "proxyPort"
+    static let proxyUsername = "proxyUsername"
+    static let proxyPassword = "proxyPassword"
+    static let lastDestinationPath = "lastDestinationPath"
+    static let recentRecords = "recentRecords"
+    static let lastComic = "lastComic"
+    static let downloadQueue = "downloadQueue"
+}
+
 @MainActor
 final class MainViewModel: ObservableObject {
-    @Published var inputURL = ""
-    @Published var authCookie = ""
-    @Published var proxyType: ProxyType = .none
-    @Published var proxyHost = ""
-    @Published var proxyPort = ""
-    @Published var proxyUsername = ""
-    @Published var proxyPassword = ""
-    @Published var comic: ComicInfo?
+    struct FilteredVolumeSection: Identifiable {
+        let id: String
+        let volumeName: String
+        let chapters: [ComicChapter]
+
+        var chapterCount: Int { chapters.count }
+    }
+
+    @Published var inputURL = "" {
+        didSet { persistString(inputURL, key: StorageKey.inputURL) }
+    }
+    @Published var authCookie = "" {
+        didSet { persistString(authCookie, key: StorageKey.authCookie) }
+    }
+    @Published var proxyType: ProxyType = .none {
+        didSet { persistString(proxyType.rawValue, key: StorageKey.proxyType) }
+    }
+    @Published var proxyHost = "" {
+        didSet { persistString(proxyHost, key: StorageKey.proxyHost) }
+    }
+    @Published var proxyPort = "" {
+        didSet { persistString(proxyPort, key: StorageKey.proxyPort) }
+    }
+    @Published var proxyUsername = "" {
+        didSet { persistString(proxyUsername, key: StorageKey.proxyUsername) }
+    }
+    @Published var proxyPassword = "" {
+        didSet { persistString(proxyPassword, key: StorageKey.proxyPassword) }
+    }
+    @Published var comic: ComicInfo? {
+        didSet { persistCodable(comic, key: StorageKey.lastComic) }
+    }
     @Published var selectedVolumeIDs: Set<String> = []
     @Published var selectedChapterIDs: Set<String> = []
     @Published var chapterSortDirection: SortDirection = .ascending
     @Published var destinationFolder: URL = {
-        let path = UserDefaults.standard.string(forKey: "lastDestinationPath") ?? "/Users/mraz/Downloads/漫画/"
+        let path = UserDefaults.standard.string(forKey: StorageKey.lastDestinationPath) ?? "/Users/mraz/Downloads/漫画/"
         return URL(fileURLWithPath: path, isDirectory: true)
-    }()
+    }() {
+        didSet { UserDefaults.standard.set(destinationFolder.path, forKey: StorageKey.lastDestinationPath) }
+    }
     @Published var statusText = "输入漫画链接后点击加载。"
     @Published var isLoading = false
     @Published var errorText = ""
@@ -33,16 +74,22 @@ final class MainViewModel: ObservableObject {
     @Published var showParseDone = false
     @Published var parseDoneText = ""
     @Published var parseLiveText = ""
+    @Published var recentRecords: [RecentComicRecord] = []
+    @Published var showOnlyErrorLogs = false
+    @Published var lastMirrorSuggestion: CopyMangaMirror?
+    @Published var lastFailedInput: String = ""
 
     let api: CopyMangaAPI
     let downloader: DownloadCoordinator
     private var lastSelectedChapterID: String?
     private var loadingComicKey: String?
+    private var cancellables: Set<AnyCancellable> = []
 
     init() {
         let api = CopyMangaAPI()
         self.api = api
         self.downloader = DownloadCoordinator(api: api)
+        restorePersistedState()
         self.api.setLogger { [weak self] message in
             Task { @MainActor in self?.appendLog(message) }
         }
@@ -57,6 +104,7 @@ final class MainViewModel: ObservableObject {
         self.downloader.setLogger { [weak self] message in
             Task { @MainActor in self?.appendLog(message) }
         }
+        bindPersistence()
         appendLog("解析器版本：2026-03-09-r6")
     }
 
@@ -65,22 +113,52 @@ final class MainViewModel: ObservableObject {
         return comic.volumes
     }
 
-    var visibleChapters: [ComicChapter] {
-        let chapters = displayVolumes
+    var filteredVolumeSections: [FilteredVolumeSection] {
+        displayVolumes
             .filter { selectedVolumeIDs.contains($0.id) }
-            .flatMap(\.chapters)
-        let sorted = chapters.sorted { lhs, rhs in
-            let left = normalizedSortValue(from: lhs.displayName, fallback: lhs.order)
-            let right = normalizedSortValue(from: rhs.displayName, fallback: rhs.order)
-            if left == right {
-                return lhs.displayName.localizedCompare(rhs.displayName) == .orderedAscending
+            .map { volume in
+                let chapters = volume.chapters
+                    .sorted { lhs, rhs in
+                        let left = normalizedSortValue(from: lhs.displayName, fallback: lhs.order)
+                        let right = normalizedSortValue(from: rhs.displayName, fallback: rhs.order)
+                        if left == right {
+                            return lhs.displayName.localizedCompare(rhs.displayName) == .orderedAscending
+                        }
+                        return left < right
+                    }
+
+                return FilteredVolumeSection(
+                    id: volume.id,
+                    volumeName: volume.displayName,
+                    chapters: chapterSortDirection == .ascending ? chapters : chapters.reversed()
+                )
             }
-            return left < right
+    }
+
+    var visibleChapters: [ComicChapter] {
+        filteredVolumeSections.flatMap(\.chapters)
+    }
+
+    var totalChapterCount: Int {
+        displayVolumes.reduce(0) { $0 + $1.chapters.count }
+    }
+
+    var hasAnyParsedChapters: Bool {
+        totalChapterCount > 0
+    }
+
+    var hasAnyMatchingChapters: Bool {
+        filteredVolumeSections.contains { !$0.chapters.isEmpty }
+    }
+
+    var filteredLogLines: [String] {
+        if !showOnlyErrorLogs {
+            return logLines
         }
-        if chapterSortDirection == .ascending {
-            return sorted
+        return logLines.filter { line in
+            let lowered = line.lowercased()
+            return lowered.contains("失败") || lowered.contains("错误") || lowered.contains("error") || lowered.contains("http 4") || lowered.contains("http 5")
         }
-        return sorted.reversed()
     }
 
     func loadComic() {
@@ -90,6 +168,8 @@ final class MainViewModel: ObservableObject {
         parseDoneText = ""
         parseLiveText = "阶段 1/3：读取页面结构..."
         errorText = ""
+        lastMirrorSuggestion = nil
+        lastFailedInput = ""
         statusText = "加载中..."
         let normalizedInput = normalizeCopyURLIfNeeded(inputURL)
         if normalizedInput != inputURL {
@@ -110,6 +190,8 @@ final class MainViewModel: ObservableObject {
                 errorText = message
                 statusText = "加载失败"
                 parseLiveText = ""
+                lastFailedInput = normalizedInput
+                lastMirrorSuggestion = suggestedMirrorFallback(for: normalizedInput)
                 appendLog("加载失败：\(message)")
             }
             loadingComicKey = nil
@@ -140,6 +222,9 @@ final class MainViewModel: ObservableObject {
             parseLiveText = "阶段 2/3：分类 \(stats.groups) · 章节 \(stats.chapters)（补全中）"
         }
         appendLog("加载成功：\(fetched.name)，分类 \(stats.groups)，章节 \(stats.chapters)")
+        if final {
+            rememberRecentComic(title: fetched.name, input: inputURL, siteName: fetched.site.displayName)
+        }
     }
 
     private func parsedStats(from comic: ComicInfo) -> (groups: Int, chapters: Int) {
@@ -162,7 +247,6 @@ final class MainViewModel: ObservableObject {
 
         if panel.runModal() == .OK, let url = panel.url {
             destinationFolder = url
-            UserDefaults.standard.set(url.path, forKey: "lastDestinationPath")
         }
     }
 
@@ -228,6 +312,41 @@ final class MainViewModel: ObservableObject {
     func deselectAllVolumes() {
         selectedVolumeIDs = []
         selectedChapterIDs = []
+    }
+
+    func selectVolumeChapters(volumeID: String) {
+        guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return }
+        selectedChapterIDs.formUnion(volume.chapters.map(\.id))
+    }
+
+    func deselectVolumeChapters(volumeID: String) {
+        guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return }
+        selectedChapterIDs.subtract(volume.chapters.map(\.id))
+    }
+
+    func toggleVolumeChapterSelection(volumeID: String) {
+        guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return }
+        let chapterIDs = Set(volume.chapters.map(\.id))
+        if chapterIDs.isSubset(of: selectedChapterIDs) {
+            selectedChapterIDs.subtract(chapterIDs)
+        } else {
+            selectedChapterIDs.formUnion(chapterIDs)
+        }
+    }
+
+    func areAllChaptersSelected(in volumeID: String) -> Bool {
+        guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return false }
+        let chapterIDs = Set(volume.chapters.map(\.id))
+        return !chapterIDs.isEmpty && chapterIDs.isSubset(of: selectedChapterIDs)
+    }
+
+    func selectedChapterCount(in volumeID: String) -> Int {
+        guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return 0 }
+        return volume.chapters.reduce(into: 0) { partial, chapter in
+            if selectedChapterIDs.contains(chapter.id) {
+                partial += 1
+            }
+        }
     }
 
     func startDownload() {
@@ -350,6 +469,34 @@ final class MainViewModel: ObservableObject {
         logLines = []
     }
 
+    func copyRecentLogs() {
+        let lines = Array(filteredLogLines.suffix(50))
+        let content = lines.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(content, forType: .string)
+        statusText = lines.isEmpty ? "当前没有可复制的日志。" : "已复制最近 \(lines.count) 条日志。"
+    }
+
+    func applyRecentRecord(_ record: RecentComicRecord) {
+        inputURL = record.input
+        loadComic()
+    }
+
+    func applySuggestedMirrorAndReload() {
+        guard let suggestion = lastMirrorSuggestion else { return }
+        let trimmed = lastFailedInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), let host = url.host else {
+            return
+        }
+        let targetHost = host.hasPrefix("www.") ? suggestion.wwwHost : suggestion.bareHost
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.host = targetHost
+        if let nextURL = components?.url {
+            inputURL = nextURL.absoluteString
+            loadComic()
+        }
+    }
+
     func clearQueue() {
         if downloader.resetQueueIfIdle() {
             appendLog("已清空下载队列")
@@ -369,6 +516,80 @@ final class MainViewModel: ObservableObject {
             appendLog("清空完成任务：当前无可清理项")
             statusText = "没有已完成任务可清空。"
         }
+    }
+
+    private func bindPersistence() {
+        downloader.$taskItems
+            .sink { [weak self] items in
+                self?.persistCodable(items, key: StorageKey.downloadQueue)
+            }
+            .store(in: &cancellables)
+
+        $recentRecords
+            .dropFirst()
+            .sink { [weak self] items in
+                self?.persistCodable(items, key: StorageKey.recentRecords)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func restorePersistedState() {
+        let defaults = UserDefaults.standard
+        inputURL = defaults.string(forKey: StorageKey.inputURL) ?? ""
+        authCookie = defaults.string(forKey: StorageKey.authCookie) ?? ""
+        proxyType = ProxyType(rawValue: defaults.string(forKey: StorageKey.proxyType) ?? "") ?? .none
+        proxyHost = defaults.string(forKey: StorageKey.proxyHost) ?? ""
+        proxyPort = defaults.string(forKey: StorageKey.proxyPort) ?? ""
+        proxyUsername = defaults.string(forKey: StorageKey.proxyUsername) ?? ""
+        proxyPassword = defaults.string(forKey: StorageKey.proxyPassword) ?? ""
+        recentRecords = loadCodable([RecentComicRecord].self, key: StorageKey.recentRecords) ?? []
+        comic = loadCodable(ComicInfo.self, key: StorageKey.lastComic)
+        if let comic {
+            selectedVolumeIDs = Set(comic.volumes.map(\.id))
+        }
+        if let restoredItems = loadCodable([DownloadTaskItem].self, key: StorageKey.downloadQueue), !restoredItems.isEmpty {
+            downloader.restoreQueue(restoredItems)
+        }
+    }
+
+    private func persistString(_ value: String, key: String) {
+        UserDefaults.standard.set(value, forKey: key)
+    }
+
+    private func persistCodable<T: Codable>(_ value: T?, key: String) {
+        let defaults = UserDefaults.standard
+        guard let value else {
+            defaults.removeObject(forKey: key)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        defaults.set(data, forKey: key)
+    }
+
+    private func loadCodable<T: Codable>(_ type: T.Type, key: String) -> T? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    private func rememberRecentComic(title: String, input: String, siteName: String) {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let next = RecentComicRecord(title: title, input: trimmed, siteName: siteName)
+        recentRecords.removeAll { $0.input == trimmed }
+        recentRecords.insert(next, at: 0)
+        if recentRecords.count > 8 {
+            recentRecords = Array(recentRecords.prefix(8))
+        }
+    }
+
+    private func suggestedMirrorFallback(for input: String) -> CopyMangaMirror? {
+        guard let url = URL(string: input), let host = url.host?.lowercased() else {
+            return nil
+        }
+        guard let current = CopyMangaMirror.mirror(for: host) else {
+            return nil
+        }
+        return CopyMangaMirror.allCases.first { $0 != current }
     }
 
     private var normalizedCookie: String? {

@@ -33,36 +33,32 @@ struct DownloadManagerView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 10) {
             header
-            
-            HStack(spacing: 0) {
-                sidebar
-                
-                VStack(spacing: 0) {
-                    toolbar
-                    listContent
-                    
-                    if vm.downloader.isRunning {
-                        progressFooter
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(NSColor.textBackgroundColor).opacity(0.5))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            controlBar
+            listContent
+            progressFooter
         }
+        .padding(12)
+        .background(downloadManagerBackground)
         .frame(width: 850, height: 600)
     }
 
     private var header: some View {
         HStack {
-            Text("下载管理")
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
+            HStack(spacing: 12) {
+                BrandMarkView(size: 42, elevated: true)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("下载管理")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                    Text(headerSubtitle)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
             
             Spacer()
-                .contentShape(Rectangle())
-                .gesture(DragGesture().onChanged { _ in }) // Put drag gesture only on the empty space
             
             Button(action: { dismiss() }) {
                 Image(systemName: "xmark")
@@ -82,94 +78,110 @@ struct DownloadManagerView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.regularMaterial)
-        .overlay(Divider(), alignment: .bottom)
+        .padding(.vertical, 10)
+        .glassPanel(cornerRadius: 20, fillOpacity: 0.34)
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("过滤选项")
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.top, 16)
-
-            ForEach(FilterType.allCases) { type in
-                Button(action: { filter = type }) {
-                    HStack {
-                        Text(type.rawValue)
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                        Spacer()
-                        if count(for: type) > 0 {
+    private var controlBar: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                ForEach(FilterType.allCases) { type in
+                    Button(action: { filter = type }) {
+                        HStack(spacing: 6) {
+                            Text(type.rawValue)
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
                             Text("\(count(for: type))")
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
-                                .foregroundStyle(filter == type ? .white : .secondary)
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(filter == type ? Color.blue.opacity(0.8) : Color.gray.opacity(0.2), in: Capsule())
+                                .background(filter == type ? Color.white.opacity(0.24) : Color.black.opacity(0.04), in: Capsule())
                         }
+                        .foregroundStyle(filter == type ? .white : .primary.opacity(0.78))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .fill(filter == type ? AnyShapeStyle(Color(red: 0.44, green: 0.62, blue: 0.78)) : AnyShapeStyle(Color.white.opacity(0.18)))
+                        )
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .background(filter == type ? Color.blue.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
+
+                Spacer()
+
+                summaryPill("全部", count(for: .all), tint: Color(red: 0.38, green: 0.52, blue: 0.67))
+                summaryPill("进行中", count(for: .active), tint: .blue)
+                summaryPill("失败", count(for: .failed), tint: Color(red: 0.78, green: 0.39, blue: 0.30))
             }
-            Spacer()
+
+            HStack(spacing: 8) {
+                if vm.downloader.isRunning {
+                    Button("暂停所有") { vm.pauseDownload() }
+                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        .disabled(vm.downloader.isPaused)
+
+                    Button("继续下载") { vm.resumeDownload() }
+                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        .disabled(!vm.downloader.isPaused)
+                } else {
+                    Button("开始/继续") { vm.startDownload() }
+                        .buttonStyle(ActionButtonStyle(variant: .accent))
+                        .disabled(vm.downloader.taskItems.filter { $0.state == .queued }.isEmpty)
+                }
+
+                Button("取消所有") { vm.cancelDownload() }
+                    .buttonStyle(ActionButtonStyle(variant: .danger))
+                    .disabled(!vm.downloader.isRunning)
+
+                Button("重试失败") { vm.retryFailed() }
+                    .buttonStyle(ActionButtonStyle(variant: .neutral))
+                    .disabled(vm.downloader.failedItems().isEmpty)
+
+                Button("清空完成") { vm.clearCompletedTasks() }
+                    .buttonStyle(ActionButtonStyle(variant: .neutral))
+                    .disabled(vm.downloader.taskItems.allSatisfy { $0.state != .done })
+
+                Button("清空所有") { vm.clearQueue() }
+                    .buttonStyle(ActionButtonStyle(variant: .danger))
+                    .disabled(vm.downloader.isRunning)
+
+                Spacer()
+
+                if let firstFailure = vm.downloader.failureSummary().first {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.circle")
+                        Text("\(firstFailure.reason) \(firstFailure.count)")
+                    }
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color(red: 0.56, green: 0.29, blue: 0.22))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color(red: 0.98, green: 0.92, blue: 0.88), in: Capsule())
+                }
+
+                Button("打开下载目录") {
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: vm.destinationFolder.path)
+                }
+                .buttonStyle(ActionButtonStyle(variant: .neutral))
+            }
         }
-        .frame(width: 180)
-        .background(.ultraThinMaterial)
-        .overlay(Divider(), alignment: .trailing)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .glassPanel(cornerRadius: 18, fillOpacity: 0.22)
     }
 
-    private var toolbar: some View {
-        HStack {
-            if vm.downloader.isRunning {
-                Button("暂停所有") { vm.pauseDownload() }
-                    .buttonStyle(ActionButtonStyle(variant: .neutral))
-                    .disabled(vm.downloader.isPaused)
-                
-                Button("继续下载") { vm.resumeDownload() }
-                    .buttonStyle(ActionButtonStyle(variant: .neutral))
-                    .disabled(!vm.downloader.isPaused)
-            } else {
-                Button("开始/继续") { vm.startDownload() }
-                    .buttonStyle(ActionButtonStyle(variant: .accent))
-                    .disabled(vm.downloader.taskItems.filter { $0.state == .queued }.isEmpty)
-            }
-
-            Button("取消所有") { vm.cancelDownload() }
-                .buttonStyle(ActionButtonStyle(variant: .danger))
-                .disabled(!vm.downloader.isRunning)
-
-            Rectangle().fill(Color.gray.opacity(0.3)).frame(width: 1, height: 16).padding(.horizontal, 4)
-
-            Button("重新下载失败项") { vm.retryFailed() }
-                .buttonStyle(ActionButtonStyle(variant: .neutral))
-                .disabled(vm.downloader.failedItems().isEmpty)
-                
-            Button("清空已完成") { vm.clearCompletedTasks() }
-                .buttonStyle(ActionButtonStyle(variant: .neutral))
-                .disabled(vm.downloader.taskItems.allSatisfy { $0.state != .done })
-                
-            Button("清空所有") { vm.clearQueue() }
-                .buttonStyle(ActionButtonStyle(variant: .danger))
-                .disabled(vm.downloader.isRunning)
-
-            Spacer()
-            
-            Button("打开下载目录") {
-                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: vm.destinationFolder.path)
-            }
-            .buttonStyle(ActionButtonStyle(variant: .neutral))
+    private func summaryPill(_ title: String, _ value: Int, tint: Color) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+            Text("\(value)")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(tint)
         }
-        .padding(12)
-        .background(Color(NSColor.controlBackgroundColor))
-        .overlay(Divider(), alignment: .bottom)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.22), in: Capsule())
     }
 
     private var listContent: some View {
@@ -177,8 +189,8 @@ struct DownloadManagerView: View {
             if filteredItems.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "tray.fill")
-                        .font(.system(size: 44, weight: .light))
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundStyle(Color(red: 0.59, green: 0.66, blue: 0.76))
                         .offset(y: isFloating ? -5 : 4)
                         .onAppear {
                             withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
@@ -186,8 +198,12 @@ struct DownloadManagerView: View {
                             }
                         }
                     Text("无匹配任务")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
+                    Text("当前筛选下还没有任务，开始下载后会在这里看到完整队列。")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary.opacity(0.9))
+                        .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.top, 100)
@@ -201,76 +217,161 @@ struct DownloadManagerView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .glassPanel(cornerRadius: 22, fillOpacity: 0.20)
     }
 
     private func taskRow(for item: DownloadTaskItem) -> some View {
-        HStack(spacing: 16) {
-            // Status Indicator
-            Circle()
-                .fill(statusColor(for: item.state))
-                .frame(width: 8, height: 8)
-                .shadow(color: statusColor(for: item.state).opacity(0.4), radius: 3)
-            
-            // Info
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.comic.name)
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                Text("[\(item.chapter.volumeName)] \(item.chapter.displayName)")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-            }
-            
-            Spacer()
-            
-            // Status Text
-            Text(statusString(for: item.state))
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
-            
-            // Action button
-            if item.state == .queued || item.state == .running {
-                Button(action: {
-                    if let idx = vm.downloader.taskItems.firstIndex(where: { $0.id == item.id }) {
-                        vm.downloader.taskItems[idx].state = .canceled
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(statusColor(for: item.state).opacity(0.88))
+                .frame(width: 6)
+                .padding(.vertical, 8)
+
+            HStack(spacing: 14) {
+                Circle()
+                    .fill(statusColor(for: item.state))
+                    .frame(width: 9, height: 9)
+                    .shadow(color: statusColor(for: item.state).opacity(0.28), radius: 4)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Text(item.comic.name)
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(.primary.opacity(0.92))
+                            .lineLimit(1)
+
+                        Text(statusString(for: item.state))
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(statusColor(for: item.state))
+                            .lineLimit(1)
                     }
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.gray)
+
+                    HStack(spacing: 8) {
+                        Text(item.chapter.volumeName)
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(Color(red: 0.38, green: 0.54, blue: 0.68))
+                            .lineLimit(1)
+
+                        Text("·")
+                            .foregroundStyle(.secondary)
+
+                        Text(item.chapter.displayName)
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
-                .buttonStyle(.plain)
-            } else if case .failed = item.state {
-                Button(action: {
-                    vm.retryItem(item)
-                }) {
-                    Image(systemName: "arrow.clockwise.circle.fill")
-                        .foregroundColor(.blue)
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    if item.state == .queued || item.state == .running {
+                        Button(action: {
+                            if let idx = vm.downloader.taskItems.firstIndex(where: { $0.id == item.id }) {
+                                vm.downloader.taskItems[idx].state = .canceled
+                            }
+                        }) {
+                            Label("取消", systemImage: "xmark.circle")
+                        }
+                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                    } else if case .failed = item.state {
+                        Button(action: {
+                            vm.retryItem(item)
+                        }) {
+                            Label("重试", systemImage: "arrow.clockwise.circle")
+                        }
+                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                    }
                 }
-                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(taskBackground(for: item.state), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.42), lineWidth: 0.8)
+        )
+        .shadow(color: Color.black.opacity(0.04), radius: 10, y: 5)
     }
 
     private var progressFooter: some View {
         VStack(spacing: 8) {
             HStack {
                 Text(vm.downloader.message)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                 Spacer()
+                if !vm.downloader.currentTaskTitle.isEmpty {
+                    Text(vm.downloader.currentTaskTitle)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: 280, alignment: .trailing)
+                }
                 if !vm.downloader.speedText.isEmpty {
                     Text(vm.downloader.speedText)
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.blue)
                 }
             }
             ProgressView(value: vm.downloader.progress)
                 .progressViewStyle(.linear)
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .overlay(Divider(), alignment: .top)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .glassPanel(cornerRadius: 18, fillOpacity: 0.26)
+    }
+
+    private var headerSubtitle: String {
+        if vm.downloader.isRunning {
+            return "当前队列正在执行，下面可以直接查看进度与失败项。"
+        }
+        if vm.downloader.taskItems.isEmpty {
+            return "队列空闲中，开始下载后会在这里集中管理任务。"
+        }
+        return "当前有 \(vm.downloader.taskItems.count) 个任务，支持查看状态与批量操作。"
+    }
+
+    private var downloadManagerBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.96, green: 0.98, blue: 0.99),
+                    Color(red: 0.92, green: 0.95, blue: 0.98)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Circle()
+                .fill(Color(red: 0.64, green: 0.82, blue: 0.95).opacity(0.13))
+                .blur(radius: 95)
+                .frame(width: 340, height: 340)
+                .offset(x: -220, y: -180)
+
+            Circle()
+                .fill(Color(red: 0.86, green: 0.91, blue: 0.98).opacity(0.32))
+                .blur(radius: 90)
+                .frame(width: 300, height: 300)
+                .offset(x: 240, y: 210)
+        }
+        .ignoresSafeArea()
+    }
+
+    private func taskBackground(for state: DownloadTaskItem.State) -> some ShapeStyle {
+        switch state {
+        case .running:
+            return AnyShapeStyle(Color(red: 0.90, green: 0.96, blue: 1.0).opacity(0.88))
+        case .queued:
+            return AnyShapeStyle(Color.white.opacity(0.52))
+        case .done:
+            return AnyShapeStyle(Color(red: 0.92, green: 0.98, blue: 0.94).opacity(0.86))
+        case .canceled:
+            return AnyShapeStyle(Color(red: 0.97, green: 0.94, blue: 0.90).opacity(0.86))
+        case .failed:
+            return AnyShapeStyle(Color(red: 0.99, green: 0.92, blue: 0.89).opacity(0.88))
+        }
     }
 
     private func count(for type: FilterType) -> Int {
@@ -300,11 +401,23 @@ struct DownloadManagerView: View {
 
     private func statusString(for state: DownloadTaskItem.State) -> String {
         switch state {
-        case .queued: return "排队中"
-        case .running: return "下载中"
-        case .done: return "已完成"
-        case .canceled: return "已取消"
-        case .failed(let msg): return "失败 (\(msg))"
+            case .queued: return "排队中"
+            case .running: return "下载中"
+            case .done: return "已完成"
+            case .canceled: return "已取消"
+            case .failed(let msg): return "失败 (\(msg))"
         }
+    }
+}
+
+private extension View {
+    func glassPanel(cornerRadius: CGFloat, fillOpacity: Double) -> some View {
+        self
+            .background(Color.white.opacity(fillOpacity), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.white.opacity(0.46), lineWidth: 0.8)
+            )
+            .shadow(color: Color.black.opacity(0.05), radius: 14, y: 7)
     }
 }
