@@ -367,7 +367,7 @@ final class MainViewModel: ObservableObject {
                     appendLog("下载未开始：代理配置错误 - \(error.localizedDescription)")
                     return
                 }
-                let concurrent = comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true ? 3 : 5
+                let concurrent = downloadConcurrent(for: comic.site)
                 appendLog("加入队列：\(comic.name) - \(selected.count) 话，并发 \(concurrent)")
                 downloader.add(chapters: selected, comic: comic, destination: destinationFolder, cookie: normalizedCookie)
             }
@@ -393,13 +393,17 @@ final class MainViewModel: ObservableObject {
         guard let comic else { return }
         downloader.resume()
         if !downloader.isRunning {
-            let concurrent = comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true ? 3 : 6
+            let concurrent = downloadConcurrent(for: comic.site)
             downloader.start(maxConcurrent: concurrent)
         }
     }
 
     func cancelDownload() {
         downloader.cancel()
+    }
+
+    func cancelItem(_ item: DownloadTaskItem) {
+        downloader.cancelItem(item.id)
     }
 
     func retryItem(_ item: DownloadTaskItem) {
@@ -416,7 +420,7 @@ final class MainViewModel: ObservableObject {
         downloader.taskItems.removeAll { $0.id == item.id }
         downloader.add(chapters: [item.chapter], comic: item.comic, destination: item.destination, cookie: item.cookie)
         if !downloader.isRunning {
-             let concurrent = item.comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true ? 3 : 6
+             let concurrent = downloadConcurrent(for: item.comic.site)
              downloader.start(maxConcurrent: concurrent)
         }
     }
@@ -462,11 +466,58 @@ final class MainViewModel: ObservableObject {
         let hasManhuaGui = downloader.taskItems.contains {
             $0.comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true
         }
-        return hasManhuaGui ? 3 : 5
+        if hasManhuaGui {
+            return 3
+        }
+        let hasCopy = downloader.taskItems.contains {
+            isCopyFamily($0.comic.site)
+        }
+        if hasCopy {
+            return 4
+        }
+        return 5
+    }
+
+    private func downloadConcurrent(for site: MangaSiteConfig) -> Int {
+        if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
+            return 3
+        }
+        if isCopyFamily(site) {
+            return 4
+        }
+        return 5
+    }
+
+    private func isCopyFamily(_ site: MangaSiteConfig) -> Bool {
+        guard let host = site.webBase.host?.lowercased() else { return false }
+        return host.contains("mangacopy.com") || host.contains("2025copy.com") || host.contains("2026copy.com")
     }
 
     func clearLogs() {
         logLines = []
+    }
+
+    func clearCaches() {
+        Task {
+            await api.clearCaches()
+            await MainActor.run {
+                inputURL = ""
+                comic = nil
+                selectedVolumeIDs = []
+                selectedChapterIDs = []
+                lastSelectedChapterID = nil
+                isLoading = false
+                errorText = ""
+                showParseDone = false
+                parseDoneText = ""
+                parseLiveText = ""
+                lastMirrorSuggestion = nil
+                lastFailedInput = ""
+                loadingComicKey = nil
+                statusText = "已清空缓存与当前解析内容。"
+                appendLog("已手动清空缓存与当前解析内容")
+            }
+        }
     }
 
     func copyRecentLogs() {

@@ -12,6 +12,7 @@ enum CopyMangaError: LocalizedError {
     case allEndpoints404([String])
     case payloadShape([String])
     case apiDetail(String)
+    case parseBlocked(String)
     case cooldown(Int)
     case htmlParse(String)
     case copyMirrorsUnavailable([String])
@@ -36,6 +37,8 @@ enum CopyMangaError: LocalizedError {
             return "接口返回结构已变化（顶层 keys: \(keys.joined(separator: ", "))）"
         case .apiDetail(let detail):
             return "接口返回详情：\(detail)"
+        case .parseBlocked(let detail):
+            return "疑似触发站点风控：\(detail)"
         case .cooldown(let seconds):
             return "疑似触发风控，已进入冷却期，请 \(seconds) 秒后再试。"
         case .htmlParse(let detail):
@@ -63,6 +66,19 @@ private struct CopyCatalogEvaluation {
     let reason: String
 }
 
+private struct CopyDetailProbeResult {
+    let volumes: [ComicVolume]
+    let requestCount: Int
+}
+
+private struct SiteParserAdapter {
+    let supports: (MangaSiteConfig) -> Bool
+    let resolveTarget: (URL, [String]) -> String?
+    let fetchComic: (String, MangaSiteConfig, String?) async throws -> ComicInfo
+    let fetchImageURLs: (String, String, String, MangaSiteConfig, String?) async throws -> [URL]
+    let imageRefererURL: (String, String, MangaSiteConfig) -> URL
+}
+
 final class CopyMangaAPI: @unchecked Sendable {
     private var session: URLSession
     private let endpointCache = EndpointCache()
@@ -73,12 +89,13 @@ final class CopyMangaAPI: @unchecked Sendable {
     private let chapterImageURLCache = ChapterImageURLCache(ttl: 45 * 60)
     private let antiBanGuard = AntiBanGuard()
     private let apiPacer = RequestPacer(
-        minDelayMS: 500,
-        maxDelayMS: 1200,
-        maxPenaltyMS: 6000,
-        throttleStepMS: 2000,
-        relaxStepMS: 200
+        minDelayMS: 420,
+        maxDelayMS: 820,
+        maxPenaltyMS: 0,
+        throttleStepMS: 1,
+        relaxStepMS: 1
     )
+    private let copyBanCooldownSeconds = 180
     private var logger: ((String) -> Void)?
     private var intermediateComicHandler: ((ComicInfo) -> Void)?
 
@@ -119,11 +136,9 @@ final class CopyMangaAPI: @unchecked Sendable {
             guard let url = URL(string: trimmed) else { throw CopyMangaError.invalidURL }
             let site = siteConfig(for: url.host)
             let parts = url.pathComponents.filter { $0 != "/" }
-            if let comicIndex = parts.firstIndex(of: "comic"), parts.count > comicIndex + 1 {
-                return (parts[comicIndex + 1], site)
-            }
-            if !parts.isEmpty {
-                return (parts.last ?? trimmed, site)
+            if let adapter = parserAdapter(for: site),
+               let resolved = adapter.resolveTarget(url, parts) {
+                return (resolved, site)
             }
             throw CopyMangaError.invalidComicPath
         }
@@ -141,10 +156,24 @@ final class CopyMangaAPI: @unchecked Sendable {
         await comicInfoCache.get(slug: slug, site: site)
     }
 
+    func clearCaches() async {
+        await endpointCache.clear()
+        await comicInfoCache.clear()
+        await siteHeuristics.clear()
+        await copyMirrorCache.clear()
+        await copyScriptCache.clear()
+        await chapterImageURLCache.clear()
+        await antiBanGuard.clear()
+        log("已清空解析缓存与镜像冷却状态")
+    }
+
     private func siteConfig(for host: String?) -> MangaSiteConfig {
         guard let host = host?.lowercased() else { return CopyMangaMirror.mangacopy.siteConfig() }
         if host.contains("manhuagui.com") {
             return .manhuaGui
+        }
+        if host.contains("mycomic.com") {
+            return .myComic
         }
 
         if let mirror = CopyMangaMirror.mirror(for: host) {
@@ -160,19 +189,18 @@ final class CopyMangaAPI: @unchecked Sendable {
             log("加载漫画：命中缓存 \(slug)")
             return cached
         }
-        if isManhuaGui(site) {
-            log("使用网页解析分支：ManhuaGui")
-            let info = try await fetchComicFromManhuaGui(slug: slug, site: site, cookie: cookie)
-            let normalized = normalizeComicInfoVolumes(info)
-            await comicInfoCache.set(normalized, slug: slug, site: normalized.site)
-            return normalized
-        }
-        if isCopyFamily(site) {
-            log("使用网页解析分支：Copy 家族")
-            let info = try await fetchComicFromCopyMirrors(slug: slug, requestedSite: site, cookie: cookie)
-            let normalized = normalizeComicInfoVolumes(info)
-            await comicInfoCache.set(normalized, slug: slug, site: normalized.site)
-            return normalized
+        if let adapter = parserAdapter(for: site) {
+            do {
+                let info = try await adapter.fetchComic(slug, site, cookie)
+                let normalized = normalizeComicInfoVolumes(info)
+                await comicInfoCache.set(normalized, slug: normalized.slug, site: normalized.site)
+                if normalized.slug != slug {
+                    await comicInfoCache.set(normalized, slug: slug, site: normalized.site)
+                }
+                return normalized
+            } catch {
+                throw normalizeSiteError(error, site: site, phase: "漫画解析")
+            }
         }
 
         log("使用 API 解析分支：\(site.displayName)")
@@ -383,24 +411,12 @@ final class CopyMangaAPI: @unchecked Sendable {
         }
 
         let urls: [URL]
-        if isManhuaGui(site) {
-            log("章节图片解析：网页模式 \(chapterName)")
-            urls = try await fetchImageURLsFromManhuaGui(
-                slug: slug,
-                chapterID: chapterUUID,
-                chapterName: chapterName,
-                site: site,
-                cookie: cookie
-            )
-        } else if isCopyFamily(site) {
-            log("章节图片解析：Copy 网页模式 \(chapterName)")
-            urls = try await fetchImageURLsFromCopyWeb(
-                slug: slug,
-                chapterID: chapterUUID,
-                chapterName: chapterName,
-                site: site,
-                cookie: cookie
-            )
+        if let adapter = parserAdapter(for: site) {
+            do {
+                urls = try await adapter.fetchImageURLs(slug, chapterUUID, chapterName, site, cookie)
+            } catch {
+                throw normalizeSiteError(error, site: site, phase: "章节取图")
+            }
         } else {
             var candidatePaths: [String] = [
                 "\(preferredPrefix)/\(slug)/chapter2/\(chapterUUID)",
@@ -443,8 +459,16 @@ final class CopyMangaAPI: @unchecked Sendable {
         return urls
     }
 
+    func imageRefererURL(slug: String, chapterUUID: String, site: MangaSiteConfig) -> URL {
+        parserAdapter(for: site)?.imageRefererURL(slug, chapterUUID, site) ?? site.webBase
+    }
+
     private func isManhuaGui(_ site: MangaSiteConfig) -> Bool {
         site.webBase.host?.lowercased().contains("manhuagui.com") == true
+    }
+
+    private func isMyComic(_ site: MangaSiteConfig) -> Bool {
+        site.webBase.host?.lowercased().contains("mycomic.com") == true
     }
 
     private func isCopyFamily(_ site: MangaSiteConfig) -> Bool {
@@ -455,6 +479,126 @@ final class CopyMangaAPI: @unchecked Sendable {
             }
         }
         return false
+    }
+
+    private var copyParserAdapter: SiteParserAdapter {
+        SiteParserAdapter(
+            supports: { [weak self] site in self?.isCopyFamily(site) == true },
+            resolveTarget: { _, parts in
+                if let comicIndex = parts.firstIndex(of: "comic"), parts.count > comicIndex + 1 {
+                    return parts[comicIndex + 1]
+                }
+                return parts.last
+            },
+            fetchComic: { [weak self] slug, site, cookie in
+                guard let self else { throw CopyMangaError.unexpectedPayload }
+                self.log("使用网页解析分支：Copy 家族")
+                return try await self.fetchComicFromCopyMirrors(slug: slug, requestedSite: site, cookie: cookie)
+            },
+            fetchImageURLs: { [weak self] slug, chapterUUID, chapterName, site, cookie in
+                guard let self else { throw CopyMangaError.unexpectedPayload }
+                self.log("章节图片解析：Copy 网页模式 \(chapterName)")
+                return try await self.fetchImageURLsFromCopyWeb(
+                    slug: slug,
+                    chapterID: chapterUUID,
+                    chapterName: chapterName,
+                    site: site,
+                    cookie: cookie
+                )
+            },
+            imageRefererURL: { _, _, site in
+                site.webBase
+            }
+        )
+    }
+
+    private var manhuaGuiParserAdapter: SiteParserAdapter {
+        SiteParserAdapter(
+            supports: { [weak self] site in self?.isManhuaGui(site) == true },
+            resolveTarget: { _, parts in
+                if let comicIndex = parts.firstIndex(of: "comic"), parts.count > comicIndex + 1 {
+                    return parts[comicIndex + 1]
+                }
+                return parts.last
+            },
+            fetchComic: { [weak self] slug, site, cookie in
+                guard let self else { throw CopyMangaError.unexpectedPayload }
+                self.log("使用网页解析分支：ManhuaGui")
+                return try await self.fetchComicFromManhuaGui(slug: slug, site: site, cookie: cookie)
+            },
+            fetchImageURLs: { [weak self] slug, chapterUUID, chapterName, site, cookie in
+                guard let self else { throw CopyMangaError.unexpectedPayload }
+                self.log("章节图片解析：网页模式 \(chapterName)")
+                return try await self.fetchImageURLsFromManhuaGui(
+                    slug: slug,
+                    chapterID: chapterUUID,
+                    chapterName: chapterName,
+                    site: site,
+                    cookie: cookie
+                )
+            },
+            imageRefererURL: { _, _, site in
+                site.webBase
+            }
+        )
+    }
+
+    private var myComicParserAdapter: SiteParserAdapter {
+        SiteParserAdapter(
+            supports: { [weak self] site in self?.isMyComic(site) == true },
+            resolveTarget: { _, parts in
+                if let comicIndex = parts.firstIndex(of: "comics"), parts.count > comicIndex + 1 {
+                    return "comic::\(parts[comicIndex + 1])"
+                }
+                if let chapterIndex = parts.firstIndex(of: "chapters"), parts.count > chapterIndex + 1 {
+                    return "chapter::\(parts[chapterIndex + 1])"
+                }
+                return nil
+            },
+            fetchComic: { [weak self] slug, site, cookie in
+                guard let self else { throw CopyMangaError.unexpectedPayload }
+                self.log("使用网页解析分支：MYCOMIC")
+                return try await self.fetchComicFromMyComic(identifier: slug, site: site, cookie: cookie)
+            },
+            fetchImageURLs: { [weak self] _, chapterUUID, chapterName, site, cookie in
+                guard let self else { throw CopyMangaError.unexpectedPayload }
+                self.log("章节图片解析：MYCOMIC 网页模式 \(chapterName)")
+                return try await self.fetchImageURLsFromMyComic(
+                    chapterID: chapterUUID,
+                    chapterName: chapterName,
+                    site: site,
+                    cookie: cookie
+                )
+            },
+            imageRefererURL: { _, chapterUUID, site in
+                site.webBase.appendingPathComponent("chapters/\(chapterUUID)")
+            }
+        )
+    }
+
+    private var siteParserAdapters: [SiteParserAdapter] {
+        [copyParserAdapter, manhuaGuiParserAdapter, myComicParserAdapter]
+    }
+
+    private func parserAdapter(for site: MangaSiteConfig) -> SiteParserAdapter? {
+        siteParserAdapters.first { $0.supports(site) }
+    }
+
+    private func normalizeSiteError(_ error: Error, site: MangaSiteConfig, phase: String) -> CopyMangaError {
+        if let known = error as? CopyMangaError {
+            return known
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return .htmlParse("\(site.displayName)\(phase)超时。")
+            case .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .networkConnectionLost:
+                return .htmlParse("\(site.displayName)\(phase)网络连接失败。")
+            default:
+                return .htmlParse("\(site.displayName)\(phase)失败：\(urlError.localizedDescription)")
+            }
+        }
+        return .htmlParse("\(site.displayName)\(phase)失败：\(error.localizedDescription)")
     }
 
     private func copyMirrorCandidateSites(for requestedSite: MangaSiteConfig) -> [MangaSiteConfig] {
@@ -547,6 +691,11 @@ final class CopyMangaAPI: @unchecked Sendable {
                 if evaluation.canUseAsLastResort, fallbackResult == nil {
                     fallbackResult = result
                 }
+            } catch let error as CopyMangaError where isBlockingCopyError(error) {
+                attemptMessages.append("\(host) \(error.localizedDescription)")
+                await copyMirrorCache.markFailure(site: candidate, seconds: copyMirrorCooldown(for: error))
+                log("Copy 镜像停止探测：\(host) \(error.localizedDescription)")
+                throw error
             } catch {
                 attemptMessages.append("\(host) \(error.localizedDescription)")
                 await copyMirrorCache.markFailure(site: candidate, seconds: copyMirrorCooldown(for: error))
@@ -573,12 +722,14 @@ final class CopyMangaAPI: @unchecked Sendable {
     private func copyMirrorCooldown(for error: Error) -> Int {
         if let error = error as? CopyMangaError {
             switch error {
+            case .parseBlocked:
+                return 20 * 60
             case .cooldown(let seconds):
-                return max(seconds, 300)
+                return max(seconds, 20 * 60)
             case .httpStatus(let code, _):
-                return [403, 429, 503].contains(code) ? 15 * 60 : 5 * 60
+                return [403, 429, 503].contains(code) ? 20 * 60 : 5 * 60
             case .apiDetail(let detail):
-                return isBanDetail(detail) ? 15 * 60 : 5 * 60
+                return isBanDetail(detail) ? 20 * 60 : 5 * 60
             default:
                 return 5 * 60
             }
@@ -594,10 +745,25 @@ final class CopyMangaAPI: @unchecked Sendable {
         return 3 * 60
     }
 
+    private func isBlockingCopyError(_ error: CopyMangaError) -> Bool {
+        switch error {
+        case .parseBlocked, .cooldown:
+            return true
+        case .apiDetail(let detail):
+            return isBanDetail(detail)
+        case .httpStatus(let code, _):
+            return [403, 429, 503].contains(code)
+        default:
+            return false
+        }
+    }
+
     private func fetchComicFromCopyWeb(slug: String, site: MangaSiteConfig, cookie: String?) async throws -> CopyWebFetchResult {
         let comicURL = site.webBase.appendingPathComponent("comic/\(slug)")
         let html = try await getHTML(url: comicURL, cookie: cookie, site: site, retryTimes: 1)
         let expected = parseCopyExpectedCounts(html: html)
+        var usedPaths: [String] = ["html"]
+        var probeRequestCount = 1
 
         let titleFromMeta = firstMatch(
             in: html,
@@ -620,13 +786,29 @@ final class CopyMangaAPI: @unchecked Sendable {
         var coverURL = extractCoverURL(from: html, site: site)
         var usedSingleShareFallback = false
 
-        let detailCandidate = try await fetchCopyVolumesFromDetailEndpoint(slug: slug, html: html, site: site, cookie: cookie)
         var volumes: [ComicVolume] = []
         let htmlVolumes = parseCopyVolumesFromHTML(html: html, slug: slug)
         if !htmlVolumes.isEmpty {
             volumes = htmlVolumes
             log("Copy 网页解析：使用 HTML 章节提取，章节总数 \(htmlVolumes.reduce(0) { $0 + $1.chapters.count })")
         }
+
+        let htmlCount = htmlVolumes.reduce(0) { $0 + $1.chapters.count }
+        let expectedChapters = expected.chapters ?? 0
+        let shouldProbeDetail =
+            htmlCount == 0 ||
+            (expectedChapters > 0 && htmlCount + 3 < expectedChapters) ||
+            htmlCount < 20
+        let detailProbe = shouldProbeDetail
+            ? try await fetchCopyVolumesFromDetailEndpoint(slug: slug, html: html, site: site, cookie: cookie)
+            : nil
+        if shouldProbeDetail {
+            usedPaths.append("comicdetail")
+            probeRequestCount += detailProbe?.requestCount ?? 0
+        } else {
+            log("Copy 网页解析：HTML 章节已足够，跳过 comicdetail 探测（章节 \(htmlCount)）")
+        }
+        let detailCandidate = detailProbe?.volumes
 
         if let fromDetail = detailCandidate, !fromDetail.isEmpty {
             let localCount = volumes.reduce(0) { $0 + $1.chapters.count }
@@ -640,6 +822,21 @@ final class CopyMangaAPI: @unchecked Sendable {
             }
         }
 
+        let staticAnchorCount = countCopyChapterAnchors(in: html, slug: slug)
+        if let blockedReason = copyCatalogBlockedReason(
+            html: html,
+            slug: slug,
+            expectedChapters: expected.chapters,
+            currentCount: volumes.reduce(0) { $0 + $1.chapters.count },
+            detailCount: detailCandidate?.reduce(0) { $0 + $1.chapters.count } ?? 0,
+            staticAnchorCount: staticAnchorCount
+        ) {
+            await apiPacer.markThrottled()
+            await antiBanGuard.block(site: site, seconds: banCooldownSeconds(for: site))
+            log("Copy 网页解析：疑似风控页，停止后续探测（\(blockedReason)）")
+            throw CopyMangaError.parseBlocked(blockedReason)
+        }
+
         emitIntermediateComic(
             slug: slug,
             name: comicName,
@@ -649,8 +846,9 @@ final class CopyMangaAPI: @unchecked Sendable {
         )
 
         let currentCount = volumes.reduce(0) { $0 + $1.chapters.count }
-        let expectedChapters = expected.chapters ?? 0
         if expectedChapters > 0, currentCount > 0, currentCount + 8 < expectedChapters {
+            usedPaths.append("api-groups")
+            probeRequestCount += 1
             log("Copy 网页解析：检测到章节缺口（当前 \(currentCount)，页面约 \(expectedChapters)），尝试 API 分组补齐")
             if let enriched = try await fetchCopyVolumesFromAPIGroups(slug: slug, site: site, cookie: cookie),
                !enriched.isEmpty {
@@ -668,7 +866,6 @@ final class CopyMangaAPI: @unchecked Sendable {
         // Copy family often renders full chapter list only after JS runtime finishes.
         // Trigger rendered-DOM fallback only when static HTML is clearly sparse.
         let renderedBaseline = volumes.reduce(0) { $0 + $1.chapters.count }
-        let staticAnchorCount = countCopyChapterAnchors(in: html, slug: slug)
         let preferRenderedDOM = await siteHeuristics.preferRenderedDOM(for: site)
         let hasNonDefaultGroup = volumes.contains { !isDefaultVolumeName($0.displayName) }
         let groupedEnough = (volumes.count > 1 || hasNonDefaultGroup) && renderedBaseline >= 30
@@ -689,6 +886,8 @@ final class CopyMangaAPI: @unchecked Sendable {
             log("Copy 网页解析：comicdetail 已提供可用结果，跳过渲染 DOM（分类 \(volumes.count)，章节 \(renderedBaseline)）")
         }
         if shouldUseRenderedDOM {
+            usedPaths.append("rendered-dom")
+            probeRequestCount += 1
             log("Copy 网页解析：尝试渲染 DOM 补齐（静态锚点 \(staticAnchorCount)，当前章节 \(renderedBaseline)）")
         }
         if shouldUseRenderedDOM,
@@ -732,6 +931,8 @@ final class CopyMangaAPI: @unchecked Sendable {
         }
         volumes = stripPseudoShareVolumes(volumes, slug: slug)
         if volumes.isEmpty, let shareEntry = parseCopyShareEntryChapter(html: html, slug: slug, site: site) {
+            usedPaths.append("next-links")
+            probeRequestCount += 1
             log("Copy 网页解析：识别到“开始阅读”入口，尝试通过章节链恢复")
             if let entryURL = URL(string: String(shareEntry.id.dropFirst(5))) {
                 let crawled = try await crawlCopyChaptersByNextLinks(
@@ -757,6 +958,10 @@ final class CopyMangaAPI: @unchecked Sendable {
         if let shareEntry = parseCopyShareEntryChapter(html: html, slug: slug, site: site),
            let entryURL = URL(string: String(shareEntry.id.dropFirst(5))),
            volumes.reduce(0, { $0 + $1.chapters.count }) < 20 {
+            if !usedPaths.contains("next-links") {
+                usedPaths.append("next-links")
+                probeRequestCount += 1
+            }
             let crawled = try await crawlCopyChaptersByNextLinks(
                 from: entryURL,
                 slug: slug,
@@ -806,6 +1011,8 @@ final class CopyMangaAPI: @unchecked Sendable {
         if volumes.isEmpty {
             throw CopyMangaError.htmlParse("网页中未找到可用章节")
         }
+
+        log("Copy 网页解析：host \(describeCopySite(site))，路径 \(usedPaths.joined(separator: " -> "))，探测请求约 \(probeRequestCount) 次，锚点 \(staticAnchorCount)，最终章节 \(volumes.reduce(0) { $0 + $1.chapters.count })")
 
         return CopyWebFetchResult(
             info: ComicInfo(
@@ -1001,7 +1208,7 @@ final class CopyMangaAPI: @unchecked Sendable {
         html: String,
         site: MangaSiteConfig,
         cookie: String?
-    ) async throws -> [ComicVolume]? {
+    ) async throws -> CopyDetailProbeResult? {
         guard isCopyFamily(site) else { return nil }
         guard let ccz = firstMatch(in: html, pattern: #"(?is)\bvar\s+ccz\s*=\s*['"]([^'"]+)['"]"#) else {
             return nil
@@ -1014,11 +1221,13 @@ final class CopyMangaAPI: @unchecked Sendable {
             "comicdetail/\(slug)/chapters?limit=500&page=1"
         ]
         var merged: [ComicVolume] = []
+        var requestCount = 0
 
         for endpoint in endpointCandidates {
             let url = URL(string: endpoint, relativeTo: site.webBase)?.absoluteURL
                 ?? site.webBase.appendingPathComponent(endpoint)
             do {
+                requestCount += 1
                 let text = try await getText(
                     url: url,
                     cookie: cookie,
@@ -1043,7 +1252,8 @@ final class CopyMangaAPI: @unchecked Sendable {
                 continue
             }
         }
-        return merged.isEmpty ? nil : merged
+        guard !merged.isEmpty else { return nil }
+        return CopyDetailProbeResult(volumes: merged, requestCount: requestCount)
     }
 
     private func shouldContinueCopyDetailProbe(volumes: [ComicVolume], expectedChapters: Int?) -> Bool {
@@ -2204,6 +2414,288 @@ final class CopyMangaAPI: @unchecked Sendable {
         )
     }
 
+    private func fetchComicFromMyComic(identifier: String, site: MangaSiteConfig, cookie: String?) async throws -> ComicInfo {
+        let reference = try await resolveMyComicReference(identifier: identifier, site: site, cookie: cookie)
+        let detailURL = site.webBase.appendingPathComponent("comics/\(reference.comicID)")
+        let detailHTML: String
+        if let cachedHTML = reference.detailHTML {
+            detailHTML = cachedHTML
+        } else {
+            detailHTML = try await getHTML(url: detailURL, cookie: cookie, site: site, retryTimes: 1)
+        }
+
+        let comicName = parseMyComicTitle(from: detailHTML) ?? reference.comicName ?? reference.comicID
+        let coverURL = extractCoverURL(from: detailHTML, site: site)
+        let volumes = parseMyComicVolumes(from: detailHTML, site: site)
+
+        guard !volumes.isEmpty else {
+            throw CopyMangaError.htmlParse("MYCOMIC 作品页未解析到章节目录。")
+        }
+
+        return ComicInfo(
+            slug: reference.comicID,
+            name: comicName,
+            coverURL: coverURL,
+            volumes: volumes,
+            site: site,
+            apiPathPrefix: "",
+            apiBaseURL: site.webBase
+        )
+    }
+
+    private func fetchImageURLsFromMyComic(
+        chapterID: String,
+        chapterName: String,
+        site: MangaSiteConfig,
+        cookie: String?
+    ) async throws -> [URL] {
+        let chapterURL = site.webBase.appendingPathComponent("chapters/\(chapterID)")
+        log("MYCOMIC 图片解析：章节页 \(chapterURL.absoluteString)")
+        let html = try await getHTML(url: chapterURL, cookie: cookie, site: site, retryTimes: 1)
+        let urls = parseMyComicImageURLs(from: html, site: site)
+        guard !urls.isEmpty else {
+            throw CopyMangaError.noImageInChapter(chapterName)
+        }
+        log("MYCOMIC 图片解析：章节提取到 \(urls.count) 张")
+        return urls
+    }
+
+    private func resolveMyComicReference(
+        identifier: String,
+        site: MangaSiteConfig,
+        cookie: String?
+    ) async throws -> (comicID: String, comicName: String?, detailHTML: String?) {
+        if let comicID = identifier.split(separator: "::").last.map(String.init),
+           identifier.hasPrefix("comic::") {
+            return (comicID, nil, nil)
+        }
+
+        let chapterID: String
+        if identifier.hasPrefix("chapter::") {
+            chapterID = identifier.split(separator: "::").last.map(String.init) ?? identifier
+        } else {
+            chapterID = identifier
+        }
+
+        let chapterURL = site.webBase.appendingPathComponent("chapters/\(chapterID)")
+        let chapterHTML = try await getHTML(url: chapterURL, cookie: cookie, site: site, retryTimes: 1)
+        if let reference = parseMyComicComicReference(from: chapterHTML) {
+            return (reference.comicID, reference.name, nil)
+        }
+        throw CopyMangaError.htmlParse("MYCOMIC 章节页未找到对应作品入口。")
+    }
+
+    private func parseMyComicTitle(from html: String) -> String? {
+        let patterns = [
+            #"(?is)<meta\s+property\s*=\s*["']og:title["']\s+content\s*=\s*["'](.*?)["']"#,
+            #"(?is)<h1[^>]*>(.*?)</h1>"#,
+            #"(?is)<title>\s*(.*?)\s*</title>"#
+        ]
+        for pattern in patterns {
+            if let raw = firstMatch(in: html, pattern: pattern) {
+                let cleaned = cleanHTMLText(raw)
+                let title = cleaned
+                    .replacingOccurrences(of: " - MYCOMIC", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !title.isEmpty {
+                    return title
+                }
+            }
+        }
+        return nil
+    }
+
+    private func parseMyComicComicReference(from html: String) -> (comicID: String, name: String?)? {
+        let pattern = #"(?is)<a\b[^>]*href\s*=\s*["'](?:https?:\/\/mycomic\.com)?\/comics\/(\d+)["'][^>]*>(.*?)</a>"#
+        let candidates = matches(in: html, pattern: pattern)
+        for match in candidates {
+            guard let comicID = substring(in: html, nsRange: match.range(at: 1)),
+                  let titleRaw = substring(in: html, nsRange: match.range(at: 2)) else {
+                continue
+            }
+            let title = cleanHTMLText(titleRaw)
+            if title.isEmpty || title.contains("返回") || title.contains("目錄") || title.contains("目录") {
+                continue
+            }
+            return (comicID, title)
+        }
+        return nil
+    }
+
+    private func parseMyComicVolumes(from html: String, site: MangaSiteConfig) -> [ComicVolume] {
+        struct Bucket {
+            let id: String
+            let displayName: String
+            let pathWord: String
+            var chapters: [ComicChapter]
+            var seen: Set<String>
+            let order: Int
+        }
+
+        let pattern = #"(?is)<a\b[^>]*href\s*=\s*["']([^"']*\/chapters\/(\d+)[^"']*)["'][^>]*>(.*?)</a>"#
+        let anchorMatches = matches(in: html, pattern: pattern)
+        var buckets: [String: Bucket] = [:]
+        var nextOrder = 0
+
+        for (index, match) in anchorMatches.enumerated() {
+            guard let hrefRaw = substring(in: html, nsRange: match.range(at: 1)),
+                  let chapterID = substring(in: html, nsRange: match.range(at: 2)),
+                  let bodyRaw = substring(in: html, nsRange: match.range(at: 3)) else {
+                continue
+            }
+            let title = cleanHTMLText(bodyRaw)
+            guard isLikelyMyComicChapterTitle(title) else { continue }
+            guard normalizedURL(hrefRaw.replacingOccurrences(of: "\\/", with: "/"), site: site) != nil else {
+                continue
+            }
+
+            let prefixRange = NSRange(location: max(0, match.range.location - 2800), length: min(match.range.location, 2800))
+            let context = substring(in: html, nsRange: prefixRange) ?? ""
+            let sectionName = inferMyComicVolumeName(from: context)
+            let descriptor = myComicVolumeDescriptor(for: sectionName)
+
+            if buckets[descriptor.id] == nil {
+                buckets[descriptor.id] = Bucket(
+                    id: descriptor.id,
+                    displayName: descriptor.name,
+                    pathWord: descriptor.pathWord,
+                    chapters: [],
+                    seen: [],
+                    order: nextOrder
+                )
+                nextOrder += 1
+            }
+
+            guard buckets[descriptor.id]?.seen.insert(chapterID).inserted == true else {
+                continue
+            }
+
+            let order = myComicChapterOrder(from: title) ?? Double(anchorMatches.count - index)
+            buckets[descriptor.id]?.chapters.append(
+                ComicChapter(
+                    id: chapterID,
+                    uuid: chapterID,
+                    displayName: title,
+                    order: order,
+                    volumeID: descriptor.id,
+                    volumeName: descriptor.name
+                )
+            )
+        }
+
+        return buckets.values
+            .sorted { lhs, rhs in
+                if lhs.order == rhs.order {
+                    return lhs.displayName.localizedCompare(rhs.displayName) == .orderedAscending
+                }
+                return lhs.order < rhs.order
+            }
+            .map { bucket in
+                ComicVolume(
+                    id: bucket.id,
+                    displayName: bucket.displayName,
+                    pathWord: bucket.pathWord,
+                    chapters: bucket.chapters.sorted { lhs, rhs in
+                        if lhs.order == rhs.order {
+                            return lhs.displayName.localizedCompare(rhs.displayName) == .orderedAscending
+                        }
+                        return lhs.order < rhs.order
+                    }
+                )
+            }
+    }
+
+    private func parseMyComicImageURLs(from html: String, site: MangaSiteConfig) -> [URL] {
+        let imageTagPattern = #"(?is)<img\b[^>]*>"#
+        let imageTags = matches(in: html, pattern: imageTagPattern)
+        var strong: [URL] = []
+        var fallback: [URL] = []
+        var seen: Set<String> = []
+
+        for match in imageTags {
+            guard let tag = substring(in: html, nsRange: match.range) else { continue }
+            let raw = firstAttribute(in: tag, names: ["data-src", "data-original", "data-lazy-src", "src"])
+            guard let url = normalizedURL(raw?.replacingOccurrences(of: "\\/", with: "/"), site: site) else {
+                continue
+            }
+            let absolute = url.absoluteString.lowercased()
+            guard absolute != site.webBase.absoluteString.lowercased(),
+                  looksLikeImageURL(absolute),
+                  !absolute.contains("/logo"),
+                  !absolute.contains("/icon"),
+                  !absolute.contains("/avatar"),
+                  !absolute.contains("placeholder") else {
+                continue
+            }
+            guard seen.insert(url.absoluteString).inserted else { continue }
+
+            let alt = firstAttribute(in: tag, names: ["alt", "title"]) ?? ""
+            if alt.contains("第"), (alt.contains("頁") || alt.contains("页")) {
+                strong.append(url)
+            } else if url.host?.lowercased() != site.webBase.host?.lowercased() {
+                fallback.append(url)
+            }
+        }
+
+        if !strong.isEmpty {
+            return strong
+        }
+        return fallback
+    }
+
+    private func inferMyComicVolumeName(from context: String) -> String {
+        let pattern = #"(?is)(單話|单话|單行本|单行本|番外篇|番外話|番外话|番外)"#
+        let matches = matches(in: context, pattern: pattern)
+        if let last = matches.last,
+           let raw = substring(in: context, nsRange: last.range(at: 1)) {
+            return cleanHTMLText(raw)
+        }
+        return "單話"
+    }
+
+    private func myComicVolumeDescriptor(for rawName: String) -> (id: String, name: String, pathWord: String) {
+        let text = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = text.folding(options: [.caseInsensitive, .widthInsensitive], locale: Locale.current)
+        if normalized.contains("番外") {
+            return ("extra", "番外篇", "extra")
+        }
+        if normalized.contains("單行本") || normalized.contains("单行本") {
+            return ("tankobon", "單行本", "tankobon")
+        }
+        return ("single", "單話", "single")
+    }
+
+    private func isLikelyMyComicChapterTitle(_ title: String) -> Bool {
+        let text = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.count <= 40 else { return false }
+        if text.contains("第"), (text.contains("話") || text.contains("话") || text.contains("卷")) {
+            return true
+        }
+        return text.contains("番外")
+    }
+
+    private func myComicChapterOrder(from title: String) -> Double? {
+        let normalized = title.replacingOccurrences(of: ",", with: ".")
+        if let raw = firstMatch(in: normalized, pattern: #"(?is)第\s*([0-9]+(?:\.[0-9]+)?)"#),
+           let value = Double(raw) {
+            return value
+        }
+        if let raw = firstMatch(in: normalized, pattern: #"(?is)([0-9]+(?:\.[0-9]+)?)\s*[話话卷]"#),
+           let value = Double(raw) {
+            return value
+        }
+        return nil
+    }
+
+    private func firstAttribute(in tag: String, names: [String]) -> String? {
+        for name in names {
+            if let value = firstMatch(in: tag, pattern: #"(?is)\b\#(name)\s*=\s*["']([^"']+)["']"#, group: 1) {
+                return value
+            }
+        }
+        return nil
+    }
+
     private func parseManhuaGuiVolumes(html: String, slug: String) -> [ComicVolume] {
         var seenChapterIDs: Set<String> = []
         var volumes: [ComicVolume] = []
@@ -2951,7 +3443,7 @@ final class CopyMangaAPI: @unchecked Sendable {
     private func getJSON(url: URL, cookie: String?, site: MangaSiteConfig, retryTimes: Int) async throws -> [String: Any] {
         return try await retrying(times: retryTimes) {
             try await self.antiBanGuard.check(site: site)
-            await self.apiPacer.waitTurn()
+            try await self.apiPacer.waitTurn()
             self.log("GET JSON: \(url.absoluteString)")
             let request = self.baseRequest(url: url, cookie: cookie, site: site)
             let (data, response) = try await self.session.data(for: request)
@@ -2960,8 +3452,7 @@ final class CopyMangaAPI: @unchecked Sendable {
             }
             guard (200...299).contains(http.statusCode) else {
                 if [403, 429, 503].contains(http.statusCode) {
-                    await self.apiPacer.markThrottled()
-                    await self.antiBanGuard.block(site: site, seconds: 15)
+                    await self.antiBanGuard.block(site: site, seconds: self.banCooldownSeconds(for: site))
                 }
                 throw CopyMangaError.httpStatus(http.statusCode, self.snippet(from: data))
             }
@@ -2969,8 +3460,8 @@ final class CopyMangaAPI: @unchecked Sendable {
                 let payload = try JSONNavigator.object(data: data)
                 if let detail = self.apiDetailMessage(from: payload) {
                     if self.isBanDetail(detail) {
-                        await self.apiPacer.markThrottled()
-                        await self.antiBanGuard.block(site: site, seconds: 15)
+                        await self.antiBanGuard.block(site: site, seconds: self.banCooldownSeconds(for: site))
+                        throw CopyMangaError.parseBlocked(detail)
                     }
                     throw CopyMangaError.apiDetail(detail)
                 }
@@ -2989,7 +3480,7 @@ final class CopyMangaAPI: @unchecked Sendable {
     private func getHTML(url: URL, cookie: String?, site: MangaSiteConfig, retryTimes: Int) async throws -> String {
         return try await retrying(times: retryTimes) {
             try await self.antiBanGuard.check(site: site)
-            await self.apiPacer.waitTurn()
+            try await self.apiPacer.waitTurn()
             self.log("GET HTML: \(url.absoluteString)")
             let request = self.baseRequest(url: url, cookie: cookie, site: site)
             let (data, response) = try await self.session.data(for: request)
@@ -2998,8 +3489,7 @@ final class CopyMangaAPI: @unchecked Sendable {
             }
             guard (200...299).contains(http.statusCode) else {
                 if [403, 429, 503].contains(http.statusCode) {
-                    await self.apiPacer.markThrottled()
-                    await self.antiBanGuard.block(site: site, seconds: 15)
+                    await self.antiBanGuard.block(site: site, seconds: self.banCooldownSeconds(for: site))
                 }
                 throw CopyMangaError.httpStatus(http.statusCode, self.snippet(from: data))
             }
@@ -3007,9 +3497,9 @@ final class CopyMangaAPI: @unchecked Sendable {
             guard let text = self.decodeResponseText(data) else {
                 throw CopyMangaError.unexpectedPayload
             }
-            if text.lowercased().contains("captcha") || text.contains("访问过于频繁") || text.contains("访问受限") {
-                await self.apiPacer.markThrottled()
-                await self.antiBanGuard.block(site: site, seconds: 15)
+            if let blockedReason = self.banReason(in: text) {
+                await self.antiBanGuard.block(site: site, seconds: self.banCooldownSeconds(for: site))
+                throw CopyMangaError.parseBlocked(blockedReason)
             } else {
                 await self.apiPacer.markSuccess()
             }
@@ -3026,7 +3516,7 @@ final class CopyMangaAPI: @unchecked Sendable {
     ) async throws -> String {
         return try await retrying(times: retryTimes) {
             try await self.antiBanGuard.check(site: site)
-            await self.apiPacer.waitTurn()
+            try await self.apiPacer.waitTurn()
             self.log("GET TEXT: \(url.absoluteString)")
             var request = self.baseRequest(url: url, cookie: cookie, site: site)
             for (k, v) in extraHeaders {
@@ -3038,13 +3528,16 @@ final class CopyMangaAPI: @unchecked Sendable {
             }
             guard (200...299).contains(http.statusCode) else {
                 if [403, 429, 503].contains(http.statusCode) {
-                    await self.apiPacer.markThrottled()
-                    await self.antiBanGuard.block(site: site, seconds: 15)
+                    await self.antiBanGuard.block(site: site, seconds: self.banCooldownSeconds(for: site))
                 }
                 throw CopyMangaError.httpStatus(http.statusCode, self.snippet(from: data))
             }
             guard let text = self.decodeResponseText(data) else {
                 throw CopyMangaError.unexpectedPayload
+            }
+            if let blockedReason = self.banReason(in: text) {
+                await self.antiBanGuard.block(site: site, seconds: self.banCooldownSeconds(for: site))
+                throw CopyMangaError.parseBlocked(blockedReason)
             }
             await self.apiPacer.markSuccess()
             return text
@@ -3136,6 +3629,9 @@ final class CopyMangaAPI: @unchecked Sendable {
                     throw error
                 }
                 if case .apiDetail = error {
+                    throw error
+                }
+                if case .parseBlocked = error {
                     throw error
                 }
                 if case .cooldown = error {
@@ -3268,6 +3764,48 @@ final class CopyMangaAPI: @unchecked Sendable {
         return keywords.contains { text.contains($0) }
     }
 
+    private func banReason(in text: String) -> String? {
+        let normalized = text.lowercased()
+        let keywords = [
+            "captcha", "cloudflare", "challenge", "access denied", "forbidden",
+            "访问过于频繁", "访问受限", "频繁", "风控", "限制", "稍后", "拦截"
+        ]
+        guard let matched = keywords.first(where: { normalized.contains($0.lowercased()) }) else {
+            return nil
+        }
+        return "命中风控关键词：\(matched)"
+    }
+
+    private func copyCatalogBlockedReason(
+        html: String,
+        slug: String,
+        expectedChapters: Int?,
+        currentCount: Int,
+        detailCount: Int,
+        staticAnchorCount: Int
+    ) -> String? {
+        if let direct = banReason(in: html) {
+            return direct
+        }
+        guard currentCount == 0, detailCount == 0, staticAnchorCount == 0 else {
+            return nil
+        }
+        let text = cleanHTMLText(html)
+        let hasReadEntry = text.contains("开始阅读") || text.contains("開始閱讀")
+        let hasCatalogHints = text.contains("章节") || text.contains("章節") || html.contains("comicdetail/")
+        if let expectedChapters, expectedChapters >= 10, !hasReadEntry {
+            return "页面声明约 \(expectedChapters) 话，但目录锚点与探测结果均为空"
+        }
+        if html.contains("comicDetailAds") && !hasReadEntry && !hasCatalogHints {
+            return "页面仅返回空壳结构，未发现目录骨架"
+        }
+        return nil
+    }
+
+    private func banCooldownSeconds(for site: MangaSiteConfig) -> Int {
+        isCopyFamily(site) ? copyBanCooldownSeconds : 15
+    }
+
     private func log(_ message: String) {
         logger?("[接口] \(message)")
     }
@@ -3345,6 +3883,13 @@ actor EndpointCache {
         defaults.set("\(value.baseURL.absoluteString)|\(value.pathPrefix)", forKey: "\(prefix)\(key)")
     }
 
+    func clear() {
+        store.removeAll()
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
     private func key(for site: MangaSiteConfig) -> String {
         site.webBase.host?.lowercased() ?? site.displayName.lowercased()
     }
@@ -3372,6 +3917,11 @@ actor SiteHeuristicsCache {
             defaults.set(Array(preferRenderedDOMHosts).sorted(), forKey: key)
         }
     }
+
+    func clear() {
+        preferRenderedDOMHosts.removeAll()
+        defaults.removeObject(forKey: key)
+    }
 }
 
 actor ComicInfoCache {
@@ -3396,6 +3946,10 @@ actor ComicInfoCache {
     func set(_ info: ComicInfo, slug: String, site: MangaSiteConfig) {
         let key = cacheKey(slug: slug, site: site)
         store[key] = Entry(value: info, expiresAt: Date().addingTimeInterval(ttl))
+    }
+
+    func clear() {
+        store.removeAll()
     }
 
     private func cacheKey(slug: String, site: MangaSiteConfig) -> String {
@@ -3458,6 +4012,13 @@ actor CopyMirrorHealthCache {
         persist()
     }
 
+    func clear() {
+        preferredHosts.removeAll()
+        cooldownUntil.removeAll()
+        defaults.removeObject(forKey: preferredKey)
+        defaults.removeObject(forKey: cooldownKey)
+    }
+
     private func rank(_ site: MangaSiteConfig, index: Int, requestedHost: String?) -> (Int, Int, Int, Int) {
         let host = site.webBase.host?.lowercased()
         let cooling = host.flatMap { cooldownUntil[$0] }.map { $0 > Date() } == true ? 1 : 0
@@ -3513,6 +4074,10 @@ actor TextAssetCache {
             expiresAt: Date().addingTimeInterval(ttl)
         )
     }
+
+    func clear() {
+        store.removeAll()
+    }
 }
 
 actor ChapterImageURLCache {
@@ -3541,6 +4106,10 @@ actor ChapterImageURLCache {
     func set(_ urls: [URL], slug: String, chapterID: String, site: MangaSiteConfig) {
         let key = cacheKey(slug: slug, chapterID: chapterID, site: site)
         store[key] = Entry(urls: urls, expiresAt: Date().addingTimeInterval(ttl))
+    }
+
+    func clear() {
+        store.removeAll()
     }
 
     private func cacheKey(slug: String, chapterID: String, site: MangaSiteConfig) -> String {
@@ -3573,5 +4142,9 @@ actor AntiBanGuard {
             return
         }
         blockedUntil[key] = until
+    }
+
+    func clear() {
+        blockedUntil.removeAll()
     }
 }

@@ -21,6 +21,14 @@ struct MangaSiteConfig: Hashable, Codable {
             URL(string: "https://www.manhuagui.com")!
         ]
     )
+
+    static let myComic = MangaSiteConfig(
+        displayName: "MYCOMIC",
+        webBase: URL(string: "https://mycomic.com")!,
+        apiBaseURLs: [
+            URL(string: "https://mycomic.com")!
+        ]
+    )
 }
 
 enum CopyMangaMirror: String, CaseIterable, Identifiable {

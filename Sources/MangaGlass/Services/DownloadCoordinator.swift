@@ -3,6 +3,151 @@ import UserNotifications
 
 @MainActor
 final class DownloadCoordinator: ObservableObject {
+    private struct ChapterFailureTracker {
+        var notFound = 0
+        var throttled = 0
+        var timeout = 0
+
+        mutating func reset() {
+            notFound = 0
+            throttled = 0
+            timeout = 0
+        }
+    }
+
+    private enum ImageFailureKind {
+        case notFound
+        case throttled
+        case timeout
+    }
+
+    private struct DownloadProtectionState {
+        private let chapter404StopThreshold: Int
+        private let chapterThrottleStopThreshold: Int
+        private let chapterTimeoutStopThreshold: Int
+        private let hostThrottleCooldownThreshold: Int
+        private let hostTimeoutCooldownThreshold: Int
+        private let hostThrottleCooldownSeconds: TimeInterval
+        private let hostTimeoutCooldownSeconds: TimeInterval
+
+        private var chapterFailureTrackers: [UUID: ChapterFailureTracker] = [:]
+        private var hostThrottleFailures: [String: Int] = [:]
+        private var hostTimeoutFailures: [String: Int] = [:]
+        private var hostCooldownUntil: [String: Date] = [:]
+
+        init(
+            chapter404StopThreshold: Int,
+            chapterThrottleStopThreshold: Int,
+            chapterTimeoutStopThreshold: Int,
+            hostThrottleCooldownThreshold: Int,
+            hostTimeoutCooldownThreshold: Int,
+            hostThrottleCooldownSeconds: TimeInterval,
+            hostTimeoutCooldownSeconds: TimeInterval
+        ) {
+            self.chapter404StopThreshold = chapter404StopThreshold
+            self.chapterThrottleStopThreshold = chapterThrottleStopThreshold
+            self.chapterTimeoutStopThreshold = chapterTimeoutStopThreshold
+            self.hostThrottleCooldownThreshold = hostThrottleCooldownThreshold
+            self.hostTimeoutCooldownThreshold = hostTimeoutCooldownThreshold
+            self.hostThrottleCooldownSeconds = hostThrottleCooldownSeconds
+            self.hostTimeoutCooldownSeconds = hostTimeoutCooldownSeconds
+        }
+
+        mutating func clear() {
+            chapterFailureTrackers = [:]
+            hostThrottleFailures = [:]
+            hostTimeoutFailures = [:]
+            hostCooldownUntil = [:]
+        }
+
+        mutating func prune(aliveIDs: Set<UUID>) {
+            chapterFailureTrackers = chapterFailureTrackers.filter { aliveIDs.contains($0.key) }
+        }
+
+        mutating func reset(itemID: UUID) {
+            chapterFailureTrackers.removeValue(forKey: itemID)
+        }
+
+        mutating func noteSuccess(itemID: UUID, host: String?) {
+            if var tracker = chapterFailureTrackers[itemID] {
+                tracker.reset()
+                chapterFailureTrackers[itemID] = tracker
+            }
+            guard let host else { return }
+            hostThrottleFailures[host] = 0
+            hostTimeoutFailures[host] = 0
+            if let until = hostCooldownUntil[host], until <= Date() {
+                hostCooldownUntil.removeValue(forKey: host)
+            }
+        }
+
+        mutating func noteFailure(itemID: UUID, host: String?, kind: ImageFailureKind) -> (message: String?, cooldownHost: String?) {
+            var tracker = chapterFailureTrackers[itemID] ?? ChapterFailureTracker()
+            switch kind {
+            case .notFound:
+                tracker.notFound += 1
+                tracker.throttled = 0
+                tracker.timeout = 0
+                chapterFailureTrackers[itemID] = tracker
+                if tracker.notFound >= chapter404StopThreshold {
+                    return ("该章节连续 404，已停止继续请求。", nil)
+                }
+            case .throttled:
+                tracker.throttled += 1
+                tracker.notFound = 0
+                tracker.timeout = 0
+                chapterFailureTrackers[itemID] = tracker
+                if let host {
+                    let count = (hostThrottleFailures[host] ?? 0) + 1
+                    hostThrottleFailures[host] = count
+                    if count >= hostThrottleCooldownThreshold {
+                        hostCooldownUntil[host] = Date().addingTimeInterval(hostThrottleCooldownSeconds)
+                        hostThrottleFailures[host] = 0
+                        if tracker.throttled >= chapterThrottleStopThreshold {
+                            return ("该章节连续触发风控，已停止继续请求。", host)
+                        }
+                        return (nil, host)
+                    }
+                }
+                if tracker.throttled >= chapterThrottleStopThreshold {
+                    return ("该章节连续触发风控，已停止继续请求。", nil)
+                }
+            case .timeout:
+                tracker.timeout += 1
+                tracker.notFound = 0
+                tracker.throttled = 0
+                chapterFailureTrackers[itemID] = tracker
+                if let host {
+                    let count = (hostTimeoutFailures[host] ?? 0) + 1
+                    hostTimeoutFailures[host] = count
+                    if count >= hostTimeoutCooldownThreshold {
+                        hostCooldownUntil[host] = Date().addingTimeInterval(hostTimeoutCooldownSeconds)
+                        hostTimeoutFailures[host] = 0
+                        if tracker.timeout >= chapterTimeoutStopThreshold {
+                            return ("该章节连续超时，已停止继续请求。", host)
+                        }
+                        return (nil, host)
+                    }
+                }
+                if tracker.timeout >= chapterTimeoutStopThreshold {
+                    return ("该章节连续超时，已停止继续请求。", nil)
+                }
+            }
+            return (nil, nil)
+        }
+
+        mutating func cooldownRemaining(for host: String?) -> TimeInterval? {
+            guard let host else { return nil }
+            guard let until = hostCooldownUntil[host] else { return nil }
+            let remaining = until.timeIntervalSinceNow
+            if remaining > 0 {
+                return remaining
+            }
+            hostCooldownUntil.removeValue(forKey: host)
+            return nil
+        }
+    }
+
     @Published var taskItems: [DownloadTaskItem] = []
     @Published var progress: Double = 0
     @Published var isRunning = false
@@ -35,19 +180,38 @@ final class DownloadCoordinator: ObservableObject {
     private var chapterExpectedPages: [UUID: Int] = [:]
     private var chapterCompletedPages: [UUID: Int] = [:]
     private var chapterResolvedPageCounts: Set<UUID> = []
+    private var explicitlyCanceledItemIDs: Set<UUID> = []
     private var shouldUseGroupFolder = true
     private var sleepActivity: NSObjectProtocol?
     private var downloadStartTime: Date?
     private var lastSpeedSampleTime: Date?
     private var lastSpeedSampleCompletedPages = 0
     private var smoothedPagesPerSecond: Double?
-
+    private var currentRunID = UUID()
+    private var progressRefreshTask: Task<Void, Never>?
+    private var isCancelling = false
     private let speedSampleInterval: TimeInterval = 1.0
     private let etaWarmupDuration: TimeInterval = 5
     private let etaMinimumCompletedPages = 8
     private let etaResolvedChapterThreshold = 3
     private let etaKnownPageThreshold = 60
     private let speedSmoothingFactor = 0.3
+    private let chapter404StopThreshold = 4
+    private let chapterThrottleStopThreshold = 3
+    private let chapterTimeoutStopThreshold = 3
+    private let hostThrottleCooldownThreshold = 3
+    private let hostTimeoutCooldownThreshold = 3
+    private let hostThrottleCooldownSeconds: TimeInterval = 90
+    private let hostTimeoutCooldownSeconds: TimeInterval = 45
+    private var protectionState = DownloadProtectionState(
+        chapter404StopThreshold: 4,
+        chapterThrottleStopThreshold: 3,
+        chapterTimeoutStopThreshold: 3,
+        hostThrottleCooldownThreshold: 3,
+        hostTimeoutCooldownThreshold: 3,
+        hostThrottleCooldownSeconds: 90,
+        hostTimeoutCooldownSeconds: 45
+    )
 
     init(api: CopyMangaAPI) {
         self.api = api
@@ -141,6 +305,11 @@ final class DownloadCoordinator: ObservableObject {
         chapterExpectedPages = [:]
         chapterCompletedPages = [:]
         chapterResolvedPageCounts = []
+        explicitlyCanceledItemIDs = []
+        progressRefreshTask?.cancel()
+        progressRefreshTask = nil
+        isCancelling = false
+        protectionState.clear()
         resetSpeedEstimateState()
     }
 
@@ -149,6 +318,7 @@ final class DownloadCoordinator: ObservableObject {
         chapterExpectedPages = chapterExpectedPages.filter { alive.contains($0.key) }
         chapterCompletedPages = chapterCompletedPages.filter { alive.contains($0.key) }
         chapterResolvedPageCounts = chapterResolvedPageCounts.intersection(alive)
+        protectionState.prune(aliveIDs: alive)
     }
 
     func failedItems() -> [DownloadTaskItem] {
@@ -174,6 +344,8 @@ final class DownloadCoordinator: ObservableObject {
 
         isRunning = true
         isPaused = false
+        isCancelling = false
+        currentRunID = UUID()
         message = "下载开始..."
         updateCurrentTaskTitle()
         log("下载开始：并发 \(maxConcurrent)")
@@ -185,6 +357,7 @@ final class DownloadCoordinator: ObservableObject {
         }
 
         let items = taskItems
+        let runID = currentRunID
         masterTask = Task { [weak self] in
             guard let self else { return }
             await self.pauseGate.resume()
@@ -197,7 +370,7 @@ final class DownloadCoordinator: ObservableObject {
                         group.addTask { [weak self] in
                             guard let self else { return }
                             if Task.isCancelled { return }
-                            await self.run(item: item)
+                            await self.run(item: item, runID: runID)
                         }
                     }
                 }
@@ -208,15 +381,17 @@ final class DownloadCoordinator: ObservableObject {
                         group.addTask { [weak self] in
                             guard let self else { return }
                             if Task.isCancelled { return }
-                            await self.run(item: item)
+                            await self.run(item: item, runID: runID)
                         }
                     }
                 }
             }
 
             await MainActor.run {
+                guard self.currentRunID == runID else { return }
                 self.isRunning = false
                 self.isPaused = false
+                self.isCancelling = false
                 self.applySleepAssertion(active: false)
                 self.resetSpeedEstimateState()
                 self.updateCurrentTaskTitle()
@@ -260,45 +435,83 @@ final class DownloadCoordinator: ObservableObject {
         guard isRunning else { return }
         message = "正在取消..."
         log("收到取消请求")
+        isCancelling = true
+        currentRunID = UUID()
         masterTask?.cancel()
         Task { await pauseGate.resume() }
+        progressRefreshTask?.cancel()
+        progressRefreshTask = nil
 
-        for idx in taskItems.indices {
-            switch taskItems[idx].state {
+        let canceledIDs = Set(taskItems.compactMap { item -> UUID? in
+            switch item.state {
             case .queued, .running:
-                taskItems[idx].state = .canceled
+                return item.id
+            default:
+                return nil
+            }
+        })
+        explicitlyCanceledItemIDs.formUnion(canceledIDs)
+        taskItems = taskItems.map { item in
+            var updated = item
+            switch updated.state {
+            case .queued, .running:
+                updated.state = .canceled
             default:
                 break
             }
+            return updated
         }
-        updateProgress()
         isRunning = false
         isPaused = false
         message = "已取消。"
         resetSpeedEstimateState()
+        updateProgress()
         updateCurrentTaskTitle()
         applySleepAssertion(active: false)
         log("下载已取消")
     }
 
-    private func run(item: DownloadTaskItem) async {
-        if Task.isCancelled {
-            await MainActor.run { self.setState(.canceled, for: item.id) }
+    func cancelItem(_ id: UUID) {
+        explicitlyCanceledItemIDs.insert(id)
+        if let idx = taskItems.firstIndex(where: { $0.id == id }) {
+            switch taskItems[idx].state {
+            case .queued, .running:
+                taskItems[idx].state = .canceled
+                scheduleProgressRefresh(force: true)
+            default:
+                break
+            }
+        }
+    }
+
+    private func run(item: DownloadTaskItem, runID: UUID) async {
+        if Task.isCancelled || !shouldContinue(runID: runID, itemID: item.id) {
+            await MainActor.run {
+                if self.currentRunID == runID {
+                    self.setState(.canceled, for: item.id)
+                }
+            }
             return
         }
 
         await pauseGate.waitIfPaused()
-        if Task.isCancelled {
-            await MainActor.run { self.setState(.canceled, for: item.id) }
+        if Task.isCancelled || !shouldContinue(runID: runID, itemID: item.id) {
+            await MainActor.run {
+                if self.currentRunID == runID {
+                    self.setState(.canceled, for: item.id)
+                }
+            }
             return
         }
 
         await MainActor.run {
+            guard self.currentRunID == runID, !self.explicitlyCanceledItemIDs.contains(item.id) else { return }
             self.setState(.running, for: item.id)
             self.setChapterExpectedPages(1, for: item.id, resolved: false)
             self.setChapterCompletedPages(0, for: item.id)
+            self.resetDownloadProtection(for: item.id)
             self.currentTaskTitle = "[\(item.chapter.volumeName)] \(item.chapter.displayName)"
-            self.updateProgress()
+            self.scheduleProgressRefresh()
         }
         log("开始章节：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName)")
 
@@ -312,30 +525,41 @@ final class DownloadCoordinator: ObservableObject {
                 preferredBaseURL: item.comic.apiBaseURL,
                 cookie: item.cookie
             )
+            try Task.checkCancellation()
+            guard shouldContinue(runID: runID, itemID: item.id) else {
+                throw CancellationError()
+            }
             await MainActor.run {
+                guard self.currentRunID == runID, !self.explicitlyCanceledItemIDs.contains(item.id) else { return }
                 self.setChapterExpectedPages(max(1, imageURLs.count), for: item.id, resolved: true)
                 self.setChapterCompletedPages(min(self.chapterCompletedPages[item.id] ?? 0, max(1, imageURLs.count)), for: item.id)
-                self.updateProgress()
+                self.scheduleProgressRefresh()
             }
-            try await downloadChapter(item: item, imageURLs: imageURLs)
+            try await downloadChapter(item: item, imageURLs: imageURLs, runID: runID)
             await MainActor.run {
+                guard self.currentRunID == runID else { return }
                 self.setState(.done, for: item.id)
                 self.markChapterFinished(for: item.id)
-                self.updateProgress()
+                self.resetDownloadProtection(for: item.id)
+                self.scheduleProgressRefresh(force: true)
             }
             log("章节完成：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName)，共 \(imageURLs.count) 张")
         } catch is CancellationError {
             await MainActor.run {
+                guard self.currentRunID == runID || self.explicitlyCanceledItemIDs.contains(item.id) else { return }
                 self.setState(.canceled, for: item.id)
                 self.markChapterFinished(for: item.id)
-                self.updateProgress()
+                self.resetDownloadProtection(for: item.id)
+                self.scheduleProgressRefresh(force: true)
             }
             log("章节取消：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName)")
         } catch {
             await MainActor.run {
+                guard self.currentRunID == runID else { return }
                 self.setState(.failed(error.localizedDescription), for: item.id)
                 self.markChapterFinished(for: item.id)
-                self.updateProgress()
+                self.resetDownloadProtection(for: item.id)
+                self.scheduleProgressRefresh(force: true)
             }
             log("章节失败：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName) - \(error.localizedDescription)")
         }
@@ -379,7 +603,7 @@ final class DownloadCoordinator: ObservableObject {
         taskItems[idx].state = state
     }
 
-    private func downloadChapter(item: DownloadTaskItem, imageURLs: [URL]) async throws {
+    private func downloadChapter(item: DownloadTaskItem, imageURLs: [URL], runID: UUID) async throws {
         let comicFolder = item.destination.appendingPathComponent(sanitize(item.comic.name), isDirectory: true)
         let groupName = canonicalGroupName(item.chapter.volumeName)
         
@@ -414,22 +638,37 @@ final class DownloadCoordinator: ObservableObject {
                         try Task.checkCancellation()
                         await self.pauseGate.waitIfPaused()
                         try Task.checkCancellation()
+                        let shouldContinue = await MainActor.run {
+                            self.shouldContinue(runID: runID, itemID: item.id)
+                        }
+                        guard shouldContinue else {
+                            throw CancellationError()
+                        }
                         try await self.downloadImage(
                             url: imageURL,
                             to: chapterFolder,
                             fileName: self.fileName(comic: item.comic.name, volume: groupName, chapter: item.chapter.displayName, index: index + 1),
+                            refererURL: self.api.imageRefererURL(slug: item.comic.slug, chapterUUID: item.chapter.uuid, site: item.comic.site),
                             site: item.comic.site,
-                            cookie: item.cookie
+                            cookie: item.cookie,
+                            runID: runID,
+                            itemID: item.id
                         )
                     }
                 }
             }
 
             while let _ = try await group.next() {
+                try Task.checkCancellation()
+                guard shouldContinue(runID: runID, itemID: item.id) else {
+                    throw CancellationError()
+                }
                 completedCount += 1
                 await MainActor.run { [weak self] in
-                    self?.increaseCompletedPage(for: item.id)
-                    self?.updateProgress()
+                    guard let self else { return }
+                    guard self.currentRunID == runID, !self.explicitlyCanceledItemIDs.contains(item.id) else { return }
+                    self.increaseCompletedPage(for: item.id)
+                    self.scheduleProgressRefresh()
                 }
                 if completedCount % 20 == 0 || completedCount == imageURLs.count {
                     log("章节进度：[\(item.chapter.volumeName)] \(item.chapter.displayName) \(completedCount)/\(imageURLs.count)")
@@ -441,12 +680,21 @@ final class DownloadCoordinator: ObservableObject {
                         try Task.checkCancellation()
                         await self.pauseGate.waitIfPaused()
                         try Task.checkCancellation()
+                        let shouldContinue = await MainActor.run {
+                            self.shouldContinue(runID: runID, itemID: item.id)
+                        }
+                        guard shouldContinue else {
+                            throw CancellationError()
+                        }
                         try await self.downloadImage(
                             url: imageURL,
                             to: chapterFolder,
                             fileName: self.fileName(comic: item.comic.name, volume: groupName, chapter: item.chapter.displayName, index: index + 1),
+                            refererURL: self.api.imageRefererURL(slug: item.comic.slug, chapterUUID: item.chapter.uuid, site: item.comic.site),
                             site: item.comic.site,
-                            cookie: item.cookie
+                            cookie: item.cookie,
+                            runID: runID,
+                            itemID: item.id
                         )
                     }
                 }
@@ -454,7 +702,16 @@ final class DownloadCoordinator: ObservableObject {
         }
     }
 
-    private func downloadImage(url: URL, to folder: URL, fileName: String, site: MangaSiteConfig, cookie: String?) async throws {
+    private func downloadImage(
+        url: URL,
+        to folder: URL,
+        fileName: String,
+        refererURL: URL?,
+        site: MangaSiteConfig,
+        cookie: String?,
+        runID: UUID,
+        itemID: UUID
+    ) async throws {
         let dst = folder.appendingPathComponent(fileName)
         if fileManager.fileExists(atPath: dst.path) {
             return
@@ -464,28 +721,54 @@ final class DownloadCoordinator: ObservableObject {
         var lastError: Error?
 
         for (index, candidate) in candidates.enumerated() {
+            if let remaining = hostCooldownRemaining(for: candidate.host?.lowercased()) {
+                if index + 1 < candidates.count {
+                    log("图片 host 冷却中，跳过候选：\(candidate.host ?? "-")，剩余约 \(Int(remaining.rounded()))s")
+                    continue
+                }
+                throw DownloadCircuitBreakError(message: "图片 host 风控冷却中，已暂停该章节请求。")
+            }
             do {
                 try await retrying(times: 3) {
                     try Task.checkCancellation()
+                    guard self.shouldContinue(runID: runID, itemID: itemID) else {
+                        throw CancellationError()
+                    }
                     let pacer = self.pacer(for: site)
-                    await pacer.waitTurn()
+                    try await pacer.waitTurn()
+                    try Task.checkCancellation()
+                    guard self.shouldContinue(runID: runID, itemID: itemID) else {
+                        throw CancellationError()
+                    }
                     var req = URLRequest(url: candidate)
-                    req.setValue(site.webBase.absoluteString, forHTTPHeaderField: "Referer")
+                    req.setValue((refererURL ?? site.webBase).absoluteString, forHTTPHeaderField: "Referer")
                     req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36", forHTTPHeaderField: "User-Agent")
                     if let cookie, !cookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         req.setValue(cookie, forHTTPHeaderField: "Cookie")
                     }
                     let (data, response) = try await self.session.data(for: req)
+                    try Task.checkCancellation()
+                    guard self.shouldContinue(runID: runID, itemID: itemID) else {
+                        throw CancellationError()
+                    }
                     guard let http = response as? HTTPURLResponse else {
                         throw URLError(.badServerResponse)
                     }
                     guard (200...299).contains(http.statusCode) else {
                         if [403, 429, 503].contains(http.statusCode) {
                             await pacer.markThrottled()
+                            if let stopMessage = self.noteImageFailure(itemID: itemID, host: candidate.host?.lowercased(), kind: .throttled) {
+                                throw DownloadCircuitBreakError(message: stopMessage)
+                            }
+                        } else if http.statusCode == 404 {
+                            if let stopMessage = self.noteImageFailure(itemID: itemID, host: candidate.host?.lowercased(), kind: .notFound) {
+                                throw DownloadCircuitBreakError(message: stopMessage)
+                            }
                         }
                         throw DownloadRequestError.httpStatus(http.statusCode, retryAfter: self.retryAfter(from: http))
                     }
                     await pacer.markSuccess()
+                    self.noteImageSuccess(itemID: itemID, host: candidate.host?.lowercased())
                     try data.write(to: dst, options: .atomic)
                     self.rememberPreferredHost(from: candidate, site: site)
                 }
@@ -494,9 +777,14 @@ final class DownloadCoordinator: ObservableObject {
                 lastError = error
                 log("图片 404，切换备用域名重试：\(candidate.host ?? "-") -> \(candidates[index + 1].host ?? "-")")
                 continue
+            } catch let error as DownloadCircuitBreakError {
+                throw error
             } catch {
                 if let urlError = error as? URLError, urlError.code == .timedOut {
                     await self.pacer(for: site).markThrottled()
+                    if let stopMessage = self.noteImageFailure(itemID: itemID, host: candidate.host?.lowercased(), kind: .timeout) {
+                        throw DownloadCircuitBreakError(message: stopMessage)
+                    }
                     log("图片请求超时，自动降速后重试：\(candidate.absoluteString)")
                 }
                 throw error
@@ -617,6 +905,29 @@ final class DownloadCoordinator: ObservableObject {
         smoothedPagesPerSecond = nil
     }
 
+    private func scheduleProgressRefresh(force: Bool = false) {
+        if force {
+            progressRefreshTask?.cancel()
+            progressRefreshTask = nil
+            updateProgress()
+            return
+        }
+        guard !isCancelling, progressRefreshTask == nil else { return }
+        progressRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            await MainActor.run {
+                guard let self else { return }
+                self.progressRefreshTask = nil
+                guard !self.isCancelling else { return }
+                self.updateProgress()
+            }
+        }
+    }
+
+    private func shouldContinue(runID: UUID, itemID: UUID) -> Bool {
+        currentRunID == runID && !isCancelling && !explicitlyCanceledItemIDs.contains(itemID)
+    }
+
     private func updateSpeedEstimate(elapsed: TimeInterval, currentCompleted: Int) {
         let now = Date()
         if lastSpeedSampleTime == nil {
@@ -731,7 +1042,7 @@ final class DownloadCoordinator: ObservableObject {
 
     private func classifyFailure(_ reason: String) -> String {
         let normalized = reason.lowercased()
-        if normalized.contains("403") || normalized.contains("429") || normalized.contains("503") || normalized.contains("风控") {
+        if normalized.contains("403") || normalized.contains("429") || normalized.contains("503") || normalized.contains("风控") || normalized.contains("冷却") {
             return "403/限流/风控"
         }
         if normalized.contains("timed out") || normalized.contains("timeout") || normalized.contains("超时") {
@@ -813,6 +1124,28 @@ final class DownloadCoordinator: ObservableObject {
         }
     }
 
+    private func resetDownloadProtection(for itemID: UUID) {
+        protectionState.reset(itemID: itemID)
+    }
+
+    private func noteImageSuccess(itemID: UUID, host: String?) {
+        protectionState.noteSuccess(itemID: itemID, host: host)
+    }
+
+    private func noteImageFailure(itemID: UUID, host: String?, kind: ImageFailureKind) -> String? {
+        let outcome = protectionState.noteFailure(itemID: itemID, host: host, kind: kind)
+        if let cooldownHost = outcome.cooldownHost {
+            let seconds = kind == .timeout ? Int(hostTimeoutCooldownSeconds) : Int(hostThrottleCooldownSeconds)
+            let reason = kind == .timeout ? "连续超时" : "连续风控"
+            log("图片 host 进入冷却：\(cooldownHost) \(seconds)s（\(reason)）")
+        }
+        return outcome.message
+    }
+
+    private func hostCooldownRemaining(for host: String?) -> TimeInterval? {
+        protectionState.cooldownRemaining(for: host)
+    }
+
     private func pacer(for site: MangaSiteConfig) -> RequestPacer {
         if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
             return manhuaGuiPacer
@@ -861,6 +1194,12 @@ private struct DownloadRequestError: LocalizedError {
     }
 }
 
+private struct DownloadCircuitBreakError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
+}
+
 actor RequestPacer {
     private let minDelayMS: Int
     private let maxDelayMS: Int
@@ -878,15 +1217,17 @@ actor RequestPacer {
         self.relaxStepMS = max(1, relaxStepMS)
     }
 
-    func waitTurn() async {
+    func waitTurn() async throws {
+        try Task.checkCancellation()
         let spacingMS = Int.random(in: minDelayMS...maxDelayMS) + penaltyMS
         let now = Date()
         let scheduled = max(now, nextAllowedAt)
         nextAllowedAt = scheduled.addingTimeInterval(Double(spacingMS) / 1000.0)
         let waitMS = Int(max(0, scheduled.timeIntervalSince(now) * 1000))
         if waitMS > 0 {
-            try? await Task.sleep(for: .milliseconds(waitMS))
+            try await Task.sleep(for: .milliseconds(waitMS))
         }
+        try Task.checkCancellation()
     }
 
     func markThrottled() {

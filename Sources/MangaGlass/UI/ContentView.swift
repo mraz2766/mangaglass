@@ -16,6 +16,96 @@ struct ContentView: View {
         case vertical
     }
 
+    private struct CompactMetaItem {
+        let title: String
+        let value: String
+    }
+
+    private enum LayoutSizeClass {
+        case narrow
+        case regular
+        case wide
+    }
+
+    private struct LayoutMetrics {
+        let sizeClass: LayoutSizeClass
+        let width: CGFloat
+
+        var isNarrow: Bool { sizeClass == .narrow }
+        var isWide: Bool { sizeClass == .wide }
+
+        var pagePadding: CGFloat {
+            switch sizeClass {
+            case .narrow: return 10
+            case .regular: return 12
+            case .wide: return 16
+            }
+        }
+
+        var sectionSpacing: CGFloat {
+            switch sizeClass {
+            case .narrow: return 10
+            case .regular: return 12
+            case .wide: return 14
+            }
+        }
+
+        var sidePanelWidth: CGFloat {
+            min(max(width * 0.235, 230), isWide ? 296 : 272)
+        }
+
+        var coverWidth: CGFloat {
+            switch sizeClass {
+            case .narrow: return min(max(width * 0.15, 108), 132)
+            case .regular: return 118
+            case .wide: return 128
+            }
+        }
+
+        var coverHeight: CGFloat {
+            switch sizeClass {
+            case .narrow: return coverWidth * 1.38
+            case .regular: return 184
+            case .wide: return 198
+            }
+        }
+
+        var chapterColumns: Int {
+            switch sizeClass {
+            case .narrow:
+                return width < 760 ? 1 : 2
+            case .regular:
+                return width < 1180 ? 5 : 6
+            case .wide:
+                return width < 1500 ? 6 : 7
+            }
+        }
+
+        var sortControlWidth: CGFloat {
+            switch sizeClass {
+            case .narrow: return 102
+            case .regular: return 114
+            case .wide: return 126
+            }
+        }
+
+        var toolbarLeadingWidth: CGFloat {
+            switch sizeClass {
+            case .narrow: return width
+            case .regular: return 278
+            case .wide: return 308
+            }
+        }
+
+        var toolbarActionWidth: CGFloat {
+            switch sizeClass {
+            case .narrow: return width
+            case .regular: return 188
+            case .wide: return 212
+            }
+        }
+    }
+
     @StateObject private var vm = MainViewModel()
     @State private var chapterFrames: [String: CGRect] = [:]
     @State private var dragStart: CGPoint?
@@ -54,36 +144,36 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let compact = proxy.size.width < 1000
+            let metrics = layoutMetrics(for: proxy.size.width)
 
             ZStack {
                 background
 
-                VStack(spacing: 12) {
-                    toolbar(compact: compact)
+                VStack(spacing: metrics.sectionSpacing) {
+                    toolbar(metrics: metrics)
 
                     Group {
-                        if compact {
-                            VStack(spacing: 12) {
-                                sidePanel(compact: compact)
-                                chapterPanel(compact: compact)
+                        if metrics.isNarrow {
+                            VStack(spacing: metrics.sectionSpacing) {
+                                sidePanel(metrics: metrics)
+                                chapterPanel(metrics: metrics)
                             }
                         } else {
-                            HStack(alignment: .top, spacing: 12) {
-                                sidePanel(compact: compact)
-                                chapterPanel(compact: compact)
+                            HStack(alignment: .top, spacing: metrics.sectionSpacing) {
+                                sidePanel(metrics: metrics)
+                                chapterPanel(metrics: metrics)
                             }
                         }
                     }
                     .layoutPriority(1)
 
-                    simplifiedDownloadPanel
+                    simplifiedDownloadPanel(metrics: metrics)
                 }
-                .padding(12)
+                .padding(metrics.pagePadding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 840, minHeight: 600)
+        .frame(minWidth: 720, minHeight: 540)
     }
 
     private var background: some View {
@@ -124,95 +214,117 @@ struct ContentView: View {
         }
     }
 
-    private func toolbar(compact: Bool) -> some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                toolbarIcon
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 30, height: 30)
-                    .padding(5)
-                    .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.white.opacity(0.58), lineWidth: 0.8)
-                    )
-                    .shadow(color: Color.black.opacity(0.08), radius: 6, y: 3)
+    private func toolbar(metrics: LayoutMetrics) -> some View {
+        VStack(spacing: 8) {
+            if metrics.isNarrow {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        toolbarBrand(size: metrics.isWide ? 34 : 30)
+                        Spacer(minLength: 0)
+                        siteEntryMenu(compact: true)
+                    }
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("MangaGlass")
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    Text("输入链接、解析目录、批量下载")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                    HStack(spacing: 8) {
+                        TextField("输入漫画链接或 path_word", text: $vm.inputURL)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .submitLabel(.go)
+                            .onSubmit { vm.loadComic() }
+
+                        Button(vm.isLoading ? "加载中" : "加载") {
+                            vm.loadComic()
+                        }
+                        .buttonStyle(ActionButtonStyle(variant: .primary))
+                        .disabled(vm.isLoading)
+                        .keyboardShortcut(.defaultAction)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button("选择目录") { vm.chooseDestination() }
+                            .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        Button("清缓存") { vm.clearCaches() }
+                            .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        Spacer(minLength: 0)
+                        parseStatusChip
+                        Button("加入队列") { vm.startDownload() }
+                            .buttonStyle(ActionButtonStyle(variant: .accent))
+                            .disabled(vm.comic == nil && vm.downloader.taskItems.isEmpty)
+                    }
+
+                    Text(vm.destinationFolder.path)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
-                }
-                .padding(.trailing, 4)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
 
-                Menu("拷贝漫画") {
-                    ForEach(CopyMangaMirror.allCases) { mirror in
-                        Button(mirror.displayName) {
-                            openInBrowser(mirror.webBaseURL.absoluteString)
+                    if !vm.recentRecords.isEmpty {
+                        recentOpenMenu
+                    }
+                }
+            } else {
+                toolbarAlignedRow(
+                    leadingWidth: metrics.toolbarLeadingWidth,
+                    actionWidth: metrics.toolbarActionWidth,
+                    leading: {
+                        HStack(spacing: 8) {
+                            toolbarBrand(size: metrics.isWide ? 34 : 30)
+                            siteEntryMenu(compact: false)
+                        }
+                    },
+                    center: {
+                        TextField("输入漫画链接或 path_word", text: $vm.inputURL)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .submitLabel(.go)
+                            .onSubmit { vm.loadComic() }
+                    },
+                    actions: {
+                        HStack(spacing: 8) {
+                            Spacer(minLength: 0)
+                            Button(vm.isLoading ? "加载中" : "加载") {
+                                vm.loadComic()
+                            }
+                            .buttonStyle(ActionButtonStyle(variant: .primary))
+                            .disabled(vm.isLoading)
+                            .keyboardShortcut(.defaultAction)
                         }
                     }
-                }
-                .buttonStyle(ActionButtonStyle(variant: .ghost))
+                )
 
-                Button("漫画柜") {
-                    openInBrowser("https://www.manhuagui.com")
-                }
-                .buttonStyle(ActionButtonStyle(variant: .ghost))
+                toolbarAlignedRow(
+                    leadingWidth: metrics.toolbarLeadingWidth,
+                    actionWidth: metrics.toolbarActionWidth,
+                    leading: {
+                        HStack(spacing: 8) {
+                            Button("选择目录") { vm.chooseDestination() }
+                                .buttonStyle(ActionButtonStyle(variant: .neutral))
+                            Button("清缓存") { vm.clearCaches() }
+                                .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        }
+                    },
+                    center: {
+                        HStack(spacing: 8) {
+                            Text(vm.destinationFolder.path)
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
 
-                TextField("输入漫画链接或 path_word", text: $vm.inputURL)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .frame(maxWidth: compact ? .infinity : 540)
-                    .submitLabel(.go)
-                    .onSubmit {
-                        vm.loadComic()
-                    }
-
-                Button(vm.isLoading ? "加载中" : "加载") {
-                    vm.loadComic()
-                }
-                .buttonStyle(ActionButtonStyle(variant: .primary))
-                .disabled(vm.isLoading)
-                .keyboardShortcut(.defaultAction)
-            }
-
-            HStack(spacing: 8) {
-                Button("选择目录") {
-                    vm.chooseDestination()
-                }
-                .buttonStyle(ActionButtonStyle(variant: .neutral))
-
-                Text(vm.destinationFolder.path)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                if !compact {
-                    Spacer(minLength: 0)
-                }
-
-                if !vm.recentRecords.isEmpty {
-                    Menu("最近打开") {
-                        ForEach(vm.recentRecords) { record in
-                            Button("\(record.title) · \(record.siteName)") {
-                                vm.applyRecentRecord(record)
+                            if !vm.recentRecords.isEmpty {
+                                recentOpenMenu
                             }
                         }
+                    },
+                    actions: {
+                        HStack(spacing: 8) {
+                            Spacer(minLength: 0)
+                            parseStatusChip
+                            Button("加入队列") { vm.startDownload() }
+                                .buttonStyle(ActionButtonStyle(variant: .neutral))
+                                .disabled(vm.comic == nil && vm.downloader.taskItems.isEmpty)
+                        }
                     }
-                    .buttonStyle(ActionButtonStyle(variant: .neutral))
-                }
-
-                parseStatusChip
-
-                Button("加入队列") {
-                    vm.startDownload()
-                }
-                .buttonStyle(ActionButtonStyle(variant: .accent))
-                .disabled(vm.comic == nil && vm.downloader.taskItems.isEmpty)
+                )
             }
         }
         .padding(10)
@@ -223,16 +335,14 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func sidePanel(compact: Bool) -> some View {
-        if compact {
-            HStack(alignment: .top, spacing: 16) {
+    private func sidePanel(metrics: LayoutMetrics) -> some View {
+        if metrics.isNarrow {
+            HStack(alignment: .top, spacing: 14) {
                 coverView
-                    .frame(width: 126, height: 176)
+                    .frame(width: metrics.coverWidth, height: metrics.coverHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                
-                ScrollView(showsIndicators: false) {
-                    detailsColumn(compact: compact)
-                }
+
+                detailsColumn(metrics: metrics)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -240,23 +350,23 @@ struct ContentView: View {
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 coverView
-                    .frame(height: 210)
+                    .frame(height: metrics.coverHeight)
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                
+
                 ScrollView(showsIndicators: false) {
-                    detailsColumn(compact: compact)
+                    detailsColumn(metrics: metrics)
                 }
-                
+
                 Spacer(minLength: 0)
             }
             .padding(12)
-            .frame(width: 300)
+            .frame(width: metrics.sidePanelWidth)
             .quietCard()
         }
     }
 
-    private func detailsColumn(compact: Bool) -> some View {
+    private func detailsColumn(metrics: LayoutMetrics) -> some View {
         let comicName = vm.comic?.name ?? "未加载漫画"
         let titleIsLong = vm.comic != nil && comicName.count > 20
 
@@ -264,7 +374,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(comicName)
                     .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .lineLimit(expandComicTitle ? nil : 1)
+                    .lineLimit(expandComicTitle ? nil : (metrics.isWide ? 2 : 1))
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
@@ -292,7 +402,7 @@ struct ContentView: View {
             Text(vm.statusText)
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary)
-                .lineLimit(3)
+                .lineLimit(vm.errorText.isEmpty ? 1 : 2)
                 .fixedSize(horizontal: false, vertical: true)
 
             if !vm.errorText.isEmpty {
@@ -309,9 +419,7 @@ struct ContentView: View {
                 }
             }
 
-            statRow
-
-            infoSection
+            compactMetaSection
             formSection
         }
     }
@@ -343,24 +451,26 @@ struct ContentView: View {
         }
     }
 
-    private var statRow: some View {
-        HStack(spacing: 8) {
-            statItem("已选分类", "\(selectedVolumeCount)")
-            statItem("已选章节", "\(selectedCount)")
-            statItem("失败", "\(failedCount)")
-        }
-    }
-
-    private var infoSection: some View {
+    private var compactMetaSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("漫画信息")
-            statusLine("站点", vm.comic?.site.displayName ?? "尚未解析")
-            statusLine("分类 / 章节", vm.comic == nil ? "等待加载" : "\(vm.displayVolumes.count) / \(vm.totalChapterCount)")
-            statusLine("目录", vm.destinationFolder.path, multiline: true)
-            statusLine("Cookie", vm.authCookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : "已填写")
-            statusLine("代理", proxySummaryText)
+            HStack(spacing: 6) {
+                statItem("分类", "\(selectedVolumeCount)")
+                statItem("章节", "\(selectedCount)")
+                statItem("失败", "\(failedCount)")
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                compactMetaRow(
+                    CompactMetaItem(title: "站点", value: vm.comic?.site.displayName ?? "尚未解析"),
+                    CompactMetaItem(title: "目录", value: vm.comic == nil ? "等待加载" : "\(vm.displayVolumes.count) / \(vm.totalChapterCount)")
+                )
+                compactMetaRow(
+                    CompactMetaItem(title: "Cookie", value: vm.authCookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : "已填写"),
+                    CompactMetaItem(title: "代理", value: proxySummaryText)
+                )
+            }
         }
-        .padding(10)
+        .padding(8)
         .glassInsetCard()
     }
 
@@ -382,12 +492,36 @@ struct ContentView: View {
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func compactMetaRow(_ left: CompactMetaItem, _ right: CompactMetaItem) -> some View {
+        HStack(spacing: 8) {
+            compactMetaCell(left)
+            compactMetaCell(right)
+        }
+    }
+
+    private func compactMetaCell(_ item: CompactMetaItem) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(item.title)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+            Text(item.value)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(.primary.opacity(0.86))
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Color.white.opacity(0.28), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func sectionTitle(_ text: String) -> some View {
@@ -439,6 +573,82 @@ struct ContentView: View {
         }
     }
 
+    private func toolbarBrand(size: CGFloat) -> some View {
+        HStack(spacing: 8) {
+            toolbarIcon
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .padding(5)
+                .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.58), lineWidth: 0.8)
+                )
+                .shadow(color: Color.black.opacity(0.08), radius: 6, y: 3)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("MangaGlass")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                Text("输入链接、解析目录、批量下载")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func siteEntryMenu(compact: Bool) -> some View {
+        Menu(compact ? "站点" : "站点入口") {
+            Menu("拷贝漫画") {
+                ForEach(CopyMangaMirror.allCases) { mirror in
+                    Button(mirror.displayName) {
+                        openInBrowser(mirror.webBaseURL.absoluteString)
+                    }
+                }
+            }
+            Button("漫画柜") {
+                openInBrowser("https://www.manhuagui.com")
+            }
+            Button("MYCOMIC") {
+                openInBrowser("https://mycomic.com")
+            }
+        }
+        .buttonStyle(ActionButtonStyle(variant: .ghost))
+    }
+
+    private var recentOpenMenu: some View {
+        Menu("最近打开") {
+            ForEach(vm.recentRecords) { record in
+                Button("\(record.title) · \(record.siteName)") {
+                    vm.applyRecentRecord(record)
+                }
+            }
+        }
+        .buttonStyle(ActionButtonStyle(variant: .neutral))
+    }
+
+    private func toolbarAlignedRow<Leading: View, Center: View, Actions: View>(
+        leadingWidth: CGFloat,
+        actionWidth: CGFloat,
+        @ViewBuilder leading: () -> Leading,
+        @ViewBuilder center: () -> Center,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            leading()
+                .frame(width: leadingWidth, alignment: .leading)
+
+            center()
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            actions()
+                .frame(width: actionWidth, alignment: .trailing)
+        }
+    }
+
     private func queueStat(_ title: String, _ value: Int, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
@@ -452,6 +662,50 @@ struct ContentView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func compactDownloadInline(
+        counts: (queued: Int, running: Int, failed: Int, done: Int),
+        failures: [(reason: String, count: Int)]
+    ) -> some View {
+        HStack(spacing: 10) {
+            inlineStat("进行中", counts.running, tint: .blue)
+            inlineStat("排队", counts.queued, tint: .secondary)
+            inlineStat("失败", counts.failed, tint: .red)
+            inlineStat("完成", counts.done, tint: .green)
+
+            if !vm.downloader.currentTaskTitle.isEmpty {
+                Divider()
+                    .frame(height: 14)
+                Text(vm.downloader.currentTaskTitle)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else if let firstFailure = failures.first {
+                Divider()
+                    .frame(height: 14)
+                Text("\(firstFailure.reason) · \(firstFailure.count) 话")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func inlineStat(_ title: String, _ value: Int, tint: Color) -> some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+            Text("\(value)")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(tint)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.white.opacity(0.24), in: Capsule())
     }
 
     private var formSection: some View {
@@ -509,10 +763,10 @@ struct ContentView: View {
     }
 
     private var volumeSelectionStrip: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("分类选择")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
                 Spacer()
                 Button("全选") {
                     vm.selectAllVolumes()
@@ -534,14 +788,14 @@ struct ContentView: View {
                                 Image(systemName: vm.selectedVolumeIDs.contains(volume.id) ? "checkmark.circle.fill" : "circle")
                                     .foregroundStyle(vm.selectedVolumeIDs.contains(volume.id) ? .blue : .secondary)
                                 Text(volume.displayName)
-                                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                                    .font(.system(size: 11, weight: .medium, design: .rounded))
                                     .lineLimit(1)
                                 Text("\(volume.chapters.count)")
-                                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                                    .font(.system(size: 10, weight: .medium, design: .rounded))
                                     .foregroundStyle(.secondary)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
                             .background(
                                 Capsule(style: .continuous)
                                     .fill(vm.selectedVolumeIDs.contains(volume.id) ? AnyShapeStyle(Color(red: 0.70, green: 0.84, blue: 0.94).opacity(0.42)) : AnyShapeStyle(Color.white.opacity(0.32)))
@@ -596,53 +850,43 @@ struct ContentView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    private func chapterPanel(compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("分类 / 章节")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                    Text("按分组浏览章节，支持多选、⌘/⇧ 范围选择与拖拽框选")
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-
-                Spacer()
-
-                Text("分类 \(selectedVolumeCount) · 章节 \(selectedCount)")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.blue.opacity(0.12), in: Capsule())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-
-                Picker("排序", selection: $vm.chapterSortDirection) {
-                    ForEach(SortDirection.allCases) { direction in
-                        Text(direction.rawValue).tag(direction)
+    private func chapterPanel(metrics: LayoutMetrics) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if metrics.isNarrow {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        chapterPanelTitle
+                        Spacer(minLength: 0)
+                        chapterSelectionPill
+                        sortPicker(width: metrics.sortControlWidth)
+                    }
+                    HStack(spacing: 8) {
+                        Button("全选") { vm.selectAllVisible() }
+                            .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        Button("清空") { vm.deselectAllVisible() }
+                            .buttonStyle(ActionButtonStyle(variant: .neutral))
                     }
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 120)
-
-                Button("全选") { vm.selectAllVisible() }
-                    .buttonStyle(ActionButtonStyle(variant: .neutral))
-                Button("清空") { vm.deselectAllVisible() }
-                    .buttonStyle(ActionButtonStyle(variant: .neutral))
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    chapterPanelTitle
+                    Spacer()
+                    chapterSelectionPill
+                    sortPicker(width: metrics.sortControlWidth)
+                    Button("全选") { vm.selectAllVisible() }
+                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                    Button("清空") { vm.deselectAllVisible() }
+                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                }
             }
 
             volumeSelectionStrip
-
-            Divider().opacity(0.45)
 
             if let emptyState = emptyStateContent {
                 emptyStateCard(title: emptyState.title, detail: emptyState.detail, systemImage: emptyState.systemImage)
             } else {
                 ScrollView {
-                    chapterSections(compact: compact)
+                    chapterSections(metrics: metrics)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -696,70 +940,124 @@ struct ContentView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(12)
+        .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .quietCard()
     }
 
-    private var simplifiedDownloadPanel: some View {
+    private var chapterPanelTitle: some View {
+        HStack(spacing: 6) {
+            Text("分类 / 章节")
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+            Text("多选 / 框选")
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary.opacity(0.85))
+        }
+    }
+
+    private var chapterSelectionPill: some View {
+        Text("分类 \(selectedVolumeCount) · 章节 \(selectedCount)")
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.blue.opacity(0.12), in: Capsule())
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+    }
+
+    private func sortPicker(width: CGFloat) -> some View {
+        Picker("排序", selection: $vm.chapterSortDirection) {
+            ForEach(SortDirection.allCases) { direction in
+                Text(direction.rawValue).tag(direction)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: width)
+    }
+
+    private func simplifiedDownloadPanel(metrics: LayoutMetrics) -> some View {
         let counts = vm.downloader.countsSummary()
         let failures = vm.downloader.failureSummary()
 
         return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("下载摘要")
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                Spacer()
+            if metrics.isNarrow {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("下载摘要")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(action: { showDownloadManager = true }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "list.bullet.rectangle.portrait")
+                                Text("下载管理")
+                            }
+                        }
+                        .buttonStyle(ActionButtonStyle(variant: .accent))
+                    }
 
-                if vm.downloader.isRunning || !vm.downloader.taskItems.isEmpty {
-                    ProgressView(value: vm.downloader.progress)
-                        .progressViewStyle(.linear)
-                        .frame(width: 150)
-                    Text("\(Int(vm.downloader.progress * 100))%")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    HStack(spacing: 8) {
+                        if vm.downloader.isRunning || !vm.downloader.taskItems.isEmpty {
+                            ProgressView(value: vm.downloader.progress)
+                                .progressViewStyle(.linear)
+                            Text("\(Int(vm.downloader.progress * 100))%")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        Button(showLogPanel ? "隐藏日志" : "显示日志") {
+                            showLogPanel.toggle()
+                        }
+                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                    }
+
+                    if !vm.downloader.speedText.isEmpty {
+                        Text(vm.downloader.speedText)
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    compactDownloadInline(counts: counts, failures: failures)
+                }
+            } else {
+                HStack {
+                    Text("下载摘要")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
-                        .padding(.trailing, 8)
-                }
+                    Spacer()
 
-                if !vm.downloader.speedText.isEmpty {
-                    Text(vm.downloader.speedText)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-
-                Button(action: { showDownloadManager = true }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "list.bullet.rectangle.portrait")
-                        Text("下载管理")
+                    if vm.downloader.isRunning || !vm.downloader.taskItems.isEmpty {
+                        ProgressView(value: vm.downloader.progress)
+                            .progressViewStyle(.linear)
+                            .frame(width: metrics.isWide ? 180 : 150)
+                        Text("\(Int(vm.downloader.progress * 100))%")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .padding(.trailing, 8)
                     }
-                }
-                .buttonStyle(ActionButtonStyle(variant: .accent))
 
-                Button(showLogPanel ? "隐藏日志" : "显示日志") {
-                    showLogPanel.toggle()
-                }
-                .buttonStyle(ActionButtonStyle(variant: .neutral))
-            }
-
-            HStack(spacing: 8) {
-                queueStat("进行中", counts.running, tint: .blue)
-                queueStat("排队", counts.queued, tint: .secondary)
-                queueStat("失败", counts.failed, tint: .red)
-                queueStat("完成", counts.done, tint: .green)
-            }
-
-            if !vm.downloader.currentTaskTitle.isEmpty || !failures.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    if !vm.downloader.currentTaskTitle.isEmpty {
-                        statusLine("当前任务", vm.downloader.currentTaskTitle, multiline: true)
+                    if !vm.downloader.speedText.isEmpty {
+                        Text(vm.downloader.speedText)
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
                     }
-                    if let firstFailure = failures.first {
-                        statusLine("失败概览", "\(firstFailure.reason) · \(firstFailure.count) 话")
+
+                    Button(action: { showDownloadManager = true }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "list.bullet.rectangle.portrait")
+                            Text("下载管理")
+                        }
                     }
+                    .buttonStyle(ActionButtonStyle(variant: .accent))
+
+                    Button(showLogPanel ? "隐藏日志" : "显示日志") {
+                        showLogPanel.toggle()
+                    }
+                    .buttonStyle(ActionButtonStyle(variant: .neutral))
                 }
-                .padding(10)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                compactDownloadInline(counts: counts, failures: failures)
             }
 
             if showLogPanel {
@@ -796,14 +1094,15 @@ struct ContentView: View {
                             }
                         }
                     }
-                    .frame(minHeight: 120, maxHeight: 180)
+                    .frame(minHeight: 88, maxHeight: 128)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
             }
         }
-        .padding(10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .quietCard()
     }
 
@@ -896,70 +1195,86 @@ struct ContentView: View {
         return Set(ordered[low...high])
     }
 
-    private func chapterSections(compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+    private func chapterSections(metrics: LayoutMetrics) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(vm.filteredVolumeSections) { section in
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        Text(section.volumeName)
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.primary.opacity(0.9))
+                VStack(alignment: .leading, spacing: 6) {
+                    if metrics.isNarrow {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text(section.volumeName)
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.primary.opacity(0.9))
 
-                        Text("\(section.chapterCount) 话")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Color(red: 0.31, green: 0.49, blue: 0.64))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.55), in: Capsule())
+                                Text("\(section.chapterCount) 话")
+                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(Color(red: 0.31, green: 0.49, blue: 0.64))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(Color.white.opacity(0.55), in: Capsule())
+                            }
 
-                        Spacer(minLength: 0)
-
-                        Button(vm.areAllChaptersSelected(in: section.id) ? "清空本分类" : "全选本分类") {
-                            vm.toggleVolumeChapterSelection(volumeID: section.id)
+                            HStack {
+                                Text("已选 \(vm.selectedChapterCount(in: section.id)) / \(section.chapterCount)")
+                                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                                Button(vm.areAllChaptersSelected(in: section.id) ? "清空本分类" : "全选本分类") {
+                                    vm.toggleVolumeChapterSelection(volumeID: section.id)
+                                }
+                                .buttonStyle(ActionButtonStyle(variant: .neutral))
+                            }
                         }
-                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                    } else {
+                        HStack(spacing: 6) {
+                            Text(section.volumeName)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.primary.opacity(0.9))
+
+                            Text("\(section.chapterCount) 话")
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color(red: 0.31, green: 0.49, blue: 0.64))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.white.opacity(0.55), in: Capsule())
+
+                            Spacer(minLength: 0)
+
+                            Button(vm.areAllChaptersSelected(in: section.id) ? "清空本分类" : "全选本分类") {
+                                vm.toggleVolumeChapterSelection(volumeID: section.id)
+                            }
+                            .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        }
+
+                        Text("已选 \(vm.selectedChapterCount(in: section.id)) / \(section.chapterCount)")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
                     }
 
-                    Text("已选 \(vm.selectedChapterCount(in: section.id)) / \(section.chapterCount)")
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-
-                    sectionChapterGrid(section.chapters, compact: compact)
+                    sectionChapterGrid(section.chapters, columns: metrics.chapterColumns)
                 }
-                .padding(12)
+                .padding(8)
                 .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color.white.opacity(0.32))
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(0.24))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.42), lineWidth: 0.8)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.34), lineWidth: 0.8)
                 )
             }
         }
-        .padding(2)
+        .padding(.top, 2)
     }
 
-    private func sectionChapterGrid(_ chapters: [ComicChapter], compact: Bool) -> some View {
-        let columns = compact ? 2 : 3
-        let rows = chunked(chapters, size: columns)
-        return VStack(spacing: 8) {
-            ForEach(rows.indices, id: \.self) { rowIndex in
-                let row = rows[rowIndex]
-                HStack(spacing: 8) {
-                    ForEach(row) { chapter in
-                        chapterCell(chapter)
-                            .transition(.asymmetric(insertion: .scale.combined(with: .opacity), removal: .opacity))
-                    }
-                    if row.count < columns {
-                        ForEach(0..<(columns - row.count), id: \.self) { _ in
-                            Color.clear.frame(maxWidth: .infinity)
-                        }
-                    }
-                }
+    private func sectionChapterGrid(_ chapters: [ComicChapter], columns: Int) -> some View {
+        let gridColumns = Array(repeating: GridItem(.flexible(minimum: 108, maximum: 210), spacing: 6), count: max(1, columns))
+        return LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 6) {
+            ForEach(chapters) { chapter in
+                chapterCell(chapter)
+                    .transition(.asymmetric(insertion: .scale.combined(with: .opacity), removal: .opacity))
             }
         }
-        .padding(2)
     }
 
     private func chapterCell(_ chapter: ComicChapter) -> some View {
@@ -978,19 +1293,6 @@ struct ContentView: View {
             }
     }
 
-    private func chunked(_ source: [ComicChapter], size: Int) -> [[ComicChapter]] {
-        guard size > 0 else { return [source] }
-        var result: [[ComicChapter]] = []
-        result.reserveCapacity((source.count + size - 1) / size)
-        var idx = 0
-        while idx < source.count {
-            let end = min(source.count, idx + size)
-            result.append(Array(source[idx..<end]))
-            idx = end
-        }
-        return result
-    }
-
     private func currentModifiers() -> NSEvent.ModifierFlags {
         NSApp.currentEvent?.modifierFlags ?? []
     }
@@ -998,6 +1300,18 @@ struct ContentView: View {
     private func openInBrowser(_ rawURL: String) {
         guard let url = URL(string: rawURL) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private func layoutMetrics(for width: CGFloat) -> LayoutMetrics {
+        let sizeClass: LayoutSizeClass
+        if width < 940 {
+            sizeClass = .narrow
+        } else if width < 1320 {
+            sizeClass = .regular
+        } else {
+            sizeClass = .wide
+        }
+        return LayoutMetrics(sizeClass: sizeClass, width: width)
     }
 }
 
@@ -1007,40 +1321,40 @@ private struct ChapterChip: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(isSelected ? Color(red: 0.34, green: 0.55, blue: 0.73) : .secondary)
                 Text(chapter.displayName)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
 
             Text(chapter.volumeName)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 8, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary.opacity(0.8))
                 .lineLimit(1)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(
                     isSelected
-                        ? AnyShapeStyle(Color(red: 0.77, green: 0.88, blue: 0.96).opacity(isHovered ? 0.78 : 0.58))
-                        : AnyShapeStyle(Color.white.opacity(isHovered ? 0.48 : 0.34))
+                        ? AnyShapeStyle(Color(red: 0.77, green: 0.88, blue: 0.96).opacity(isHovered ? 0.72 : 0.54))
+                        : AnyShapeStyle(Color.white.opacity(isHovered ? 0.42 : 0.28))
                 )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(
                     isSelected ? Color(red: 0.42, green: 0.60, blue: 0.76).opacity(0.58) : Color.white.opacity(isHovered ? 0.42 : 0.28),
                     lineWidth: 0.9
                 )
         )
-        .shadow(color: Color.black.opacity(isSelected ? 0.06 : 0.03), radius: isHovered ? 12 : 7, y: isHovered ? 8 : 4)
-        .scaleEffect(isHovered ? 1.015 : 1.0)
+        .shadow(color: Color.black.opacity(isSelected ? 0.04 : 0.02), radius: isHovered ? 8 : 5, y: isHovered ? 5 : 3)
+        .scaleEffect(isHovered ? 1.01 : 1.0)
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
         .onHover { hovering in
             isHovered = hovering

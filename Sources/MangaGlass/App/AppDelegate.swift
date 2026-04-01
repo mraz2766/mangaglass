@@ -49,6 +49,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.styleMask.insert(.fullSizeContentView)
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .automatic
-        window.minSize = NSSize(width: 980, height: 720)
+        window.minSize = NSSize(width: 720, height: 540)
     }
 }
