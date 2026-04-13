@@ -99,27 +99,16 @@ final class CopyMangaAPI: @unchecked Sendable {
     private var logger: ((String) -> Void)?
     private var intermediateComicHandler: ((ComicInfo) -> Void)?
 
-    init(session: URLSession? = nil, proxy: ProxySettings? = nil) {
+    init(session: URLSession? = nil) {
         if let session {
             self.session = session
         } else {
             self.session = ProxySessionFactory.makeSession(
-                proxy: proxy,
                 timeoutRequest: 20,
                 timeoutResource: 60,
                 maxConnections: 10
             )
         }
-    }
-
-    func updateProxy(_ proxy: ProxySettings?) {
-        self.session = ProxySessionFactory.makeSession(
-            proxy: proxy,
-            timeoutRequest: 20,
-            timeoutResource: 60,
-            maxConnections: 10
-        )
-        log(proxy == nil ? "代理未启用" : "代理已更新")
     }
 
     func setLogger(_ logger: @escaping (String) -> Void) {
@@ -134,6 +123,11 @@ final class CopyMangaAPI: @unchecked Sendable {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.contains("/") {
             guard let url = URL(string: trimmed) else { throw CopyMangaError.invalidURL }
+            let host = url.host?.lowercased()
+            let isSupportedHost =
+                (host?.contains("manhuagui.com") == true) ||
+                (CopyMangaMirror.mirror(for: host) != nil)
+            guard isSupportedHost else { throw CopyMangaError.invalidComicPath }
             let site = siteConfig(for: url.host)
             let parts = url.pathComponents.filter { $0 != "/" }
             if let adapter = parserAdapter(for: site),
@@ -171,9 +165,6 @@ final class CopyMangaAPI: @unchecked Sendable {
         guard let host = host?.lowercased() else { return CopyMangaMirror.mangacopy.siteConfig() }
         if host.contains("manhuagui.com") {
             return .manhuaGui
-        }
-        if host.contains("mycomic.com") {
-            return .myComic
         }
 
         if let mirror = CopyMangaMirror.mirror(for: host) {
@@ -467,10 +458,6 @@ final class CopyMangaAPI: @unchecked Sendable {
         site.webBase.host?.lowercased().contains("manhuagui.com") == true
     }
 
-    private func isMyComic(_ site: MangaSiteConfig) -> Bool {
-        site.webBase.host?.lowercased().contains("mycomic.com") == true
-    }
-
     private func isCopyFamily(_ site: MangaSiteConfig) -> Bool {
         guard let host = site.webBase.host?.lowercased() else { return false }
         for mirror in CopyMangaMirror.allCases {
@@ -543,41 +530,8 @@ final class CopyMangaAPI: @unchecked Sendable {
         )
     }
 
-    private var myComicParserAdapter: SiteParserAdapter {
-        SiteParserAdapter(
-            supports: { [weak self] site in self?.isMyComic(site) == true },
-            resolveTarget: { _, parts in
-                if let comicIndex = parts.firstIndex(of: "comics"), parts.count > comicIndex + 1 {
-                    return "comic::\(parts[comicIndex + 1])"
-                }
-                if let chapterIndex = parts.firstIndex(of: "chapters"), parts.count > chapterIndex + 1 {
-                    return "chapter::\(parts[chapterIndex + 1])"
-                }
-                return nil
-            },
-            fetchComic: { [weak self] slug, site, cookie in
-                guard let self else { throw CopyMangaError.unexpectedPayload }
-                self.log("使用网页解析分支：MYCOMIC")
-                return try await self.fetchComicFromMyComic(identifier: slug, site: site, cookie: cookie)
-            },
-            fetchImageURLs: { [weak self] _, chapterUUID, chapterName, site, cookie in
-                guard let self else { throw CopyMangaError.unexpectedPayload }
-                self.log("章节图片解析：MYCOMIC 网页模式 \(chapterName)")
-                return try await self.fetchImageURLsFromMyComic(
-                    chapterID: chapterUUID,
-                    chapterName: chapterName,
-                    site: site,
-                    cookie: cookie
-                )
-            },
-            imageRefererURL: { _, chapterUUID, site in
-                site.webBase.appendingPathComponent("chapters/\(chapterUUID)")
-            }
-        )
-    }
-
     private var siteParserAdapters: [SiteParserAdapter] {
-        [copyParserAdapter, manhuaGuiParserAdapter, myComicParserAdapter]
+        [copyParserAdapter, manhuaGuiParserAdapter]
     }
 
     private func parserAdapter(for site: MangaSiteConfig) -> SiteParserAdapter? {
@@ -2414,346 +2368,142 @@ final class CopyMangaAPI: @unchecked Sendable {
         )
     }
 
-    private func fetchComicFromMyComic(identifier: String, site: MangaSiteConfig, cookie: String?) async throws -> ComicInfo {
-        let reference = try await resolveMyComicReference(identifier: identifier, site: site, cookie: cookie)
-        let detailURL = site.webBase.appendingPathComponent("comics/\(reference.comicID)")
-        let detailHTML: String
-        if let cachedHTML = reference.detailHTML {
-            detailHTML = cachedHTML
-        } else {
-            detailHTML = try await getHTML(url: detailURL, cookie: cookie, site: site, retryTimes: 1)
-        }
-
-        let comicName = parseMyComicTitle(from: detailHTML) ?? reference.comicName ?? reference.comicID
-        let coverURL = extractCoverURL(from: detailHTML, site: site)
-        let volumes = parseMyComicVolumes(from: detailHTML, site: site)
-
-        guard !volumes.isEmpty else {
-            throw CopyMangaError.htmlParse("MYCOMIC 作品页未解析到章节目录。")
-        }
-
-        return ComicInfo(
-            slug: reference.comicID,
-            name: comicName,
-            coverURL: coverURL,
-            volumes: volumes,
-            site: site,
-            apiPathPrefix: "",
-            apiBaseURL: site.webBase
-        )
-    }
-
-    private func fetchImageURLsFromMyComic(
-        chapterID: String,
-        chapterName: String,
-        site: MangaSiteConfig,
-        cookie: String?
-    ) async throws -> [URL] {
-        let chapterURL = site.webBase.appendingPathComponent("chapters/\(chapterID)")
-        log("MYCOMIC 图片解析：章节页 \(chapterURL.absoluteString)")
-        let html = try await getHTML(url: chapterURL, cookie: cookie, site: site, retryTimes: 1)
-        let urls = parseMyComicImageURLs(from: html, site: site)
-        guard !urls.isEmpty else {
-            throw CopyMangaError.noImageInChapter(chapterName)
-        }
-        log("MYCOMIC 图片解析：章节提取到 \(urls.count) 张")
-        return urls
-    }
-
-    private func resolveMyComicReference(
-        identifier: String,
-        site: MangaSiteConfig,
-        cookie: String?
-    ) async throws -> (comicID: String, comicName: String?, detailHTML: String?) {
-        if let comicID = identifier.split(separator: "::").last.map(String.init),
-           identifier.hasPrefix("comic::") {
-            return (comicID, nil, nil)
-        }
-
-        let chapterID: String
-        if identifier.hasPrefix("chapter::") {
-            chapterID = identifier.split(separator: "::").last.map(String.init) ?? identifier
-        } else {
-            chapterID = identifier
-        }
-
-        let chapterURL = site.webBase.appendingPathComponent("chapters/\(chapterID)")
-        let chapterHTML = try await getHTML(url: chapterURL, cookie: cookie, site: site, retryTimes: 1)
-        if let reference = parseMyComicComicReference(from: chapterHTML) {
-            return (reference.comicID, reference.name, nil)
-        }
-        throw CopyMangaError.htmlParse("MYCOMIC 章节页未找到对应作品入口。")
-    }
-
-    private func parseMyComicTitle(from html: String) -> String? {
-        let patterns = [
-            #"(?is)<meta\s+property\s*=\s*["']og:title["']\s+content\s*=\s*["'](.*?)["']"#,
-            #"(?is)<h1[^>]*>(.*?)</h1>"#,
-            #"(?is)<title>\s*(.*?)\s*</title>"#
-        ]
-        for pattern in patterns {
-            if let raw = firstMatch(in: html, pattern: pattern) {
-                let cleaned = cleanHTMLText(raw)
-                let title = cleaned
-                    .replacingOccurrences(of: " - MYCOMIC", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !title.isEmpty {
-                    return title
-                }
-            }
-        }
-        return nil
-    }
-
-    private func parseMyComicComicReference(from html: String) -> (comicID: String, name: String?)? {
-        let pattern = #"(?is)<a\b[^>]*href\s*=\s*["'](?:https?:\/\/mycomic\.com)?\/comics\/(\d+)["'][^>]*>(.*?)</a>"#
-        let candidates = matches(in: html, pattern: pattern)
-        for match in candidates {
-            guard let comicID = substring(in: html, nsRange: match.range(at: 1)),
-                  let titleRaw = substring(in: html, nsRange: match.range(at: 2)) else {
-                continue
-            }
-            let title = cleanHTMLText(titleRaw)
-            if title.isEmpty || title.contains("返回") || title.contains("目錄") || title.contains("目录") {
-                continue
-            }
-            return (comicID, title)
-        }
-        return nil
-    }
-
-    private func parseMyComicVolumes(from html: String, site: MangaSiteConfig) -> [ComicVolume] {
-        struct Bucket {
-            let id: String
-            let displayName: String
-            let pathWord: String
-            var chapters: [ComicChapter]
-            var seen: Set<String>
-            let order: Int
-        }
-
-        let pattern = #"(?is)<a\b[^>]*href\s*=\s*["']([^"']*\/chapters\/(\d+)[^"']*)["'][^>]*>(.*?)</a>"#
-        let anchorMatches = matches(in: html, pattern: pattern)
-        var buckets: [String: Bucket] = [:]
-        var nextOrder = 0
-
-        for (index, match) in anchorMatches.enumerated() {
-            guard let hrefRaw = substring(in: html, nsRange: match.range(at: 1)),
-                  let chapterID = substring(in: html, nsRange: match.range(at: 2)),
-                  let bodyRaw = substring(in: html, nsRange: match.range(at: 3)) else {
-                continue
-            }
-            let title = cleanHTMLText(bodyRaw)
-            guard isLikelyMyComicChapterTitle(title) else { continue }
-            guard normalizedURL(hrefRaw.replacingOccurrences(of: "\\/", with: "/"), site: site) != nil else {
-                continue
-            }
-
-            let prefixRange = NSRange(location: max(0, match.range.location - 2800), length: min(match.range.location, 2800))
-            let context = substring(in: html, nsRange: prefixRange) ?? ""
-            let sectionName = inferMyComicVolumeName(from: context)
-            let descriptor = myComicVolumeDescriptor(for: sectionName)
-
-            if buckets[descriptor.id] == nil {
-                buckets[descriptor.id] = Bucket(
-                    id: descriptor.id,
-                    displayName: descriptor.name,
-                    pathWord: descriptor.pathWord,
-                    chapters: [],
-                    seen: [],
-                    order: nextOrder
-                )
-                nextOrder += 1
-            }
-
-            guard buckets[descriptor.id]?.seen.insert(chapterID).inserted == true else {
-                continue
-            }
-
-            let order = myComicChapterOrder(from: title) ?? Double(anchorMatches.count - index)
-            buckets[descriptor.id]?.chapters.append(
-                ComicChapter(
-                    id: chapterID,
-                    uuid: chapterID,
-                    displayName: title,
-                    order: order,
-                    volumeID: descriptor.id,
-                    volumeName: descriptor.name
-                )
-            )
-        }
-
-        return buckets.values
-            .sorted { lhs, rhs in
-                if lhs.order == rhs.order {
-                    return lhs.displayName.localizedCompare(rhs.displayName) == .orderedAscending
-                }
-                return lhs.order < rhs.order
-            }
-            .map { bucket in
-                ComicVolume(
-                    id: bucket.id,
-                    displayName: bucket.displayName,
-                    pathWord: bucket.pathWord,
-                    chapters: bucket.chapters.sorted { lhs, rhs in
-                        if lhs.order == rhs.order {
-                            return lhs.displayName.localizedCompare(rhs.displayName) == .orderedAscending
-                        }
-                        return lhs.order < rhs.order
-                    }
-                )
-            }
-    }
-
-    private func parseMyComicImageURLs(from html: String, site: MangaSiteConfig) -> [URL] {
-        let imageTagPattern = #"(?is)<img\b[^>]*>"#
-        let imageTags = matches(in: html, pattern: imageTagPattern)
-        var strong: [URL] = []
-        var fallback: [URL] = []
-        var seen: Set<String> = []
-
-        for match in imageTags {
-            guard let tag = substring(in: html, nsRange: match.range) else { continue }
-            let raw = firstAttribute(in: tag, names: ["data-src", "data-original", "data-lazy-src", "src"])
-            guard let url = normalizedURL(raw?.replacingOccurrences(of: "\\/", with: "/"), site: site) else {
-                continue
-            }
-            let absolute = url.absoluteString.lowercased()
-            guard absolute != site.webBase.absoluteString.lowercased(),
-                  looksLikeImageURL(absolute),
-                  !absolute.contains("/logo"),
-                  !absolute.contains("/icon"),
-                  !absolute.contains("/avatar"),
-                  !absolute.contains("placeholder") else {
-                continue
-            }
-            guard seen.insert(url.absoluteString).inserted else { continue }
-
-            let alt = firstAttribute(in: tag, names: ["alt", "title"]) ?? ""
-            if alt.contains("第"), (alt.contains("頁") || alt.contains("页")) {
-                strong.append(url)
-            } else if url.host?.lowercased() != site.webBase.host?.lowercased() {
-                fallback.append(url)
-            }
-        }
-
-        if !strong.isEmpty {
-            return strong
-        }
-        return fallback
-    }
-
-    private func inferMyComicVolumeName(from context: String) -> String {
-        let pattern = #"(?is)(單話|单话|單行本|单行本|番外篇|番外話|番外话|番外)"#
-        let matches = matches(in: context, pattern: pattern)
-        if let last = matches.last,
-           let raw = substring(in: context, nsRange: last.range(at: 1)) {
-            return cleanHTMLText(raw)
-        }
-        return "單話"
-    }
-
-    private func myComicVolumeDescriptor(for rawName: String) -> (id: String, name: String, pathWord: String) {
-        let text = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalized = text.folding(options: [.caseInsensitive, .widthInsensitive], locale: Locale.current)
-        if normalized.contains("番外") {
-            return ("extra", "番外篇", "extra")
-        }
-        if normalized.contains("單行本") || normalized.contains("单行本") {
-            return ("tankobon", "單行本", "tankobon")
-        }
-        return ("single", "單話", "single")
-    }
-
-    private func isLikelyMyComicChapterTitle(_ title: String) -> Bool {
-        let text = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, text.count <= 40 else { return false }
-        if text.contains("第"), (text.contains("話") || text.contains("话") || text.contains("卷")) {
-            return true
-        }
-        return text.contains("番外")
-    }
-
-    private func myComicChapterOrder(from title: String) -> Double? {
-        let normalized = title.replacingOccurrences(of: ",", with: ".")
-        if let raw = firstMatch(in: normalized, pattern: #"(?is)第\s*([0-9]+(?:\.[0-9]+)?)"#),
-           let value = Double(raw) {
-            return value
-        }
-        if let raw = firstMatch(in: normalized, pattern: #"(?is)([0-9]+(?:\.[0-9]+)?)\s*[話话卷]"#),
-           let value = Double(raw) {
-            return value
-        }
-        return nil
-    }
-
-    private func firstAttribute(in tag: String, names: [String]) -> String? {
-        for name in names {
-            if let value = firstMatch(in: tag, pattern: #"(?is)\b\#(name)\s*=\s*["']([^"']+)["']"#, group: 1) {
-                return value
-            }
-        }
-        return nil
-    }
-
     private func parseManhuaGuiVolumes(html: String, slug: String) -> [ComicVolume] {
         var seenChapterIDs: Set<String> = []
         var volumes: [ComicVolume] = []
+        if let chapterSectionHTML = extractManhuaGuiChapterSection(from: html) {
+            let subgroupMatches = matches(
+                in: chapterSectionHTML,
+                pattern: #"(?is)<h([4-6])[^>]*>(.*?)</h\1>"#
+            )
+            if !subgroupMatches.isEmpty {
+                for (index, match) in subgroupMatches.enumerated() {
+                    guard let headingRaw = substring(in: chapterSectionHTML, nsRange: match.range(at: 2)) else { continue }
+                    let volumeName = cleanHTMLText(headingRaw)
+                    if !isManhuaGuiVolumeHeading(volumeName) { continue }
 
-        let headingMatches = matches(
-            in: html,
-            pattern: #"(?is)<h[2-5][^>]*>(.*?)</h[2-5]>"#
-        )
-        if !headingMatches.isEmpty {
-            for (index, match) in headingMatches.enumerated() {
-                guard let headingRange = range(of: match.range(at: 1), in: html) else { continue }
-                let sectionStart = match.range.location
-                let sectionEnd: Int
-                if index + 1 < headingMatches.count {
-                    sectionEnd = headingMatches[index + 1].range.location
-                } else {
-                    sectionEnd = (html as NSString).length
-                }
-                let sectionRange = NSRange(location: sectionStart, length: max(0, sectionEnd - sectionStart))
-                guard let sectionText = substring(in: html, nsRange: sectionRange) else { continue }
-                let volumeName = cleanHTMLText(String(html[headingRange]))
-                if volumeName.isEmpty || isGenericSectionTitle(volumeName) { continue }
-                let chapters = parseManhuaGuiChapters(
-                    in: sectionText,
-                    slug: slug,
-                    volumeID: "h\(index)",
-                    volumeName: volumeName,
-                    seenChapterIDs: &seenChapterIDs
-                )
-                if !chapters.isEmpty {
-                    volumes.append(
-                        ComicVolume(
-                            id: "h\(index)",
-                            displayName: volumeName,
-                            pathWord: "h\(index)",
-                            chapters: chapters
-                        )
+                    let sectionStart = match.range.location
+                    let sectionEnd: Int
+                    if index + 1 < subgroupMatches.count {
+                        sectionEnd = subgroupMatches[index + 1].range.location
+                    } else {
+                        sectionEnd = (chapterSectionHTML as NSString).length
+                    }
+                    let sectionRange = NSRange(location: sectionStart, length: max(0, sectionEnd - sectionStart))
+                    guard let sectionText = substring(in: chapterSectionHTML, nsRange: sectionRange) else { continue }
+
+                    let chapters = parseManhuaGuiChapters(
+                        in: sectionText,
+                        slug: slug,
+                        volumeID: "h\(index)",
+                        volumeName: volumeName,
+                        seenChapterIDs: &seenChapterIDs
                     )
+                    if !chapters.isEmpty {
+                        volumes.append(
+                            ComicVolume(
+                                id: "h\(index)",
+                                displayName: volumeName,
+                                pathWord: "h\(index)",
+                                chapters: chapters
+                            )
+                        )
+                    }
+                }
+            }
+
+            if volumes.isEmpty {
+                var sectionSeen: Set<String> = []
+                let sectionChapters = parseManhuaGuiChapters(
+                    in: chapterSectionHTML,
+                    slug: slug,
+                    volumeID: "default",
+                    volumeName: "默认卷",
+                    seenChapterIDs: &sectionSeen
+                )
+                if !sectionChapters.isEmpty {
+                    volumes = [
+                        ComicVolume(id: "default", displayName: "默认卷", pathWord: "default", chapters: sectionChapters)
+                    ]
                 }
             }
         }
 
-        var fallbackSeen: Set<String> = []
-        let fallbackChapters = parseManhuaGuiChapters(
-            in: html,
-            slug: slug,
-            volumeID: "default",
-            volumeName: "默认卷",
-            seenChapterIDs: &fallbackSeen
-        )
-        let currentCount = volumes.reduce(0) { $0 + $1.chapters.count }
-        if !fallbackChapters.isEmpty, (volumes.isEmpty || fallbackChapters.count > currentCount) {
-            volumes = [
-                ComicVolume(id: "default", displayName: "默认卷", pathWord: "default", chapters: fallbackChapters)
-            ]
+        if volumes.isEmpty {
+            var fallbackSeen: Set<String> = []
+            let fallbackChapters = parseManhuaGuiChapters(
+                in: html,
+                slug: slug,
+                volumeID: "default",
+                volumeName: "默认卷",
+                seenChapterIDs: &fallbackSeen
+            )
+            if !fallbackChapters.isEmpty {
+                volumes = [
+                    ComicVolume(id: "default", displayName: "默认卷", pathWord: "default", chapters: fallbackChapters)
+                ]
+            }
         }
 
         return volumes
+    }
+
+    private func extractManhuaGuiChapterSection(from html: String) -> String? {
+        let headingMatches = matches(
+            in: html,
+            pattern: #"(?is)<h([2-6])[^>]*>(.*?)</h\1>"#
+        )
+        guard !headingMatches.isEmpty else { return nil }
+
+        for (index, match) in headingMatches.enumerated() {
+            guard let levelText = substring(in: html, nsRange: match.range(at: 1)),
+                  let level = Int(levelText),
+                  let headingText = substring(in: html, nsRange: match.range(at: 2)) else {
+                continue
+            }
+            let cleaned = cleanHTMLText(headingText)
+            guard cleaned.contains("章节全集") || cleaned.contains("章節全集") else { continue }
+
+            let sectionStart = match.range.location
+            var sectionEnd = (html as NSString).length
+
+            for nextMatch in headingMatches.dropFirst(index + 1) {
+                guard let nextLevelText = substring(in: html, nsRange: nextMatch.range(at: 1)),
+                      let nextLevel = Int(nextLevelText) else {
+                    continue
+                }
+                if nextLevel <= level {
+                    sectionEnd = nextMatch.range.location
+                    break
+                }
+            }
+
+            let sectionRange = NSRange(location: sectionStart, length: max(0, sectionEnd - sectionStart))
+            return substring(in: html, nsRange: sectionRange)
+        }
+
+        return nil
+    }
+
+    private func isManhuaGuiVolumeHeading(_ text: String) -> Bool {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, !isGenericSectionTitle(cleaned) else { return false }
+        return !isLikelyManhuaGuiChapterTitle(cleaned)
+    }
+
+    private func isLikelyManhuaGuiChapterTitle(_ text: String) -> Bool {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return false }
+        if cleaned.contains("总编集") || cleaned.contains("總編集") {
+            return true
+        }
+        if cleaned.contains("完整版第") {
+            return true
+        }
+        if cleaned.contains("第"), (cleaned.contains("卷") || cleaned.contains("话") || cleaned.contains("話")) {
+            return true
+        }
+        return false
     }
 
     private func parseManhuaGuiChapters(
@@ -2847,39 +2597,54 @@ final class CopyMangaAPI: @unchecked Sendable {
         }
         let chapterURL = site.webBase.appendingPathComponent("comic/\(slug)/\(chapterPath)")
         let html = try await getHTML(url: chapterURL, cookie: cookie, site: site, retryTimes: 1)
+        log("ManhuaGui 章节页已返回：\(chapterURL.absoluteString)（\(html.count) 字符）")
 
         let urls = parseManhuaGuiImageURLs(html: html, site: site)
         if urls.isEmpty {
-            throw CopyMangaError.noImageInChapter(chapterName)
+            log("ManhuaGui 章节取图失败：未从章节页提取到图片载荷")
+            throw CopyMangaError.htmlParse("漫画柜章节页已返回，但未解析到图片载荷")
         }
+        log("ManhuaGui 章节取图成功：\(chapterName) 共 \(urls.count) 张")
         return urls
     }
 
     private func parseManhuaGuiImageURLs(html: String, site: MangaSiteConfig) -> [URL] {
         let direct = imageURLsFromLoosePattern(in: html, site: site)
         if !direct.isEmpty {
+            if isManhuaGui(site) {
+                log("ManhuaGui 图片解析：命中直链/宽松脚本提取 \(direct.count) 张")
+            }
             return direct
         }
 
         let scripts = scriptContents(from: html)
         for script in scripts {
             if let object = captureImageDataObject(from: script) {
-                let urls = imageURLs(fromImagePayload: object, site: site)
+                let urls = imageURLs(fromImagePayload: object, source: script, site: site)
                 if !urls.isEmpty {
+                    if isManhuaGui(site) {
+                        log("ManhuaGui 图片解析：命中 JS 对象载荷 \(urls.count) 张")
+                    }
                     return urls
                 }
             }
 
             if let decoded = decodePackedScript(from: script) {
                 if let object = captureImageDataObject(from: decoded) {
-                    let urls = imageURLs(fromImagePayload: object, site: site)
+                    let urls = imageURLs(fromImagePayload: object, source: decoded, site: site)
                     if !urls.isEmpty {
+                        if isManhuaGui(site) {
+                            log("ManhuaGui 图片解析：命中解包脚本载荷 \(urls.count) 张")
+                        }
                         return urls
                     }
                 }
 
                 let fallback = imageURLsFromLoosePattern(in: decoded, site: site)
                 if !fallback.isEmpty {
+                    if isManhuaGui(site) {
+                        log("ManhuaGui 图片解析：命中解包脚本宽松提取 \(fallback.count) 张")
+                    }
                     return fallback
                 }
             }
@@ -2888,20 +2653,31 @@ final class CopyMangaAPI: @unchecked Sendable {
         return []
     }
 
-    private func imageURLs(fromImagePayload payload: [String: Any], site: MangaSiteConfig) -> [URL] {
+    private func imageURLs(fromImagePayload payload: [String: Any], source: String? = nil, site: MangaSiteConfig) -> [URL] {
         let files = extractFiles(from: payload)
         if files.isEmpty {
             return []
         }
 
-        let path = payload["path"] as? String
-            ?? payload["imgpath"] as? String
-            ?? payload["chapterPath"] as? String
-        let host = payload["domain"] as? String
-            ?? payload["host"] as? String
-            ?? payload["imgHost"] as? String
-            ?? payload["cdn"] as? String
-        let signature = manhuaGuiSignature(from: payload)
+        let path = extractPayloadString(
+            keys: ["path", "imgpath", "chapterPath", "img_path", "chapter_path"],
+            from: payload
+        ) ?? source.flatMap {
+            firstMatch(
+                in: $0,
+                pattern: #"(?is)["'](?:path|imgpath|chapterPath|img_path|chapter_path)["']\s*:\s*["'](.*?)["']"#
+            )
+        }
+        let host = extractPayloadString(
+            keys: ["domain", "host", "imgHost", "cdn", "imgDomain", "img_host"],
+            from: payload
+        ) ?? source.flatMap {
+            firstMatch(
+                in: $0,
+                pattern: #"(?is)["'](?:domain|host|imgHost|cdn|imgDomain|img_host)["']\s*:\s*["'](.*?)["']"#
+            )
+        }
+        let signature = manhuaGuiSignature(from: payload) ?? source.flatMap(manhuaGuiSignature(from:))
 
         if isManhuaGui(site) {
             log("ManhuaGui 图片载荷：files=\(files.count), path=\(path ?? "-"), host=\(host ?? "-"), sl=\(signature == nil ? "无" : "有")")
@@ -2911,19 +2687,69 @@ final class CopyMangaAPI: @unchecked Sendable {
     }
 
     private func extractFiles(from payload: [String: Any]) -> [String] {
-        if let files = payload["files"] as? [String], !files.isEmpty {
-            return files
+        if let direct = directFiles(in: payload), !direct.isEmpty {
+            return direct
         }
-        if let files = payload["images"] as? [String], !files.isEmpty {
-            return files
-        }
-        if let list = payload["files"] as? [Any] {
-            return list.compactMap { $0 as? String }
-        }
-        if let list = payload["images"] as? [Any] {
-            return list.compactMap { $0 as? String }
+        for nested in nestedPayloadObjects(in: payload) {
+            if let files = directFiles(in: nested), !files.isEmpty {
+                return files
+            }
         }
         return []
+    }
+
+    private func directFiles(in payload: [String: Any]) -> [String]? {
+        let candidateKeys = ["files", "images", "imgs", "imgs_url", "imgsUrl"]
+        for key in candidateKeys {
+            if let files = payload[key] as? [String], !files.isEmpty {
+                return files
+            }
+            if let list = payload[key] as? [Any] {
+                let files = list.compactMap { $0 as? String }
+                if !files.isEmpty {
+                    return files
+                }
+            }
+        }
+        return nil
+    }
+
+    private func extractPayloadString(keys: [String], from payload: [String: Any]) -> String? {
+        for key in keys {
+            if let value = payload[key] as? String, !value.isEmpty {
+                return value
+            }
+        }
+        for nested in nestedPayloadObjects(in: payload) {
+            for key in keys {
+                if let value = nested[key] as? String, !value.isEmpty {
+                    return value
+                }
+            }
+        }
+        return nil
+    }
+
+    private func nestedPayloadObjects(in payload: [String: Any]) -> [[String: Any]] {
+        var results: [[String: Any]] = []
+
+        func collect(from value: Any) {
+            if let dict = value as? [String: Any] {
+                results.append(dict)
+                for nested in dict.values {
+                    collect(from: nested)
+                }
+            } else if let array = value as? [Any] {
+                for element in array {
+                    collect(from: element)
+                }
+            }
+        }
+
+        for value in payload.values {
+            collect(from: value)
+        }
+        return results
     }
 
     private func imageURLsFromLoosePattern(in source: String, site: MangaSiteConfig) -> [URL] {
@@ -2996,6 +2822,11 @@ final class CopyMangaAPI: @unchecked Sendable {
             }
         }
 
+        if isManhuaGui(site), urls.isEmpty == false {
+            let sample = urls.prefix(2).map(\.absoluteString).joined(separator: " | ")
+            log("ManhuaGui 图片链接组装：\(urls.count) 张，示例 \(sample)")
+        }
+
         return urls
     }
 
@@ -3036,16 +2867,19 @@ final class CopyMangaAPI: @unchecked Sendable {
     }
 
     private func manhuaGuiSignature(from source: String) -> ManhuaGuiSignature? {
-        guard let slBody = firstMatch(
-            in: source,
-            pattern: #"(?is)["']sl["']\s*:\s*\{(.*?)\}"#
-        ) else {
-            return nil
+        let patterns = [
+            #"(?is)["'](?:sl|signature)["']\s*:\s*\{(.*?)\}"#,
+            #"(?is)(?:sl|signature)\s*=\s*\{(.*?)\}"#
+        ]
+        for pattern in patterns {
+            guard let body = firstMatch(in: source, pattern: pattern) else { continue }
+            let e = firstMatch(in: body, pattern: #"(?is)["']?e["']?\s*:\s*["']?([0-9]+)["']?"#)
+            let m = firstMatch(in: body, pattern: #"(?is)["']?m["']?\s*:\s*["']([^"']+)["']"#)
+            if let e, let m, !e.isEmpty, !m.isEmpty {
+                return ManhuaGuiSignature(e: e, m: m)
+            }
         }
-        let e = firstMatch(in: slBody, pattern: #"(?is)["']?e["']?\s*:\s*([0-9]+)"#)
-        let m = firstMatch(in: slBody, pattern: #"(?is)["']?m["']?\s*:\s*["']([^"']+)["']"#)
-        guard let e, let m, !e.isEmpty, !m.isEmpty else { return nil }
-        return ManhuaGuiSignature(e: e, m: m)
+        return nil
     }
 
     private func manhuaGuiSignatureFromDict(_ dict: [String: Any]) -> ManhuaGuiSignature? {

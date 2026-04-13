@@ -1,0 +1,14 @@
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/App/AppDelegate.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/App/MainViewModel.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/App/MangaGlassApp.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/App/WindowAccessor.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Models/MangaModels.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Services/CopyMangaAPI.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Services/CopyRenderedDOMExtractor.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Services/DownloadCoordinator.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/ChapterSelection.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/ContentView.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/JSONNavigator.swift
+/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/ProxySessionFactory.swift
+/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DerivedSources/resource_bundle_accessor.swift

@@ -10,18 +10,38 @@ enum SortDirection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum AppThemeMode: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色模式"
+        case .dark: return "暗黑模式"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
 private enum StorageKey {
     static let inputURL = "inputURL"
     static let authCookie = "authCookie"
-    static let proxyType = "proxyType"
-    static let proxyHost = "proxyHost"
-    static let proxyPort = "proxyPort"
-    static let proxyUsername = "proxyUsername"
-    static let proxyPassword = "proxyPassword"
     static let lastDestinationPath = "lastDestinationPath"
     static let recentRecords = "recentRecords"
     static let lastComic = "lastComic"
     static let downloadQueue = "downloadQueue"
+    static let themeMode = "themeMode"
 }
 
 @MainActor
@@ -40,20 +60,11 @@ final class MainViewModel: ObservableObject {
     @Published var authCookie = "" {
         didSet { persistString(authCookie, key: StorageKey.authCookie) }
     }
-    @Published var proxyType: ProxyType = .none {
-        didSet { persistString(proxyType.rawValue, key: StorageKey.proxyType) }
-    }
-    @Published var proxyHost = "" {
-        didSet { persistString(proxyHost, key: StorageKey.proxyHost) }
-    }
-    @Published var proxyPort = "" {
-        didSet { persistString(proxyPort, key: StorageKey.proxyPort) }
-    }
-    @Published var proxyUsername = "" {
-        didSet { persistString(proxyUsername, key: StorageKey.proxyUsername) }
-    }
-    @Published var proxyPassword = "" {
-        didSet { persistString(proxyPassword, key: StorageKey.proxyPassword) }
+    @Published var themeMode: AppThemeMode = {
+        let raw = UserDefaults.standard.string(forKey: StorageKey.themeMode) ?? AppThemeMode.system.rawValue
+        return AppThemeMode(rawValue: raw) ?? .system
+    }() {
+        didSet { persistString(themeMode.rawValue, key: StorageKey.themeMode) }
     }
     @Published var comic: ComicInfo? {
         didSet { persistCodable(comic, key: StorageKey.lastComic) }
@@ -62,7 +73,7 @@ final class MainViewModel: ObservableObject {
     @Published var selectedChapterIDs: Set<String> = []
     @Published var chapterSortDirection: SortDirection = .ascending
     @Published var destinationFolder: URL = {
-        let path = UserDefaults.standard.string(forKey: StorageKey.lastDestinationPath) ?? "/Users/mraz/Downloads/漫画/"
+        let path = UserDefaults.standard.string(forKey: StorageKey.lastDestinationPath) ?? "/Users/mraz/Documents/life/漫画/"
         return URL(fileURLWithPath: path, isDirectory: true)
     }() {
         didSet { UserDefaults.standard.set(destinationFolder.path, forKey: StorageKey.lastDestinationPath) }
@@ -161,6 +172,10 @@ final class MainViewModel: ObservableObject {
         }
     }
 
+    var preferredColorScheme: ColorScheme? {
+        themeMode.colorScheme
+    }
+
     func loadComic() {
         guard !isLoading else { return }
         isLoading = true
@@ -180,7 +195,6 @@ final class MainViewModel: ObservableObject {
         let cookie = normalizedCookie
         Task {
             do {
-                try applyProxyIfNeeded()
                 let target = try api.resolveTarget(from: normalizedInput)
                 loadingComicKey = comicKey(slug: target.slug, site: target.site)
                 let fetched = try await api.fetchComic(slug: target.slug, site: target.site, cookie: cookie, preferCache: false)
@@ -359,14 +373,6 @@ final class MainViewModel: ObservableObject {
                 selected = visibleChapters
             }
             if !selected.isEmpty {
-                do {
-                    try applyProxyIfNeeded()
-                } catch {
-                    errorText = error.localizedDescription
-                    statusText = "代理配置错误"
-                    appendLog("下载未开始：代理配置错误 - \(error.localizedDescription)")
-                    return
-                }
                 let concurrent = downloadConcurrent(for: comic.site)
                 appendLog("加入队列：\(comic.name) - \(selected.count) 话，并发 \(concurrent)")
                 downloader.add(chapters: selected, comic: comic, destination: destinationFolder, cookie: normalizedCookie)
@@ -407,15 +413,6 @@ final class MainViewModel: ObservableObject {
     }
 
     func retryItem(_ item: DownloadTaskItem) {
-        do {
-            try applyProxyIfNeeded()
-        } catch {
-            errorText = error.localizedDescription
-            statusText = "代理配置错误"
-            appendLog("重试未开始：代理配置错误 - \(error.localizedDescription)")
-            return
-        }
-        
         appendLog("重试单独章节：\(item.chapter.displayName)")
         downloader.taskItems.removeAll { $0.id == item.id }
         downloader.add(chapters: [item.chapter], comic: item.comic, destination: item.destination, cookie: item.cookie)
@@ -430,15 +427,6 @@ final class MainViewModel: ObservableObject {
         guard !failed.isEmpty else {
             statusText = "没有失败任务可重下。"
             appendLog("重试跳过：没有失败任务")
-            return
-        }
-
-        do {
-            try applyProxyIfNeeded()
-        } catch {
-            errorText = error.localizedDescription
-            statusText = "代理配置错误"
-            appendLog("重试未开始：代理配置错误 - \(error.localizedDescription)")
             return
         }
 
@@ -533,6 +521,24 @@ final class MainViewModel: ObservableObject {
         loadComic()
     }
 
+    func removeRecentRecord(_ record: RecentComicRecord) {
+        recentRecords.removeAll { $0.id == record.id }
+        statusText = "已删除历史：\(record.title)"
+        appendLog("已删除历史记录：\(record.title)")
+    }
+
+    func clearRecentRecords() {
+        guard !recentRecords.isEmpty else {
+            statusText = "当前没有历史记录。"
+            appendLog("清空历史跳过：当前没有历史记录")
+            return
+        }
+        let removed = recentRecords.count
+        recentRecords = []
+        statusText = "已清空历史记录 \(removed) 条。"
+        appendLog("已清空历史记录：\(removed) 条")
+    }
+
     func applySuggestedMirrorAndReload() {
         guard let suggestion = lastMirrorSuggestion else { return }
         let trimmed = lastFailedInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -588,11 +594,6 @@ final class MainViewModel: ObservableObject {
         let defaults = UserDefaults.standard
         inputURL = defaults.string(forKey: StorageKey.inputURL) ?? ""
         authCookie = defaults.string(forKey: StorageKey.authCookie) ?? ""
-        proxyType = ProxyType(rawValue: defaults.string(forKey: StorageKey.proxyType) ?? "") ?? .none
-        proxyHost = defaults.string(forKey: StorageKey.proxyHost) ?? ""
-        proxyPort = defaults.string(forKey: StorageKey.proxyPort) ?? ""
-        proxyUsername = defaults.string(forKey: StorageKey.proxyUsername) ?? ""
-        proxyPassword = defaults.string(forKey: StorageKey.proxyPassword) ?? ""
         recentRecords = loadCodable([RecentComicRecord].self, key: StorageKey.recentRecords) ?? []
         comic = loadCodable(ComicInfo.self, key: StorageKey.lastComic)
         if let comic {
@@ -646,43 +647,6 @@ final class MainViewModel: ObservableObject {
     private var normalizedCookie: String? {
         let value = authCookie.trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
-    }
-
-    private func applyProxyIfNeeded() throws {
-        let proxy = try resolvedProxySettings()
-        api.updateProxy(proxy)
-        downloader.updateProxy(proxy)
-        if let proxy {
-            appendLog("代理：已启用 \(proxy.type.displayName)")
-        } else {
-            appendLog("代理：未启用")
-        }
-    }
-
-    private func resolvedProxySettings() throws -> ProxySettings? {
-        if proxyType == .none {
-            return nil
-        }
-
-        let host = proxyHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !host.isEmpty else {
-            throw ProxyValidationError.missingHost
-        }
-
-        guard let port = Int(proxyPort.trimmingCharacters(in: .whitespacesAndNewlines)), (1...65535).contains(port) else {
-            throw ProxyValidationError.invalidPort
-        }
-
-        let username = proxyUsername.trimmingCharacters(in: .whitespacesAndNewlines)
-        let password = proxyPassword.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return ProxySettings(
-            type: proxyType,
-            host: host,
-            port: port,
-            username: username.isEmpty ? nil : username,
-            password: password.isEmpty ? nil : password
-        )
     }
 
     private func normalizedSortValue(from text: String, fallback: Double) -> Double {

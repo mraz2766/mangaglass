@@ -6,10 +6,11 @@ final class CopyRenderedDOMExtractor: NSObject, WKNavigationDelegate {
     static let shared = CopyRenderedDOMExtractor()
 
     private lazy var webView: WKWebView = {
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()
-        config.defaultWebpagePreferences.preferredContentMode = .desktop
-        let view = WKWebView(frame: .zero, configuration: config)
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        configuration.defaultWebpagePreferences.preferredContentMode = .desktop
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36"
         view.navigationDelegate = self
         return view
     }()
@@ -26,6 +27,46 @@ final class CopyRenderedDOMExtractor: NSObject, WKNavigationDelegate {
     private struct RenderedPayload: Decodable {
         let loading: Bool
         let items: [RenderedItem]
+    }
+
+    func fetchRenderedHTML(url: URL, cookie: String?, timeout: TimeInterval = 12) async throws -> String {
+        try await load(url: url, cookie: cookie, timeout: timeout)
+        return try await evaluateJavaScriptString(
+            "document.documentElement ? document.documentElement.outerHTML : document.body.innerHTML"
+        )
+    }
+
+    func fetchRenderedImageURLStrings(url: URL, cookie: String?, timeout: TimeInterval = 12) async throws -> [String] {
+        try await load(url: url, cookie: cookie, timeout: timeout)
+        let script = """
+        (() => {
+          const urls = [];
+          const seen = new Set();
+          const images = Array.from(document.querySelectorAll('img'));
+          for (const img of images) {
+            const candidates = [
+              img.getAttribute('data-src'),
+              img.getAttribute('data-original'),
+              img.getAttribute('data-lazy-src'),
+              img.getAttribute('src')
+            ];
+            for (const raw of candidates) {
+              if (!raw) continue;
+              const value = raw.trim();
+              if (!value || seen.has(value)) continue;
+              seen.add(value);
+              urls.push(value);
+              break;
+            }
+          }
+          return JSON.stringify(urls);
+        })();
+        """
+        let text = try await evaluateJavaScriptString(script)
+        guard let data = text.data(using: .utf8) else {
+            throw URLError(.cannotParseResponse)
+        }
+        return try JSONDecoder().decode([String].self, from: data)
     }
 
     func fetchChapters(comicURL: URL, slug: String, cookie: String?, baselineCount: Int) async -> [ComicChapter] {

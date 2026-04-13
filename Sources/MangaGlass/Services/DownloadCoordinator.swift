@@ -168,11 +168,11 @@ final class DownloadCoordinator: ObservableObject {
         relaxStepMS: 50
     )
     private let manhuaGuiPacer = RequestPacer(
-        minDelayMS: 220,
-        maxDelayMS: 460,
-        maxPenaltyMS: 7000,
-        throttleStepMS: 700,
-        relaxStepMS: 150
+        minDelayMS: 420,
+        maxDelayMS: 760,
+        maxPenaltyMS: 10000,
+        throttleStepMS: 1000,
+        relaxStepMS: 100
     )
     private var masterTask: Task<Void, Never>?
     private var logger: ((String) -> Void)?
@@ -187,15 +187,19 @@ final class DownloadCoordinator: ObservableObject {
     private var lastSpeedSampleTime: Date?
     private var lastSpeedSampleCompletedPages = 0
     private var smoothedPagesPerSecond: Double?
+    private var lastSpeedDiagnosticTime: Date?
     private var currentRunID = UUID()
     private var progressRefreshTask: Task<Void, Never>?
     private var isCancelling = false
     private let speedSampleInterval: TimeInterval = 1.0
+    private let manhuaGuiSpeedSampleInterval: TimeInterval = 2.4
     private let etaWarmupDuration: TimeInterval = 5
     private let etaMinimumCompletedPages = 8
     private let etaResolvedChapterThreshold = 3
     private let etaKnownPageThreshold = 60
     private let speedSmoothingFactor = 0.3
+    private let manhuaGuiSpeedSmoothingFactor = 0.18
+    private let manhuaGuiDisplayRateCap = 4.0
     private let chapter404StopThreshold = 4
     private let chapterThrottleStopThreshold = 3
     private let chapterTimeoutStopThreshold = 3
@@ -216,22 +220,10 @@ final class DownloadCoordinator: ObservableObject {
     init(api: CopyMangaAPI) {
         self.api = api
         self.session = ProxySessionFactory.makeSession(
-            proxy: nil,
             timeoutRequest: 45,
             timeoutResource: 240,
             maxConnections: 24
         )
-    }
-
-    func updateProxy(_ proxy: ProxySettings?) {
-        api.updateProxy(proxy)
-        self.session = ProxySessionFactory.makeSession(
-            proxy: proxy,
-            timeoutRequest: 45,
-            timeoutResource: 240,
-            maxConnections: 24
-        )
-        log(proxy == nil ? "代理未启用" : "代理已更新")
     }
 
     func setLogger(_ logger: @escaping (String) -> Void) {
@@ -251,7 +243,11 @@ final class DownloadCoordinator: ObservableObject {
             log("添加任务跳过：\(comic.name) 所选章节均已在队列中")
             return
         }
-        message = "队列共 \(taskItems.count) 话。"
+        if isRunning {
+            message = "已加入 \(newItems.count) 话，当前下载会自动继续。"
+        } else {
+            message = "队列共 \(taskItems.count) 话。"
+        }
         log("添加任务：由 \(comic.name) 添加 \(newItems.count) 话，当前队列共 \(taskItems.count) 话")
     }
 
@@ -332,7 +328,12 @@ final class DownloadCoordinator: ObservableObject {
 
     func start(maxConcurrent: Int = 4) {
         guard !isRunning else {
-            log("启动跳过：已有下载任务运行中")
+            if hasQueuedItems() {
+                message = "已加入队列，当前下载会自动继续。"
+                log("启动跳过：已有下载任务运行中，新增排队项将自动接续")
+            } else {
+                log("启动跳过：已有下载任务运行中")
+            }
             return
         }
         let pendingItems = taskItems.filter { $0.state == .queued }
@@ -356,32 +357,43 @@ final class DownloadCoordinator: ObservableObject {
             resetSpeedEstimateState(placeholder: "计算中...")
         }
 
-        let items = taskItems
         let runID = currentRunID
         masterTask = Task { [weak self] in
             guard let self else { return }
             await self.pauseGate.resume()
 
-            await withTaskGroup(of: Void.self) { group in
-                var iterator = items.filter { $0.state == .queued }.makeIterator()
-                
+            await withTaskGroup(of: UUID?.self) { group in
+                var inFlightItemIDs: Set<UUID> = []
+
                 for _ in 0..<maxConcurrent {
-                    if let item = iterator.next() {
+                    guard !Task.isCancelled else { break }
+                    if let item = await MainActor.run(body: {
+                        self.nextQueuedItem(excluding: inFlightItemIDs)
+                    }) {
+                        inFlightItemIDs.insert(item.id)
                         group.addTask { [weak self] in
-                            guard let self else { return }
-                            if Task.isCancelled { return }
+                            guard let self else { return nil }
+                            if Task.isCancelled { return item.id }
                             await self.run(item: item, runID: runID)
+                            return item.id
                         }
                     }
                 }
-                
-                while let _ = await group.next() {
+
+                while let finishedID = await group.next() {
+                    if let finishedID {
+                        inFlightItemIDs.remove(finishedID)
+                    }
                     if Task.isCancelled { continue }
-                    if let item = iterator.next() {
+                    if let item = await MainActor.run(body: {
+                        self.nextQueuedItem(excluding: inFlightItemIDs)
+                    }) {
+                        inFlightItemIDs.insert(item.id)
                         group.addTask { [weak self] in
-                            guard let self else { return }
-                            if Task.isCancelled { return }
+                            guard let self else { return nil }
+                            if Task.isCancelled { return item.id }
                             await self.run(item: item, runID: runID)
+                            return item.id
                         }
                     }
                 }
@@ -516,6 +528,7 @@ final class DownloadCoordinator: ObservableObject {
         log("开始章节：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName)")
 
         do {
+            let imageFetchStart = Date()
             let imageURLs = try await api.fetchImageURLs(
                 slug: item.comic.slug,
                 chapterUUID: item.chapter.uuid,
@@ -529,17 +542,21 @@ final class DownloadCoordinator: ObservableObject {
             guard shouldContinue(runID: runID, itemID: item.id) else {
                 throw CancellationError()
             }
+            let imageFetchElapsed = Date().timeIntervalSince(imageFetchStart)
             await MainActor.run {
                 guard self.currentRunID == runID, !self.explicitlyCanceledItemIDs.contains(item.id) else { return }
                 self.setChapterExpectedPages(max(1, imageURLs.count), for: item.id, resolved: true)
                 self.setChapterCompletedPages(min(self.chapterCompletedPages[item.id] ?? 0, max(1, imageURLs.count)), for: item.id)
                 self.scheduleProgressRefresh()
             }
+            if isCopyFamily(item.comic.site) {
+                log(String(format: "拷贝漫画章节解析：[%@] %@ 拿到 %d 张图，耗时 %.2fs", item.chapter.volumeName, item.chapter.displayName, imageURLs.count, imageFetchElapsed))
+            }
             try await downloadChapter(item: item, imageURLs: imageURLs, runID: runID)
             await MainActor.run {
                 guard self.currentRunID == runID else { return }
                 self.setState(.done, for: item.id)
-                self.markChapterFinished(for: item.id)
+                self.markChapterFinished(for: item.id, succeeded: true)
                 self.resetDownloadProtection(for: item.id)
                 self.scheduleProgressRefresh(force: true)
             }
@@ -548,7 +565,7 @@ final class DownloadCoordinator: ObservableObject {
             await MainActor.run {
                 guard self.currentRunID == runID || self.explicitlyCanceledItemIDs.contains(item.id) else { return }
                 self.setState(.canceled, for: item.id)
-                self.markChapterFinished(for: item.id)
+                self.markChapterFinished(for: item.id, succeeded: false)
                 self.resetDownloadProtection(for: item.id)
                 self.scheduleProgressRefresh(force: true)
             }
@@ -557,7 +574,7 @@ final class DownloadCoordinator: ObservableObject {
             await MainActor.run {
                 guard self.currentRunID == runID else { return }
                 self.setState(.failed(error.localizedDescription), for: item.id)
-                self.markChapterFinished(for: item.id)
+                self.markChapterFinished(for: item.id, succeeded: false)
                 self.resetDownloadProtection(for: item.id)
                 self.scheduleProgressRefresh(force: true)
             }
@@ -581,8 +598,10 @@ final class DownloadCoordinator: ObservableObject {
                 // Show visible progress during "解析章节/获取图片列表" phase.
                 let baseline = min(0.12 * expected, max(0, expected - 0.1))
                 return partial + max(done, baseline)
-            case .done, .failed, .canceled:
+            case .done:
                 return partial + expected
+            case .failed, .canceled:
+                return partial + done
             }
         }
 
@@ -604,7 +623,7 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     private func downloadChapter(item: DownloadTaskItem, imageURLs: [URL], runID: UUID) async throws {
-        let comicFolder = item.destination.appendingPathComponent(sanitize(item.comic.name), isDirectory: true)
+        let comicFolder = resolvedComicFolder(for: item)
         let groupName = canonicalGroupName(item.chapter.volumeName)
         
         // Calculate if we need group folder
@@ -627,6 +646,9 @@ final class DownloadCoordinator: ObservableObject {
         // while the request pacer prevents API burst spikes and mitigates bans.
         let isManhuaGui = item.comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true
         let maxImageConcurrent = isManhuaGui ? 2 : 3
+        if isCopyFamily(item.comic.site) {
+            log("拷贝漫画进入图片下载：[\(item.chapter.volumeName)] \(item.chapter.displayName)，\(imageURLs.count) 张，并发 \(maxImageConcurrent)")
+        }
         try await withThrowingTaskGroup(of: Void.self) { group in
             var iterator = imageURLs.enumerated().makeIterator()
             var completedCount = 0
@@ -702,6 +724,20 @@ final class DownloadCoordinator: ObservableObject {
         }
     }
 
+    private func resolvedComicFolder(for item: DownloadTaskItem) -> URL {
+        if matchesComicFolderName(item.destination, comicName: item.comic.name) {
+            return item.destination
+        }
+        return item.destination.appendingPathComponent(sanitize(item.comic.name), isDirectory: true)
+    }
+
+    private func matchesComicFolderName(_ folderURL: URL, comicName: String) -> Bool {
+        let folderName = folderURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let comicFolderName = sanitize(comicName).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !folderName.isEmpty, !comicFolderName.isEmpty else { return false }
+        return sanitize(folderName).lowercased() == comicFolderName.lowercased()
+    }
+
     private func downloadImage(
         url: URL,
         to folder: URL,
@@ -719,6 +755,10 @@ final class DownloadCoordinator: ObservableObject {
 
         let candidates = candidateImageURLs(for: url, site: site)
         var lastError: Error?
+        if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
+            let hosts = candidates.compactMap(\.host).joined(separator: " -> ")
+            log("ManhuaGui 图片下载候选：\(hosts)")
+        }
 
         for (index, candidate) in candidates.enumerated() {
             if let remaining = hostCooldownRemaining(for: candidate.host?.lowercased()) {
@@ -755,6 +795,10 @@ final class DownloadCoordinator: ObservableObject {
                         throw URLError(.badServerResponse)
                     }
                     guard (200...299).contains(http.statusCode) else {
+                        if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
+                            let hasSignature = candidate.query?.contains("e=") == true && candidate.query?.contains("m=") == true
+                            self.log("ManhuaGui 图片请求失败：host=\(candidate.host ?? "-") status=\(http.statusCode) signed=\(hasSignature ? "是" : "否")")
+                        }
                         if [403, 429, 503].contains(http.statusCode) {
                             await pacer.markThrottled()
                             if let stopMessage = self.noteImageFailure(itemID: itemID, host: candidate.host?.lowercased(), kind: .throttled) {
@@ -780,6 +824,9 @@ final class DownloadCoordinator: ObservableObject {
             } catch let error as DownloadCircuitBreakError {
                 throw error
             } catch {
+                if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
+                    log("ManhuaGui 图片下载异常：host=\(candidate.host ?? "-") error=\(error.localizedDescription)")
+                }
                 if let urlError = error as? URLError, urlError.code == .timedOut {
                     await self.pacer(for: site).markThrottled()
                     if let stopMessage = self.noteImageFailure(itemID: itemID, host: candidate.host?.lowercased(), kind: .timeout) {
@@ -893,7 +940,8 @@ final class DownloadCoordinator: ObservableObject {
         chapterCompletedPages[id] = (chapterCompletedPages[id] ?? 0) + 1
     }
 
-    private func markChapterFinished(for id: UUID) {
+    private func markChapterFinished(for id: UUID, succeeded: Bool) {
+        guard succeeded else { return }
         let expected = max(1, chapterExpectedPages[id] ?? 1)
         chapterCompletedPages[id] = expected
     }
@@ -903,6 +951,7 @@ final class DownloadCoordinator: ObservableObject {
         lastSpeedSampleTime = nil
         lastSpeedSampleCompletedPages = 0
         smoothedPagesPerSecond = nil
+        lastSpeedDiagnosticTime = nil
     }
 
     private func scheduleProgressRefresh(force: Bool = false) {
@@ -928,25 +977,73 @@ final class DownloadCoordinator: ObservableObject {
         currentRunID == runID && !isCancelling && !explicitlyCanceledItemIDs.contains(itemID)
     }
 
+    private func hasQueuedItems() -> Bool {
+        taskItems.contains { $0.state == .queued }
+    }
+
+    private func nextQueuedItem(excluding inFlightItemIDs: Set<UUID>) -> DownloadTaskItem? {
+        taskItems.first {
+            $0.state == .queued && !inFlightItemIDs.contains($0.id)
+        }
+    }
+
     private func updateSpeedEstimate(elapsed: TimeInterval, currentCompleted: Int) {
         let now = Date()
+        let manhuaGuiActive = hasActiveManhuaGuiDownloads()
+        let copyStats = copySpeedEstimateStats()
+        let sampleInterval = manhuaGuiActive ? manhuaGuiSpeedSampleInterval : speedSampleInterval
+        let smoothingFactor = manhuaGuiActive ? manhuaGuiSpeedSmoothingFactor : speedSmoothingFactor
+        let samplingCompletedPages = manhuaGuiActive ? currentCompleted : copyStats.activeCompletedPages
         if lastSpeedSampleTime == nil {
             lastSpeedSampleTime = now
-            lastSpeedSampleCompletedPages = currentCompleted
+            lastSpeedSampleCompletedPages = samplingCompletedPages
+        } else if !manhuaGuiActive && samplingCompletedPages < lastSpeedSampleCompletedPages {
+            lastSpeedSampleTime = now
+            lastSpeedSampleCompletedPages = samplingCompletedPages
         } else if let lastSampleTime = lastSpeedSampleTime,
-                  now.timeIntervalSince(lastSampleTime) >= speedSampleInterval {
+                  now.timeIntervalSince(lastSampleTime) >= sampleInterval {
             let deltaTime = now.timeIntervalSince(lastSampleTime)
-            let deltaPages = max(0, currentCompleted - lastSpeedSampleCompletedPages)
+            let deltaPages = max(0, samplingCompletedPages - lastSpeedSampleCompletedPages)
             if deltaTime > 0, deltaPages > 0 {
                 let instantRate = Double(deltaPages) / deltaTime
-                if let previous = smoothedPagesPerSecond {
-                    smoothedPagesPerSecond = previous * (1 - speedSmoothingFactor) + instantRate * speedSmoothingFactor
+                let sustainableRate = Double(max(1, samplingCompletedPages)) / max(elapsed, 1)
+                let cappedInstantRate: Double
+                if manhuaGuiActive {
+                    // 漫画柜的共享 pacer 会把真实请求频率限制在低单页/秒级别，
+                    // 这里收掉并发完成带来的显示尖峰，避免误导成“爆速”。
+                    cappedInstantRate = min(instantRate, sustainableRate * 1.35, manhuaGuiDisplayRateCap)
                 } else {
-                    smoothedPagesPerSecond = instantRate
+                    cappedInstantRate = instantRate
+                }
+                if let previous = smoothedPagesPerSecond {
+                    smoothedPagesPerSecond = previous * (1 - smoothingFactor) + cappedInstantRate * smoothingFactor
+                } else {
+                    smoothedPagesPerSecond = cappedInstantRate
                 }
             }
             lastSpeedSampleTime = now
-            lastSpeedSampleCompletedPages = currentCompleted
+            lastSpeedSampleCompletedPages = samplingCompletedPages
+        }
+
+        emitCopySpeedDiagnosticsIfNeeded(
+            now: now,
+            elapsed: elapsed,
+            stats: copyStats,
+            rate: smoothedPagesPerSecond,
+            manhuaGuiActive: manhuaGuiActive
+        )
+
+        if !manhuaGuiActive {
+            if copyStats.activeResolvedRunningCount == 0 {
+                if copyStats.activeUnresolvedRunningCount > 0 {
+                    speedText = "解析中"
+                    return
+                }
+                if taskItems.contains(where: { $0.state == .queued || $0.state == .running }) {
+                    speedText = "准备下载中"
+                    return
+                }
+            }
         }
 
         guard let rate = smoothedPagesPerSecond, rate > 0 else {
@@ -977,6 +1074,83 @@ final class DownloadCoordinator: ObservableObject {
         let remMin = Int(remaining) / 60
         let remSec = Int(remaining) % 60
         speedText = String(format: "约 %.1f 页/秒 · 剩余 %02d:%02d", rate, remMin, remSec)
+    }
+
+    private func hasActiveManhuaGuiDownloads() -> Bool {
+        taskItems.contains { item in
+            guard item.comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true else { return false }
+            switch item.state {
+            case .queued, .running:
+                return true
+            case .done, .failed, .canceled:
+                return false
+            }
+        }
+    }
+
+    private func isCopyFamily(_ site: MangaSiteConfig) -> Bool {
+        guard let host = site.webBase.host?.lowercased() else { return false }
+        return host.contains("mangacopy.com") || host.contains("2025copy.com") || host.contains("2026copy.com")
+    }
+
+    private func copySpeedEstimateStats() -> (
+        activeResolvedRunningCount: Int,
+        activeUnresolvedRunningCount: Int,
+        activeCompletedPages: Int,
+        activeExpectedPages: Int,
+        failedOrCanceledCount: Int
+    ) {
+        let runningItems = taskItems.filter { $0.state == .running && isCopyFamily($0.comic.site) }
+        let resolvedRunning = runningItems.filter { chapterResolvedPageCounts.contains($0.id) }
+        let unresolvedRunning = runningItems.filter { !chapterResolvedPageCounts.contains($0.id) }
+
+        let activeCompletedPages = resolvedRunning.reduce(0) { partial, item in
+            partial + max(0, chapterCompletedPages[item.id] ?? 0)
+        }
+        let activeExpectedPages = resolvedRunning.reduce(0) { partial, item in
+            partial + max(1, chapterExpectedPages[item.id] ?? 1)
+        }
+        let failedOrCanceledCount = taskItems.reduce(0) { partial, item in
+            guard isCopyFamily(item.comic.site) else { return partial }
+            switch item.state {
+            case .failed, .canceled:
+                return partial + 1
+            case .queued, .running, .done:
+                return partial
+            }
+        }
+
+        return (
+            activeResolvedRunningCount: resolvedRunning.count,
+            activeUnresolvedRunningCount: unresolvedRunning.count,
+            activeCompletedPages: activeCompletedPages,
+            activeExpectedPages: activeExpectedPages,
+            failedOrCanceledCount: failedOrCanceledCount
+        )
+    }
+
+    private func emitCopySpeedDiagnosticsIfNeeded(
+        now: Date,
+        elapsed: TimeInterval,
+        stats: (
+            activeResolvedRunningCount: Int,
+            activeUnresolvedRunningCount: Int,
+            activeCompletedPages: Int,
+            activeExpectedPages: Int,
+            failedOrCanceledCount: Int
+        ),
+        rate: Double?,
+        manhuaGuiActive: Bool
+    ) {
+        guard !manhuaGuiActive else { return }
+        guard stats.activeResolvedRunningCount > 0 || stats.activeUnresolvedRunningCount > 0 else { return }
+        if let last = lastSpeedDiagnosticTime, now.timeIntervalSince(last) < 6 {
+            return
+        }
+        lastSpeedDiagnosticTime = now
+        let stateText = stats.activeResolvedRunningCount > 0 ? "图片下载阶段" : "解析阶段"
+        let rateText = rate.map { String(format: "%.2f", $0) } ?? "-"
+        log("拷贝漫画速度估算：\(stateText)，活跃下载章节 \(stats.activeResolvedRunningCount)，解析中章节 \(stats.activeUnresolvedRunningCount)，活跃完成 \(stats.activeCompletedPages)/\(stats.activeExpectedPages)，平滑速率 \(rateText) 页/秒，失败/取消 \(stats.failedOrCanceledCount)，已运行 \(Int(elapsed))s")
     }
 
     private func estimateInputs() -> (knownExpectedPages: Int, completedKnownPages: Int, unresolvedChapters: Int, resolvedCount: Int) {
@@ -1017,6 +1191,34 @@ final class DownloadCoordinator: ObservableObject {
         }
     }
 
+    func progressSummary() -> (completedPages: Int, totalPages: Int, completedTasks: Int, totalTasks: Int) {
+        let totalTasks = taskItems.count
+        let completedTasks = taskItems.reduce(0) { partial, item in
+            switch item.state {
+            case .done:
+                return partial + 1
+            default:
+                return partial
+            }
+        }
+        let totalPages = taskItems.reduce(0) { partial, item in
+            partial + max(1, chapterExpectedPages[item.id] ?? 1)
+        }
+        let completedPages = taskItems.reduce(0) { partial, item in
+            let expected = max(1, chapterExpectedPages[item.id] ?? 1)
+            let done = min(expected, max(0, chapterCompletedPages[item.id] ?? 0))
+            switch item.state {
+            case .done:
+                return partial + expected
+            case .queued:
+                return partial
+            case .running, .failed, .canceled:
+                return partial + done
+            }
+        }
+        return (completedPages, totalPages, completedTasks, totalTasks)
+    }
+
     func failureSummary() -> [(reason: String, count: Int)] {
         let buckets = taskItems.reduce(into: [String: Int]()) { partial, item in
             let key: String
@@ -1042,6 +1244,15 @@ final class DownloadCoordinator: ObservableObject {
 
     private func classifyFailure(_ reason: String) -> String {
         let normalized = reason.lowercased()
+        if normalized.contains("章节页已返回") || normalized.contains("未解析到图片载荷") {
+            return "章节取图失败"
+        }
+        if normalized.contains("图片请求失败") {
+            return "图片下载失败"
+        }
+        if normalized.contains("图片链接已解析") || normalized.contains("下载链路失败") {
+            return "图链下载失败"
+        }
         if normalized.contains("403") || normalized.contains("429") || normalized.contains("503") || normalized.contains("风控") || normalized.contains("冷却") {
             return "403/限流/风控"
         }
@@ -1091,13 +1302,15 @@ final class DownloadCoordinator: ObservableObject {
         var urls: [URL] = []
         var seen: Set<String> = []
 
-        if let preferred = manhuaGuiPreferredHost, let preferredURL = replacingHost(of: original, with: preferred) {
-            urls.append(preferredURL)
-            seen.insert(preferredURL.absoluteString)
-        }
-
         if seen.insert(original.absoluteString).inserted {
             urls.append(original)
+        }
+
+        if let preferred = manhuaGuiPreferredHost,
+           preferred != host,
+           let preferredURL = replacingHost(of: original, with: preferred),
+           seen.insert(preferredURL.absoluteString).inserted {
+            urls.append(preferredURL)
         }
 
         for fallback in fallbackHosts where fallback != host {
