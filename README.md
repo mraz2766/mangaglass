@@ -1,94 +1,98 @@
 # MangaGlass
 
-MangaGlass 是一个面向 macOS 的本地漫画解析与下载工具，基于 SwiftUI 和 Swift Package Manager 构建。
+[中文](./README.zh-CN.md)
 
-它的核心流程很直接：
-- 输入漫画详情页或章节页链接
-- 解析分类、卷和章节
-- 选择下载目录并加入下载队列
-- 在本地管理下载、失败重试和日志
+MangaGlass is a local manga parsing and download tool for macOS, built with SwiftUI and Swift Package Manager.
 
-当前项目定位是桌面工具，不是通用爬虫框架，也不是后端服务。
+Its core workflow is straightforward:
 
-## 当前支持站点
+- paste a manga detail-page URL or chapter URL
+- parse categories, volumes, and chapters
+- choose a local download directory and add items to the queue
+- manage downloads, retries, and logs on your machine
 
-- 拷贝漫画系列
+This project is a desktop app. It is not a general-purpose crawler framework and not a backend service.
+
+## Supported Sites
+
+- CopyManga family
   - `mangacopy.com`
   - `2025copy.com`
   - `2026copy.com`
-- 漫画柜
+- Manhuagui
   - `manhuagui.com`
 - MYCOMIC
   - `mycomic.com`
 
-说明：
-- 不同站点的页面结构、反爬策略和稳定性不同。
-- 某些站点在特定网络、Cookie 或代理条件下才能稳定解析。
-- 站点改版后，解析和下载逻辑可能需要跟进调整。
+Notes:
 
-## 界面预览
+- Different sites use different page structures, anti-bot strategies, and stability levels.
+- Some sites only parse reliably under specific network conditions, with cookies, or through a proxy.
+- When a target site changes its layout, the parsing and download logic may need updates.
+
+## Preview
 
 <div align="center">
-  <img src="./assets/home.png" alt="MangaGlass 首页截图" width="900">
+  <img src="./assets/home.png" alt="MangaGlass home screen" width="900">
 </div>
 
-## 主要功能
+## Features
 
-- 支持漫画详情页、章节页链接解析
-- 支持分类 / 卷 / 章节选择
-- 支持批量下载、暂停、继续、取消、失败重试
-- 支持下载管理页查看队列、状态和失败原因
-- 支持 Cookie 与代理配置
-- 支持最近打开记录
-- 支持清缓存
-  - 解析缓存
-  - 镜像冷却状态
-  - 当前输入和解析结果
-- 支持基础风控避让、局部停机和下载保护
+- Parse manga detail pages and chapter pages
+- Select categories, volumes, and chapters
+- Batch download, pause, resume, cancel, and retry failed items
+- Review queue state, progress, and failure reasons in the download manager
+- Configure cookies and proxies
+- Keep a recent history of opened entries
+- Clear caches for:
+  - parsed data
+  - mirror cooldown state
+  - current input and current parsing result
+- Include basic rate-limit avoidance, partial site shutdown handling, and download protection
 
-## 环境要求
+## Requirements
 
-- macOS 13 或更高版本
+- macOS 13 or later
 - Xcode Command Line Tools
-- Swift 6.2 工具链
+- Swift 6.2 toolchain
 
-如果你还没有安装命令行工具，可以先执行：
+If command line tools are not installed yet:
 
 ```bash
 xcode-select --install
 ```
 
-## 快速开始
+## Quick Start
 
-### 本地运行
+### Run locally
 
 ```bash
 swift build
 swift run MangaGlass
 ```
 
-### 构建 `.app` 与 `.dmg`
+### Build the `.app` and `.dmg`
 
 ```bash
 ./scripts/build_dmg.sh
 ```
 
-构建完成后，产物位于：
+Generated artifacts:
 
 - `dist/MangaGlass.app`
 - `dist/MangaGlass.dmg`
 
-## 使用方式
+## How To Use
 
-### 1. 加载漫画
+### 1. Load a manga
 
-支持以下输入方式：
+MangaGlass accepts:
 
-- 完整漫画详情页链接
-- 完整章节页链接
-- 某些站点的简化 slug / path
+- a full manga detail-page URL
+- a full chapter-page URL
+- for some sites, a simplified slug or path
 
-常见示例：
+Common examples:
 
 ```text
 https://www.manhuagui.com/comic/19430/
@@ -97,76 +101,77 @@ https://mycomic.com/comics/1759
 https://mycomic.com/chapters/790421
 ```
 
-### 2. 选择章节
+### 2. Choose chapters
 
-- 先选择分类 / 卷
-- 再选择单话
-- 支持全选、清空、本分类全选
-- 支持多选和框选
+- select a category or volume first
+- then choose one or more chapters
+- use select all, clear, or select-all-in-current-category
+- multi-selection and drag selection are supported
 
-### 3. 开始下载
+### 3. Start downloading
 
-- 选择下载目录
-- 点击加入队列
-- 在下载管理中查看状态、失败项和日志
+- choose a download directory
+- add selected chapters to the queue
+- watch progress, failures, and logs in Download Manager
 
-## 配置说明
+## Configuration
 
-### Cookie
+### Cookies
 
-某些站点或章节需要 Cookie 才能正常访问。可以在应用内直接填写。
+Some sites or chapters require cookies to be accessed correctly. You can enter cookies directly in the app.
 
-适合排查的场景：
-- 详情页能打开，但应用解析不到内容
-- 章节页能打开，但下载时返回 403 / 404 / 空内容
+Typical cases where cookies help:
 
-### 代理
+- the page opens in a browser, but the app cannot parse the content
+- the chapter opens in a browser, but the app returns `403`, `404`, or empty content when downloading
 
-应用支持在界面中配置代理，包括：
+### Proxy
 
-- 无代理
+The app supports proxy configuration in the UI:
+
+- no proxy
 - HTTP
 - HTTPS
 - SOCKS5
 
-如果你所在网络对目标站点访问不稳定，建议结合代理一起排查。
+If your network is unstable when reaching the target site, proxy-based troubleshooting is often the first thing to try.
 
-## 常用操作
+## Common Operations
 
-### 清缓存
+### Clear cache
 
-顶部提供 `清缓存` 按钮，会清理：
+The top bar includes a `Clear Cache` action. It clears:
 
-- 输入框中的当前链接
-- 当前封面与漫画信息
-- 已解析的分类 / 章节结果
-- 解析相关缓存
-- 镜像冷却状态
+- the current URL in the input field
+- the current cover and manga metadata
+- parsed categories and chapters
+- parsing-related caches
+- mirror cooldown state
 
-适合在站点风控、镜像异常或页面结构临时异常后手动重试。
+This is useful after anti-bot triggers, mirror issues, or temporary page-structure errors.
 
-### 下载管理
+### Download Manager
 
-下载管理页主要用于：
+The download manager is mainly used to:
 
-- 查看排队 / 下载中 / 失败 / 完成数量
-- 暂停所有
-- 继续下载
-- 取消所有
-- 重新下载失败项
-- 清空已完成
-- 查看失败原因与当前进度
+- inspect queued, active, failed, and completed counts
+- pause all downloads
+- resume downloads
+- cancel all downloads
+- retry failed items
+- clear completed items
+- inspect failure reasons and current progress
 
-## 项目结构
+## Project Structure
 
 ```text
 Sources/MangaGlass/
-  App/        应用入口、窗口、主状态管理
-  Models/     站点、漫画、下载、代理等数据模型
-  Services/   站点解析、下载调度、DOM 提取
-  UI/         SwiftUI 界面
-  Utils/      网络、JSON、会话等通用工具
-  Resources/  应用资源
+  App/        App entry point, window setup, main state management
+  Models/     Site, manga, download, proxy, and related data models
+  Services/   Site parsing, download scheduling, DOM extraction
+  UI/         SwiftUI views
+  Utils/      Networking, JSON, session, and shared helpers
+  Resources/  Bundled app resources
 
 assets/
   AppIcon.icns
@@ -177,81 +182,81 @@ scripts/
   build_dmg.sh
 ```
 
-关键文件：
+Key files:
 
 - `Sources/MangaGlass/App/MainViewModel.swift`
 - `Sources/MangaGlass/Services/CopyMangaAPI.swift`
 - `Sources/MangaGlass/Services/DownloadCoordinator.swift`
 - `Sources/MangaGlass/UI/ContentView.swift`
 
-## 开发说明
+## Development
 
-### 常用命令
+### Common commands
 
 ```bash
-# 调试构建
+# debug build
 swift build
 
-# 本地运行
+# run locally
 swift run MangaGlass
 
-# 重新打包
+# package app and dmg
 ./scripts/build_dmg.sh
 ```
 
-### 代码设计方向
+### Design direction
 
-- 优先简单、稳定、可维护
-- 站点解析尽量收敛在服务层
-- 下载逻辑和 UI 逻辑分开
-- 避免为了单站点特例把公共逻辑污染得过重
+- prioritize simplicity, stability, and maintainability
+- keep site-specific parsing logic inside the service layer as much as possible
+- keep download logic separate from UI logic
+- avoid over-polluting shared logic with one-off site-specific behavior
 
-## 常见问题
+## FAQ
 
-### 1. 解析不到章节
+### 1. No chapters are parsed
 
-优先排查：
+Check the following first:
 
-- 站点是否改版
-- 当前网络是否被风控
-- 是否需要 Cookie
-- 是否需要先清缓存再重试
+- the site may have changed its layout
+- the current network may be rate-limited or blocked
+- cookies may be required
+- clearing the cache before retrying may help
 
-### 2. 下载全部失败或频繁 404
+### 2. All downloads fail or many images return 404
 
-优先判断：
+Common causes:
 
-- 图片资源本身失效
-- 当前站点或图片 host 进入风控
-- 章节解析出的图片地址不再有效
-- 代理或网络质量不稳定
+- the image resources are no longer valid
+- the site or image host has entered a defensive mode
+- parsed image URLs are no longer usable
+- proxy quality or network stability is poor
 
-### 3. 某些站点可以在浏览器打开，但应用里失败
+### 3. A site works in my browser but fails in the app
 
-这通常意味着：
+This usually means:
 
-- 浏览器里已有 Cookie，而应用里没有
-- 目标站点对请求头、Referer、频率更敏感
-- 当前机器或 IP 被目标站点限制
+- your browser already has cookies, but the app does not
+- the site is more sensitive to headers, referer, or request frequency
+- the current machine or IP is limited by the target site
 
-### 4. `.app` 和 `.dmg` 用哪个
+### 4. Should I use the `.app` or the `.dmg`?
 
-项目脚本会同时生成：
+The build script generates both:
 
 - `dist/MangaGlass.app`
 - `dist/MangaGlass.dmg`
 
-二者来自同一次构建。一般直接使用 `dist/MangaGlass.app` 或 DMG 中安装的版本即可。
+They come from the same build. In most cases you can use the app bundle directly or install the version inside the DMG.
 
-## 已知边界
+## Known Boundaries
 
-- 解析逻辑依赖第三方站点页面结构
-- 站点可能随时改版、限流或封禁
-- 某些章节或图片 host 对 Referer、Cookie、请求频率较敏感
-- 本项目不承诺长期稳定适配所有目标站点
+- Parsing depends on third-party site structures.
+- Target sites may change, rate-limit requests, or block access at any time.
+- Some chapters or image hosts are sensitive to referer, cookies, or request frequency.
+- This project does not guarantee long-term compatibility with every target site.
 
-## 使用说明
+## Usage Notice
 
-本项目仅用于本地学习、研究和个人使用。
+This project is intended for local learning, research, and personal use.
 
-请仅访问和下载你有权访问的内容。使用者需自行承担由目标站点规则、版权或网络限制带来的风险。
+Only access and download content that you are allowed to access. You are responsible for complying with the target site's rules, copyright requirements, and network restrictions.

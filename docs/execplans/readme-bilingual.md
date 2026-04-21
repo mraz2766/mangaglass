@@ -110,15 +110,19 @@ Observable checks:
 - [x] Inspect existing README, package manifest, build script, assets, and source tree.
 - [x] Choose the bilingual documentation approach.
 - [x] Create and save the ExecPlan.
-- [ ] Wait for user confirmation before editing README files.
-- [ ] Implement the bilingual README changes.
-- [ ] Validate links, commands, and referenced files.
+- [x] Wait for user confirmation before editing README files.
+- [x] Implement the bilingual README changes.
+- [x] Validate links, commands, and referenced files.
 
 ## Surprises & Discoveries
 
 - No `PLANS.md` template was available in the expected project or global fallback paths.
 - The repository currently contains only a Chinese `README.md`, so a Chinese counterpart file will need to be created during implementation.
+- The packaging script produces `dist/MangaGlass.app` and `dist/MangaGlass.dmg`, but those outputs are generated only after running the packaging step, so the README should describe them as build artifacts rather than assume they are committed.
 
 ## Outcomes & Retrospective
 
-Pending implementation.
+- `README.md` now serves as the default English landing page.
+- `README.zh-CN.md` now provides the Chinese version with a direct switch back to English.
+- Both files keep the same practical onboarding flow: overview, supported sites, quick start, usage, configuration, FAQ, and development notes.
+- Validation was completed by checking the referenced commands and repository paths against current project files.
