@@ -109,19 +109,13 @@ struct ContentView: View {
     @State private var dragStartChapterID: String?
     @State private var dragLastChapterID: String?
     @State private var showLogPanel = false
-    @State private var animateBackground = false
     @State private var expandComicTitle = false
     @State private var showDownloadManager = false
     @State private var showSiteEntryPanel = false
     @Environment(\.colorScheme) private var colorScheme
 
     private var isDarkMode: Bool { colorScheme == .dark }
-    private var cardTint: Color { isDarkMode ? Color.white.opacity(0.08) : Color.white.opacity(0.28) }
-    private var insetCardTint: Color { isDarkMode ? Color.white.opacity(0.06) : Color.white.opacity(0.20) }
-    private var softStroke: Color { isDarkMode ? Color.white.opacity(0.14) : Color.white.opacity(0.42) }
-    private var secondaryStroke: Color { isDarkMode ? Color.white.opacity(0.10) : Color.white.opacity(0.30) }
-    private var subduedPanelFill: Color { isDarkMode ? Color.white.opacity(0.06) : Color.white.opacity(0.20) }
-    private var directoryBarFill: Color { isDarkMode ? Color.white.opacity(0.06) : Color.white.opacity(0.20) }
+    private var subduedPanelFill: Color { MGTheme.insetFill(for: colorScheme, prominence: 0.72) }
     private var settingsBackgroundFill: Color { isDarkMode ? Color(red: 0.12, green: 0.15, blue: 0.20).opacity(0.96) : Color.white.opacity(0.92) }
 
     private var dragRect: CGRect? {
@@ -183,134 +177,90 @@ struct ContentView: View {
 
     private var background: some View {
         ZStack {
-            let gradientColors = colorScheme == .dark 
-                ? [Color(red: 0.09, green: 0.10, blue: 0.12), Color(red: 0.05, green: 0.06, blue: 0.08)]
-                : [Color(red: 0.97, green: 0.98, blue: 0.99), Color(red: 0.93, green: 0.95, blue: 0.98)]
-            
+            MGTheme.appBackground(for: colorScheme)
+            .ignoresSafeArea()
+
             LinearGradient(
-                colors: gradientColors,
-                startPoint: .top,
-                endPoint: .bottom
+                colors: colorScheme == .dark
+                    ? [MGTheme.accent.opacity(0.10), .clear]
+                    : [MGTheme.accent.opacity(0.08), .clear],
+                startPoint: .topLeading,
+                endPoint: .center
             )
             .ignoresSafeArea()
-            
-            GeometryReader { proxy in
-                Circle()
-                    .fill(Color(red: 0.49, green: 0.75, blue: 0.93).opacity(0.18))
-                    .blur(radius: 90)
-                    .frame(width: proxy.size.width * 0.4, height: proxy.size.width * 0.4)
-                    .position(x: proxy.size.width * 0.2, y: proxy.size.height * 0.3)
-                    .offset(x: animateBackground ? 30 : -30, y: animateBackground ? 20 : -20)
-                
-                Circle()
-                    .fill(Color(red: 0.68, green: 0.83, blue: 0.94).opacity(0.12))
-                    .blur(radius: 90)
-                    .frame(width: proxy.size.width * 0.3, height: proxy.size.width * 0.3)
-                    .position(x: proxy.size.width * 0.8, y: proxy.size.height * 0.7)
-                    .offset(x: animateBackground ? -40 : 40, y: animateBackground ? -30 : 30)
-                    .scaleEffect(animateBackground ? 1.1 : 0.9)
-            }
-            .ignoresSafeArea()
-            .onAppear {
-                withAnimation(.easeInOut(duration: 8).repeatForever(autoreverses: true)) {
-                    animateBackground.toggle()
-                }
-            }
         }
     }
 
     private func toolbar(metrics: LayoutMetrics) -> some View {
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             if metrics.isNarrow {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
                         toolbarBrand(size: metrics.isWide ? 34 : 30)
                         Spacer(minLength: 0)
-                        siteEntryMenu(compact: true)
+                        toolbarSecondaryMenu
                     }
 
                     HStack(spacing: 8) {
-                        TextField("输入漫画链接或 path_word", text: $vm.inputURL)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .submitLabel(.go)
-                            .onSubmit { vm.loadComic() }
-
+                        toolbarURLField
                         Button(vm.isLoading ? "加载中" : "加载") {
                             vm.loadComic()
                         }
-                        .buttonStyle(ActionButtonStyle(variant: .primary))
+                        .buttonStyle(MGActionButtonStyle(variant: .primary))
                         .disabled(vm.isLoading)
                         .keyboardShortcut(.defaultAction)
                     }
 
                     HStack(spacing: 8) {
+                        siteEntryMenu(compact: true)
                         Button("选择目录") { vm.chooseDestination() }
-                            .buttonStyle(ActionButtonStyle(variant: .neutral))
+                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
                         Spacer(minLength: 0)
                         parseStatusChip
-                        toolbarSecondaryMenu
                     }
 
                     directoryStatusBar
                 }
             } else {
-                toolbarAlignedRow(
-                    leadingWidth: metrics.toolbarLeadingWidth,
-                    actionWidth: metrics.toolbarActionWidth,
-                    leading: {
-                        HStack(spacing: 8) {
-                            toolbarBrand(size: metrics.isWide ? 34 : 30)
-                            siteEntryMenu(compact: false)
-                        }
-                    },
-                    center: {
-                        TextField("输入漫画链接或 path_word", text: $vm.inputURL)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .submitLabel(.go)
-                            .onSubmit { vm.loadComic() }
-                    },
-                    actions: {
-                        HStack(spacing: 8) {
-                            Spacer(minLength: 0)
-                            Button(vm.isLoading ? "加载中" : "加载") {
-                                vm.loadComic()
-                            }
-                            .buttonStyle(ActionButtonStyle(variant: .primary))
-                            .disabled(vm.isLoading)
-                            .keyboardShortcut(.defaultAction)
-                        }
-                    }
-                )
+                HStack(alignment: .center, spacing: 12) {
+                    toolbarBrand(size: metrics.isWide ? 34 : 30)
+                        .frame(width: metrics.toolbarLeadingWidth, alignment: .leading)
 
-                toolbarAlignedRow(
-                    leadingWidth: metrics.toolbarLeadingWidth,
-                    actionWidth: metrics.toolbarActionWidth,
-                    leading: {
-                        HStack(spacing: 8) {
-                            Button("选择目录") { vm.chooseDestination() }
-                                .buttonStyle(ActionButtonStyle(variant: .neutral))
-                            toolbarSecondaryMenu
-                        }
-                    },
-                    center: {
-                        directoryStatusBar
-                    },
-                    actions: {
-                        HStack(spacing: 8) {
-                            Spacer(minLength: 0)
-                            parseStatusChip
-                        }
+                    toolbarURLField
+
+                    Button(vm.isLoading ? "加载中" : "加载") {
+                        vm.loadComic()
                     }
-                )
+                    .buttonStyle(MGActionButtonStyle(variant: .primary))
+                    .disabled(vm.isLoading)
+                    .keyboardShortcut(.defaultAction)
+                    .frame(width: metrics.toolbarActionWidth, alignment: .trailing)
+                }
+
+                HStack(alignment: .center, spacing: 8) {
+                    siteEntryMenu(compact: false)
+                    Button("选择目录") { vm.chooseDestination() }
+                        .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                    directoryStatusBar
+                    Spacer(minLength: 0)
+                    parseStatusChip
+                    toolbarSecondaryMenu
+                }
             }
         }
-        .padding(10)
-        .quietCard()
+        .padding(12)
+        .mgPanel(cornerRadius: 12, prominence: 0.92)
         .sheet(isPresented: $showDownloadManager) {
             DownloadManagerView(vm: vm)
         }
+    }
+
+    private var toolbarURLField: some View {
+        TextField("输入漫画链接或 path_word", text: $vm.inputURL)
+            .textFieldStyle(.roundedBorder)
+            .font(MGFont.body)
+            .submitLabel(.go)
+            .onSubmit { vm.loadComic() }
     }
 
     @ViewBuilder
@@ -325,7 +275,7 @@ struct ContentView: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .quietCard()
+            .mgPanel()
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 coverView
@@ -341,7 +291,7 @@ struct ContentView: View {
             }
             .padding(12)
             .frame(width: metrics.sidePanelWidth)
-            .quietCard()
+            .mgPanel()
         }
     }
 
@@ -369,7 +319,7 @@ struct ContentView: View {
                         } label: {
                             Label(expandComicTitle ? "收起标题" : "展开标题", systemImage: expandComicTitle ? "chevron.up" : "chevron.down")
                         }
-                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        .buttonStyle(MGActionButtonStyle(variant: .neutral))
 
                         Text(expandComicTitle ? "已展开" : "已折叠")
                             .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -393,7 +343,7 @@ struct ContentView: View {
                         Button("切换到 \(suggestion.displayName) 重试") {
                             vm.applySuggestedMirrorAndReload()
                         }
-                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        .buttonStyle(MGActionButtonStyle(variant: .neutral))
                     }
                 }
             }
@@ -437,23 +387,23 @@ struct ContentView: View {
             }
         }
         .padding(8)
-        .glassInsetCard()
+        .mgInsetPanel()
     }
 
     private func statItem(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .font(MGFont.micro)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .font(MGFont.number)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .mgInsetPanel(cornerRadius: 8, prominence: 0.7)
     }
 
     private func compactMetaRow(_ left: CompactMetaItem, _ right: CompactMetaItem) -> some View {
@@ -477,7 +427,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(Color.white.opacity(0.28), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .mgInsetPanel(cornerRadius: 8, prominence: 0.72)
     }
 
     private func sectionTitle(_ text: String) -> some View {
@@ -509,22 +459,14 @@ struct ContentView: View {
                     Image(systemName: "checkmark.circle.fill")
                     Text(vm.parseDoneText)
                 }
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color(red: 0.20, green: 0.55, blue: 0.80))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color(red: 0.20, green: 0.55, blue: 0.80).opacity(0.12), in: Capsule())
+                .mgStatusPill(tint: MGTheme.accent, selected: true)
             } else if vm.isLoading, !vm.parseLiveText.isEmpty {
                 HStack(spacing: 5) {
                     ProgressView()
                         .controlSize(.mini)
                     Text(vm.parseLiveText)
                 }
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color(red: 0.30, green: 0.60, blue: 0.90))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color(red: 0.30, green: 0.60, blue: 0.90).opacity(0.12), in: Capsule())
+                .mgStatusPill(tint: MGTheme.cyanAction, selected: true)
             }
         }
     }
@@ -575,7 +517,7 @@ struct ContentView: View {
         } label: {
             Label("更多", systemImage: "ellipsis.circle")
         }
-        .buttonStyle(ActionButtonStyle(variant: .ghost))
+        .buttonStyle(MGActionButtonStyle(variant: .ghost))
     }
 
     private func historyMenuTitle(for record: RecentComicRecord) -> String {
@@ -586,9 +528,9 @@ struct ContentView: View {
         HStack(spacing: 8) {
             Image(systemName: "folder.fill")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color(red: 0.46, green: 0.60, blue: 0.78))
+                .foregroundStyle(MGTheme.accent)
             Text(vm.destinationFolder.path)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .font(MGFont.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -596,7 +538,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(directoryBarFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .mgInsetPanel(cornerRadius: 9, prominence: 0.82)
     }
 
     private func toolbarBrand(size: CGFloat) -> some View {
@@ -636,7 +578,7 @@ struct ContentView: View {
                     .font(.system(size: 10, weight: .bold))
             }
         }
-        .buttonStyle(ActionButtonStyle(variant: .ghost))
+        .buttonStyle(MGActionButtonStyle(variant: .ghost))
         .popover(isPresented: $showSiteEntryPanel, arrowEdge: .bottom) {
             siteEntryPopover
         }
@@ -735,25 +677,6 @@ struct ContentView: View {
         return "点击后直接打开站点或镜像，不再使用系统级子菜单。"
     }
 
-    private func toolbarAlignedRow<Leading: View, Center: View, Actions: View>(
-        leadingWidth: CGFloat,
-        actionWidth: CGFloat,
-        @ViewBuilder leading: () -> Leading,
-        @ViewBuilder center: () -> Center,
-        @ViewBuilder actions: () -> Actions
-    ) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            leading()
-                .frame(width: leadingWidth, alignment: .leading)
-
-            center()
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            actions()
-                .frame(width: actionWidth, alignment: .trailing)
-        }
-    }
-
     private func queueStat(_ title: String, _ value: Int, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
@@ -825,47 +748,41 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(selectedVolumeCount == 0 ? "浏览分类" : "已选分类")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(MGFont.captionStrong)
                 Text(selectedVolumeCount == 0 ? "先选分类再批量挑章节" : "\(selectedVolumeCount) 个分类已激活")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .font(MGFont.micro)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("全选") {
                     vm.selectAllVolumes()
                 }
-                .buttonStyle(ActionButtonStyle(variant: .neutral))
+                .buttonStyle(MGActionButtonStyle(variant: .neutral))
                 Button("清空") {
                     vm.deselectAllVolumes()
                 }
-                .buttonStyle(ActionButtonStyle(variant: .neutral))
+                .buttonStyle(MGActionButtonStyle(variant: .neutral))
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(vm.displayVolumes) { volume in
+                        let selected = vm.selectedVolumeIDs.contains(volume.id)
                         Button {
                             vm.toggleVolume(volume.id)
                         } label: {
                             HStack(spacing: 6) {
-                                Image(systemName: vm.selectedVolumeIDs.contains(volume.id) ? "checkmark.square.fill" : "square")
-                                    .foregroundStyle(vm.selectedVolumeIDs.contains(volume.id) ? .blue : .secondary)
+                                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selected ? MGTheme.accentStrong : .secondary)
                                 Text(volume.displayName)
-                                    .font(.system(size: 10, weight: vm.selectedVolumeIDs.contains(volume.id) ? .semibold : .medium, design: .rounded))
+                                    .font(selected ? MGFont.captionStrong : MGFont.caption)
                                     .lineLimit(1)
                                 Text("\(volume.chapters.count)")
-                                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                                    .font(MGFont.micro)
                                     .foregroundStyle(.secondary.opacity(0.82))
                             }
                             .padding(.horizontal, 7)
                             .padding(.vertical, 4)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(vm.selectedVolumeIDs.contains(volume.id) ? AnyShapeStyle(Color(red: 0.70, green: 0.84, blue: 0.94).opacity(0.24)) : AnyShapeStyle(Color.clear))
-                            )
-                            .overlay(
-                                Capsule(style: .continuous)
-                                    .stroke(vm.selectedVolumeIDs.contains(volume.id) ? Color(red: 0.40, green: 0.58, blue: 0.74).opacity(0.40) : Color.white.opacity(0.18), lineWidth: 0.8)
-                            )
+                            .mgStatusPill(tint: MGTheme.accentStrong, selected: selected)
                         }
                         .buttonStyle(.plain)
                     }
@@ -932,11 +849,11 @@ struct ContentView: View {
                     }
                     HStack(spacing: 8) {
                         Button("全选") { vm.selectAllVisible() }
-                            .buttonStyle(ActionButtonStyle(variant: .neutral))
+                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
                         Button("清空") { vm.deselectAllVisible() }
-                            .buttonStyle(ActionButtonStyle(variant: .neutral))
+                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
                         Button("加入队列") { vm.startDownload() }
-                            .buttonStyle(ActionButtonStyle(variant: .accent))
+                            .buttonStyle(MGActionButtonStyle(variant: .accent))
                             .disabled(vm.comic == nil && vm.downloader.taskItems.isEmpty)
                     }
                 }
@@ -951,11 +868,11 @@ struct ContentView: View {
                     HStack(spacing: 8) {
                         sortPicker(width: metrics.sortControlWidth)
                         Button("全选") { vm.selectAllVisible() }
-                            .buttonStyle(ActionButtonStyle(variant: .neutral))
+                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
                         Button("清空") { vm.deselectAllVisible() }
-                            .buttonStyle(ActionButtonStyle(variant: .neutral))
+                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
                         Button("加入队列") { vm.startDownload() }
-                            .buttonStyle(ActionButtonStyle(variant: .accent))
+                            .buttonStyle(MGActionButtonStyle(variant: .accent))
                             .disabled(vm.comic == nil && vm.downloader.taskItems.isEmpty)
                         Spacer(minLength: 0)
                     }
@@ -1018,7 +935,7 @@ struct ContentView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .quietCard()
+        .mgPanel()
     }
 
     private var chapterPanelTitle: some View {
@@ -1026,27 +943,20 @@ struct ContentView: View {
         return HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("分类 / 章节")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(MGFont.title)
                 Text(selecting ? "选择模式 · 批量操作已激活" : "浏览模式 · 支持多选 / 框选")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(MGFont.micro)
                     .foregroundStyle(.secondary.opacity(0.85))
             }
 
             Text(selecting ? "选择中" : "浏览中")
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(selecting ? Color(red: 0.24, green: 0.56, blue: 0.87) : .secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background((selecting ? Color.blue.opacity(0.12) : Color.white.opacity(0.28)), in: Capsule())
+                .mgStatusPill(tint: MGTheme.accentStrong, selected: selecting)
         }
     }
 
     private var chapterSelectionPill: some View {
         Text(selectedCount > 0 ? "已选 \(selectedCount) 话" : "分类 \(selectedVolumeCount) · 章节 \(selectedCount)")
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Color.blue.opacity(0.12), in: Capsule())
+            .mgStatusPill(tint: MGTheme.accentStrong, selected: selectedCount > 0 || selectedVolumeCount > 0)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
     }
@@ -1066,95 +976,110 @@ struct ContentView: View {
         let counts = vm.downloader.countsSummary()
         let failures = vm.downloader.failureSummary()
         let progressSummary = vm.downloader.progressSummary()
+        let hasQueue = vm.downloader.isRunning || !vm.downloader.taskItems.isEmpty
+        let stateText = vm.downloader.isRunning ? "队列执行中" : (vm.downloader.taskItems.isEmpty ? "队列空闲" : "队列已暂停")
+        let detailText: String = {
+            if !vm.downloader.currentTaskTitle.isEmpty {
+                return vm.downloader.currentTaskTitle
+            }
+            if let firstFailure = failures.first {
+                return "\(firstFailure.reason) · \(firstFailure.count) 话"
+            }
+            return "排队 \(counts.queued) · 进行中 \(counts.running) · 失败 \(counts.failed) · 完成 \(counts.done)"
+        }()
 
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 7) {
             if metrics.isNarrow {
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("下载控制台")
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.secondary)
-                            if !vm.downloader.speedText.isEmpty {
-                                Text(vm.downloader.speedText)
-                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(.blue)
-                            }
+                    HStack(spacing: 8) {
+                        Label(stateText, systemImage: vm.downloader.isRunning ? "arrow.down.circle.fill" : "tray")
+                            .font(MGFont.bodyStrong)
+                            .foregroundStyle(vm.downloader.isRunning ? MGTheme.accentStrong : .secondary)
+                        Spacer(minLength: 0)
+                        if !vm.downloader.speedText.isEmpty {
+                            Text(vm.downloader.speedText)
+                                .font(MGFont.number)
+                                .foregroundStyle(MGTheme.accentStrong)
                         }
-                        Spacer()
-                        Button(action: { showDownloadManager = true }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "list.bullet.rectangle.portrait")
-                                Text("下载管理")
-                            }
-                        }
-                        .buttonStyle(ActionButtonStyle(variant: .accent))
                     }
 
-                    HStack(spacing: 8) {
-                        if vm.downloader.isRunning || !vm.downloader.taskItems.isEmpty {
+                    if hasQueue {
+                        HStack(spacing: 8) {
                             ProgressView(value: vm.downloader.progress)
                                 .progressViewStyle(.linear)
                                 .scaleEffect(y: 1.45)
                             Text("\(progressSummary.completedPages)/\(progressSummary.totalPages) 页")
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .font(MGFont.captionStrong)
                                 .foregroundStyle(.secondary)
                         }
+                    }
+
+                    Text(detailText)
+                        .font(MGFont.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    HStack(spacing: 8) {
+                        inlineStat("排队", counts.queued, tint: MGTheme.queued, suffix: "话")
+                        inlineStat("失败", counts.failed, tint: MGTheme.danger, suffix: "话")
+                        inlineStat("完成", counts.done, tint: MGTheme.success, suffix: "话")
                         Spacer(minLength: 0)
+                        Button(action: { showDownloadManager = true }) {
+                            Label("下载管理", systemImage: "list.bullet.rectangle.portrait")
+                        }
+                        .buttonStyle(MGActionButtonStyle(variant: .accent))
                         Button(showLogPanel ? "隐藏日志" : "显示日志") {
                             showLogPanel.toggle()
                         }
-                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        .buttonStyle(MGActionButtonStyle(variant: .neutral))
                     }
-
-                    compactDownloadInline(counts: counts, failures: failures)
                 }
             } else {
-                HStack {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("下载控制台")
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(stateText, systemImage: vm.downloader.isRunning ? "arrow.down.circle.fill" : "tray")
+                            .font(MGFont.bodyStrong)
+                            .foregroundStyle(vm.downloader.isRunning ? MGTheme.accentStrong : .secondary)
+                        Text(detailText)
+                            .font(MGFont.caption)
                             .foregroundStyle(.secondary)
-                        Text(vm.downloader.isRunning ? "队列执行中" : "队列空闲")
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary.opacity(0.85))
+                            .lineLimit(1)
                     }
-                    Spacer()
+                    .frame(minWidth: 220, alignment: .leading)
 
-                    if vm.downloader.isRunning || !vm.downloader.taskItems.isEmpty {
-                        VStack(alignment: .trailing, spacing: 4) {
-                            if !vm.downloader.speedText.isEmpty {
-                                Text(vm.downloader.speedText)
-                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(.blue)
-                            }
-                            HStack(spacing: 8) {
-                                ProgressView(value: vm.downloader.progress)
-                                    .progressViewStyle(.linear)
-                                    .scaleEffect(y: 1.45)
-                                    .frame(width: metrics.isWide ? 180 : 150)
-                                Text("\(progressSummary.completedPages)/\(progressSummary.totalPages) 页")
-                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                    inlineStat("排队", counts.queued, tint: MGTheme.queued, suffix: "话")
+                    inlineStat("进行中", counts.running, tint: MGTheme.accentStrong, suffix: "话")
+                    inlineStat("失败", counts.failed, tint: MGTheme.danger, suffix: "话")
+                    inlineStat("完成", counts.done, tint: MGTheme.success, suffix: "话")
+
+                    Spacer(minLength: 0)
+
+                    if hasQueue {
+                        ProgressView(value: vm.downloader.progress)
+                            .progressViewStyle(.linear)
+                            .scaleEffect(y: 1.35)
+                            .frame(width: metrics.isWide ? 190 : 150)
+                        Text("\(progressSummary.completedPages)/\(progressSummary.totalPages) 页")
+                            .font(MGFont.captionStrong)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if !vm.downloader.speedText.isEmpty {
+                        Text(vm.downloader.speedText)
+                            .font(MGFont.number)
+                            .foregroundStyle(MGTheme.accentStrong)
                     }
 
                     Button(action: { showDownloadManager = true }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "list.bullet.rectangle.portrait")
-                            Text("下载管理")
-                        }
+                        Label("下载管理", systemImage: "list.bullet.rectangle.portrait")
                     }
-                    .buttonStyle(ActionButtonStyle(variant: .accent))
+                    .buttonStyle(MGActionButtonStyle(variant: .accent))
 
                     Button(showLogPanel ? "隐藏日志" : "显示日志") {
                         showLogPanel.toggle()
                     }
-                    .buttonStyle(ActionButtonStyle(variant: .neutral))
+                    .buttonStyle(MGActionButtonStyle(variant: .neutral))
                 }
-
-                compactDownloadInline(counts: counts, failures: failures)
             }
 
             if showLogPanel {
@@ -1162,23 +1087,23 @@ struct ContentView: View {
                     HStack {
                         Toggle("只看错误", isOn: $vm.showOnlyErrorLogs)
                             .toggleStyle(.checkbox)
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .font(MGFont.caption)
                         Spacer()
                         Button("复制最近 50 条") {
                             vm.copyRecentLogs()
                         }
-                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        .buttonStyle(MGActionButtonStyle(variant: .neutral))
                         Button("清空日志") {
                             vm.clearLogs()
                         }
-                        .buttonStyle(ActionButtonStyle(variant: .neutral))
+                        .buttonStyle(MGActionButtonStyle(variant: .neutral))
                     }
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 3) {
                             if vm.filteredLogLines.isEmpty {
                             Text("暂无日志，加载/下载后会实时显示。")
-                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .font(MGFont.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             } else {
@@ -1194,13 +1119,13 @@ struct ContentView: View {
                     .frame(minHeight: 88, maxHeight: 128)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .mgInsetPanel(cornerRadius: 8, prominence: 0.72)
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .quietCard()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .mgPanel(cornerRadius: 10, shadow: false)
     }
 
     private var placeholderCover: some View {
@@ -1294,43 +1219,35 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
                                 Text(section.volumeName)
-                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                    .font(MGFont.section)
                                     .foregroundStyle(.primary.opacity(0.9))
 
                                 Text("\(section.chapterCount) 话")
-                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                    .foregroundStyle(Color(red: 0.31, green: 0.49, blue: 0.64))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
-                                    .background(Color.white.opacity(0.55), in: Capsule())
+                                    .mgStatusPill(tint: MGTheme.accent, selected: false)
                             }
 
                             HStack {
                                 Text("已选 \(vm.selectedChapterCount(in: section.id)) / \(section.chapterCount)")
-                                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                                    .font(MGFont.micro)
                                     .foregroundStyle(.secondary)
                                 Spacer(minLength: 0)
                                 Button(vm.areAllChaptersSelected(in: section.id) ? "清空本分类" : "全选本分类") {
                                     vm.toggleVolumeChapterSelection(volumeID: section.id)
                                 }
-                                .buttonStyle(ActionButtonStyle(variant: .neutral))
+                                .buttonStyle(MGActionButtonStyle(variant: .neutral))
                             }
                         }
                     } else {
                         HStack(spacing: 8) {
                             Text(section.volumeName)
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .font(MGFont.section)
                                 .foregroundStyle(.primary.opacity(0.9))
 
                             Text("\(section.chapterCount) 话")
-                                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                .foregroundStyle(Color(red: 0.31, green: 0.49, blue: 0.64))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(Color.white.opacity(0.55), in: Capsule())
+                                .mgStatusPill(tint: MGTheme.accent, selected: false)
 
                             Text("已选 \(vm.selectedChapterCount(in: section.id)) / \(section.chapterCount)")
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                                .font(MGFont.micro)
                                 .foregroundStyle(.secondary)
 
                             Spacer(minLength: 0)
@@ -1338,21 +1255,14 @@ struct ContentView: View {
                             Button(vm.areAllChaptersSelected(in: section.id) ? "清空本分类" : "全选本分类") {
                                 vm.toggleVolumeChapterSelection(volumeID: section.id)
                             }
-                            .buttonStyle(ActionButtonStyle(variant: .neutral))
+                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
                         }
                     }
 
                     sectionChapterGrid(section.chapters, columns: metrics.chapterColumns)
                 }
-                .padding(8)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.24))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(0.34), lineWidth: 0.8)
-                )
+                .padding(9)
+                .mgInsetPanel(cornerRadius: 10, prominence: 0.62)
             }
         }
         .padding(.top, 2)
@@ -1410,53 +1320,53 @@ private struct ChapterChip: View {
     let chapter: ComicChapter
     let isSelected: Bool
     @State private var isHovered = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(isSelected ? Color(red: 0.26, green: 0.52, blue: 0.78) : (isHovered ? Color(red: 0.31, green: 0.49, blue: 0.70) : .secondary))
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? MGTheme.accentStrong : (isHovered ? MGTheme.accent : .secondary))
                     .scaleEffect(isHovered ? 1.05 : 1.0)
                 Text(chapter.displayName)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(isSelected ? Color(red: 0.15, green: 0.25, blue: 0.38) : (isHovered ? .primary.opacity(0.96) : .primary.opacity(0.88)))
+                    .font(MGFont.bodyStrong)
+                    .foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(isHovered ? 0.96 : 0.88))
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
 
             if !chapter.volumeName.isEmpty {
                 Text(chapter.volumeName)
-                    .font(.system(size: 8, weight: .medium, design: .rounded))
+                    .font(MGFont.micro)
                     .foregroundStyle(.secondary.opacity(isSelected ? 0.65 : 0.5))
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(
                     isSelected
-                        ? AnyShapeStyle(Color(red: 0.77, green: 0.88, blue: 0.96).opacity(isHovered ? 0.92 : 0.68))
-                        : AnyShapeStyle(Color.white.opacity(isHovered ? 0.44 : 0.16))
+                        ? AnyShapeStyle(MGTheme.accentSoft.opacity(colorScheme == .dark ? 0.22 : (isHovered ? 0.72 : 0.58)))
+                        : AnyShapeStyle(MGTheme.insetFill(for: colorScheme, prominence: isHovered ? 1.0 : 0.56))
                 )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(
-                    isSelected ? Color(red: 0.34, green: 0.55, blue: 0.75).opacity(isHovered ? 0.82 : 0.62) : Color(red: 0.54, green: 0.68, blue: 0.82).opacity(isHovered ? 0.56 : 0.22),
-                    lineWidth: isHovered ? 1.1 : 0.9
+                    isSelected ? MGTheme.accentStrong.opacity(isHovered ? 0.66 : 0.45) : MGTheme.stroke(for: colorScheme, prominence: isHovered ? 0.72 : 0.38),
+                    lineWidth: 0.8
                 )
         )
         .overlay(alignment: .leading) {
             RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(isSelected ? Color(red: 0.31, green: 0.55, blue: 0.80) : Color(red: 0.58, green: 0.70, blue: 0.84).opacity(isHovered ? 0.68 : 0))
+                .fill(isSelected ? MGTheme.accentStrong : MGTheme.accent.opacity(isHovered ? 0.48 : 0))
                 .frame(width: 3)
                 .padding(.vertical, 4)
         }
-        .shadow(color: Color.black.opacity(isSelected ? 0.05 : 0.03), radius: isHovered ? 10 : 5, y: isHovered ? 5 : 3)
-        .scaleEffect(isHovered ? 1.015 : 1.0)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
+        .scaleEffect(isHovered ? 1.006 : 1.0)
+        .animation(.easeOut(duration: 0.14), value: isHovered)
         .onHover { hovering in
             isHovered = hovering
             if hovering {
@@ -1494,107 +1404,5 @@ struct BrandMarkView: View {
                     .stroke(Color.white.opacity(0.56), lineWidth: 0.8)
             )
             .shadow(color: Color.black.opacity(elevated ? 0.08 : 0.05), radius: elevated ? 10 : 6, y: elevated ? 5 : 3)
-    }
-}
-
-enum ActionVariant {
-    case primary
-    case accent
-    case danger
-    case neutral
-    case ghost
-}
-
-struct ActionButtonStyle: ButtonStyle {
-    let variant: ActionVariant
-    @State private var isHovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .foregroundStyle(foreground)
-            .background(background(configuration.isPressed, hovered: isHovered), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isHovered = hovering
-                }
-                if hovering {
-                    NSCursor.pointingHand.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
-    }
-
-    private var foreground: Color {
-        switch variant {
-        case .neutral, .ghost:
-            return Color.primary.opacity(0.8)
-        default:
-            return .white
-        }
-    }
-
-    private func background(_ pressed: Bool, hovered: Bool) -> Color {
-        switch variant {
-        case .primary:
-            return pressed ? Color(red: 0.17, green: 0.50, blue: 0.90) : Color(red: 0.21, green: 0.56, blue: 0.95)
-        case .accent:
-            return pressed ? Color(red: 0.25, green: 0.65, blue: 0.85) : Color(red: 0.32, green: 0.72, blue: 0.92)
-        case .danger:
-            return pressed ? Color(red: 0.40, green: 0.50, blue: 0.85) : Color(red: 0.48, green: 0.58, blue: 0.92)
-        case .neutral:
-            return pressed ? Color.gray.opacity(0.3) : (hovered ? Color.gray.opacity(0.22) : Color.gray.opacity(0.15))
-        case .ghost:
-            return pressed ? Color.gray.opacity(0.15) : (hovered ? Color.gray.opacity(0.1) : Color.clear)
-        }
-    }
-}
-
-private extension View {
-    func quietCard() -> some View {
-        modifier(QuietCardModifier())
-    }
-
-    func glassInsetCard() -> some View {
-        modifier(GlassInsetCardModifier())
-    }
-}
-
-private struct QuietCardModifier: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
-
-    func body(content: Content) -> some View {
-        let fill = colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.28)
-        let stroke = colorScheme == .dark ? Color.white.opacity(0.14) : Color.white.opacity(0.42)
-        let shadow = colorScheme == .dark ? Color.black.opacity(0.20) : Color.black.opacity(0.05)
-
-        content
-            .background(fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(stroke, lineWidth: 0.8)
-            )
-            .shadow(color: shadow, radius: 18, x: 0, y: 10)
-    }
-}
-
-private struct GlassInsetCardModifier: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
-
-    func body(content: Content) -> some View {
-        let fill = colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.20)
-        let stroke = colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.30)
-
-        content
-            .background(fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(stroke, lineWidth: 0.8)
-            )
     }
 }
