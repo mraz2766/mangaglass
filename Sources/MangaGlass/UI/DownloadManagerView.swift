@@ -36,6 +36,18 @@ struct DownloadManagerView: View {
         }
     }
 
+    private enum ManagerConfirmation: Identifiable {
+        case cancelAll
+        case clearAll
+
+        var id: String {
+            switch self {
+            case .cancelAll: return "cancel-all"
+            case .clearAll: return "clear-all"
+            }
+        }
+    }
+
     @ObservedObject var vm: MainViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -43,6 +55,7 @@ struct DownloadManagerView: View {
     @State private var filter: FilterType = .all
     @State private var isFloating = false
     @State private var expandedTaskID: UUID?
+    @State private var pendingConfirmation: ManagerConfirmation?
 
     enum FilterType: String, CaseIterable, Identifiable {
         case all = "全部"
@@ -84,6 +97,62 @@ struct DownloadManagerView: View {
             .background(downloadManagerBackground)
         }
         .frame(minWidth: 760, minHeight: 500)
+        .alert(
+            managerConfirmationTitle,
+            isPresented: managerConfirmationIsPresented,
+            presenting: pendingConfirmation
+        ) { confirmation in
+            managerConfirmationActions(for: confirmation)
+        } message: { confirmation in
+            Text(managerConfirmationMessage(for: confirmation))
+        }
+    }
+
+    private var managerConfirmationTitle: String {
+        switch pendingConfirmation {
+        case .cancelAll:
+            return "取消所有下载？"
+        case .clearAll:
+            return "清空下载队列？"
+        case nil:
+            return ""
+        }
+    }
+
+    private var managerConfirmationIsPresented: Binding<Bool> {
+        Binding(
+            get: { pendingConfirmation != nil },
+            set: { isPresented in
+                if !isPresented {
+                    pendingConfirmation = nil
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func managerConfirmationActions(for confirmation: ManagerConfirmation) -> some View {
+        switch confirmation {
+        case .cancelAll:
+            Button("取消所有", role: .destructive) {
+                vm.cancelDownload()
+            }
+            Button("返回", role: .cancel) {}
+        case .clearAll:
+            Button("清空所有", role: .destructive) {
+                vm.clearQueue()
+            }
+            Button("返回", role: .cancel) {}
+        }
+    }
+
+    private func managerConfirmationMessage(for confirmation: ManagerConfirmation) -> String {
+        switch confirmation {
+        case .cancelAll:
+            return "当前正在执行的下载会被取消，已完成的文件不会被删除。"
+        case .clearAll:
+            return "这会移除当前下载管理器中的全部任务记录，但不会删除已经下载到本地的文件。"
+        }
     }
 
     private func header(metrics: LayoutMetrics) -> some View {
@@ -191,7 +260,7 @@ struct DownloadManagerView: View {
                         Button("开始/继续") { vm.startDownload() }
                             .disabled(vm.downloader.taskItems.filter { $0.state == .queued }.isEmpty)
 
-                        Button("取消所有") { vm.cancelDownload() }
+                        Button("取消所有") { pendingConfirmation = .cancelAll }
                             .disabled(!vm.downloader.isRunning)
 
                         Divider()
@@ -199,13 +268,13 @@ struct DownloadManagerView: View {
                         Button("重试失败") { vm.retryFailed() }
                             .disabled(vm.downloader.failedItems().isEmpty)
 
-                        Button("清空所有") { vm.clearQueue() }
+                        Button("清空所有") { pendingConfirmation = .clearAll }
                             .disabled(vm.downloader.isRunning)
 
                         Divider()
 
                         Button("打开下载目录") {
-                            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: vm.destinationFolder.path)
+                            vm.openDownloadDirectory()
                         }
                     } label: {
                         Label("更多", systemImage: "ellipsis.circle")
@@ -388,6 +457,18 @@ struct DownloadManagerView: View {
                     .font(MGFont.number)
                     .foregroundStyle(MGTheme.accentStrong)
                     .lineLimit(1)
+            }
+
+            Button("打开下载目录") {
+                vm.openDownloadDirectory()
+            }
+            .buttonStyle(MGActionButtonStyle(variant: .neutral))
+
+            if vm.canOpenRecentDownload {
+                Button("显示最近下载") {
+                    vm.openRecentDownload()
+                }
+                .buttonStyle(MGActionButtonStyle(variant: .accent))
             }
         }
         .padding(.horizontal, 10)

@@ -89,6 +89,7 @@ final class MainViewModel: ObservableObject {
     @Published var showOnlyErrorLogs = false
     @Published var lastMirrorSuggestion: CopyMangaMirror?
     @Published var lastFailedInput: String = ""
+    @Published var shouldOfferRestoredQueuePrompt = false
 
     let api: CopyMangaAPI
     let downloader: DownloadCoordinator
@@ -174,6 +175,15 @@ final class MainViewModel: ObservableObject {
 
     var preferredColorScheme: ColorScheme? {
         themeMode.colorScheme
+    }
+
+    var restoredQueuePromptSummary: String {
+        let counts = downloader.countsSummary()
+        return "已恢复上次队列：排队 \(counts.queued) 话，失败或已取消 \(counts.failed) 话，已完成 \(counts.done) 话。"
+    }
+
+    var canOpenRecentDownload: Bool {
+        downloader.lastCompletedOutputURL != nil || downloader.countsSummary().done > 0
     }
 
     func loadComic() {
@@ -485,6 +495,44 @@ final class MainViewModel: ObservableObject {
         logLines = []
     }
 
+    func copyCurrentError() {
+        let text = errorText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            statusText = "当前没有可复制的错误。"
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        statusText = "已复制错误信息。"
+        appendLog("已复制当前错误信息")
+    }
+
+    func dismissRestoredQueuePrompt() {
+        shouldOfferRestoredQueuePrompt = false
+    }
+
+    func resumeRestoredQueue() {
+        shouldOfferRestoredQueuePrompt = false
+        let counts = downloader.countsSummary()
+        guard counts.queued > 0 else {
+            statusText = "恢复的队列中没有排队任务，可在下载管理中重试失败项。"
+            appendLog("恢复队列继续下载跳过：没有排队任务")
+            return
+        }
+        appendLog("继续上次恢复队列：排队 \(counts.queued) 话")
+        downloader.start(maxConcurrent: queueMaxConcurrent())
+    }
+
+    func openDownloadDirectory() {
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: destinationFolder.path)
+    }
+
+    func openRecentDownload() {
+        let url = downloader.lastCompletedOutputURL ?? destinationFolder
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
+        statusText = "已在 Finder 中显示下载位置。"
+    }
+
     func clearCaches() {
         Task {
             await api.clearCaches()
@@ -601,6 +649,8 @@ final class MainViewModel: ObservableObject {
         }
         if let restoredItems = loadCodable([DownloadTaskItem].self, key: StorageKey.downloadQueue), !restoredItems.isEmpty {
             downloader.restoreQueue(restoredItems)
+            let counts = downloader.countsSummary()
+            shouldOfferRestoredQueuePrompt = counts.queued > 0 || counts.failed > 0
         }
     }
 

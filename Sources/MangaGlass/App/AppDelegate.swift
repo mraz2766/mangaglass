@@ -3,9 +3,12 @@ import SwiftUI
 import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    weak var viewModel: MainViewModel?
+
     private var observer: NSObjectProtocol?
     private var configuredWindowNumbers: Set<Int> = []
+    private var didConfirmTermination = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -36,7 +39,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        requestTerminationConfirmation() ? .terminateNow : .terminateCancel
+    }
+
     private func configureIfNeeded(_ window: NSWindow) {
+        window.delegate = self
+
         if configuredWindowNumbers.contains(window.windowNumber) {
             return
         }
@@ -50,5 +59,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .automatic
         window.minSize = NSSize(width: 720, height: 540)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if requestTerminationConfirmation() {
+            NSApp.terminate(nil)
+        }
+
+        return false
+    }
+
+    private func requestTerminationConfirmation() -> Bool {
+        if didConfirmTermination {
+            return true
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "退出 MangaGlass？"
+        alert.informativeText = terminationInformativeText()
+        alert.addButton(withTitle: "退出")
+        alert.addButton(withTitle: "取消")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            didConfirmTermination = true
+            return true
+        }
+
+        return false
+    }
+
+    private func terminationInformativeText() -> String {
+        guard let viewModel else {
+            return "关闭窗口将完全退出应用。"
+        }
+
+        let counts = viewModel.downloader.countsSummary()
+        let activeCount = counts.running + counts.queued
+        let issueCount = counts.failed
+        if activeCount > 0 || issueCount > 0 {
+            return "当前还有进行中/排队 \(activeCount) 话，失败或已取消 \(issueCount) 话。退出会停止当前下载，但队列会保留到下次打开。"
+        }
+
+        if counts.done > 0 {
+            return "当前队列已有 \(counts.done) 话完成。退出后 MangaGlass 会完全关闭。"
+        }
+
+        return "关闭窗口将完全退出应用。"
     }
 }

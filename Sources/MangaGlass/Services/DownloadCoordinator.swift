@@ -155,6 +155,7 @@ final class DownloadCoordinator: ObservableObject {
     @Published var message = ""
     @Published var speedText = ""
     @Published var currentTaskTitle = ""
+    @Published var lastCompletedOutputURL: URL?
 
     private let api: CopyMangaAPI
     private let fileManager = FileManager.default
@@ -556,6 +557,7 @@ final class DownloadCoordinator: ObservableObject {
             await MainActor.run {
                 guard self.currentRunID == runID else { return }
                 self.setState(.done, for: item.id)
+                self.lastCompletedOutputURL = self.chapterOutputFolder(for: item)
                 self.markChapterFinished(for: item.id, succeeded: true)
                 self.resetDownloadProtection(for: item.id)
                 self.scheduleProgressRefresh(force: true)
@@ -722,6 +724,16 @@ final class DownloadCoordinator: ObservableObject {
                 }
             }
         }
+    }
+
+    private func chapterOutputFolder(for item: DownloadTaskItem) -> URL {
+        let comicFolder = resolvedComicFolder(for: item)
+        let groupName = canonicalGroupName(item.chapter.volumeName)
+        let selectedKinds = Set(taskItems.filter { $0.comic.slug == item.comic.slug }.map { canonicalGroupKey($0.chapter.volumeName) })
+        let volumeFolder = selectedKinds.count > 1
+            ? comicFolder.appendingPathComponent(sanitize(groupName), isDirectory: true)
+            : comicFolder
+        return volumeFolder.appendingPathComponent(sanitize(item.chapter.displayName), isDirectory: true)
     }
 
     private func resolvedComicFolder(for item: DownloadTaskItem) -> URL {

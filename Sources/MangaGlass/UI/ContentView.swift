@@ -101,7 +101,23 @@ struct ContentView: View {
         }
     }
 
-    @StateObject private var vm = MainViewModel()
+    private enum MainConfirmation: Identifiable {
+        case clearCaches
+        case clearHistory(count: Int)
+        case addAllVisible(count: Int)
+        case restoredQueue(summary: String)
+
+        var id: String {
+            switch self {
+            case .clearCaches: return "clear-caches"
+            case .clearHistory: return "clear-history"
+            case .addAllVisible: return "add-all-visible"
+            case .restoredQueue: return "restored-queue"
+            }
+        }
+    }
+
+    @ObservedObject var vm: MainViewModel
     @State private var chapterFrames: [String: CGRect] = [:]
     @State private var dragStart: CGPoint?
     @State private var dragCurrent: CGPoint?
@@ -112,6 +128,8 @@ struct ContentView: View {
     @State private var expandComicTitle = false
     @State private var showDownloadManager = false
     @State private var showSiteEntryPanel = false
+    @State private var pendingConfirmation: MainConfirmation?
+    @State private var didCheckRestoredQueue = false
     @Environment(\.colorScheme) private var colorScheme
 
     private var isDarkMode: Bool { colorScheme == .dark }
@@ -138,6 +156,29 @@ struct ContentView: View {
     }
     private var toolbarIcon: Image {
         Image(nsImage: brandNSImage())
+    }
+    private var mainConfirmationTitle: String {
+        guard let pendingConfirmation else { return "" }
+        switch pendingConfirmation {
+        case .clearCaches:
+            return "清空缓存？"
+        case .clearHistory:
+            return "清空历史记录？"
+        case .addAllVisible:
+            return "加入全部可见章节？"
+        case .restoredQueue:
+            return "发现上次未完成的队列"
+        }
+    }
+    private var mainConfirmationIsPresented: Binding<Bool> {
+        Binding(
+            get: { pendingConfirmation != nil },
+            set: { isPresented in
+                if !isPresented {
+                    pendingConfirmation = nil
+                }
+            }
+        )
     }
 
     var body: some View {
@@ -173,6 +214,85 @@ struct ContentView: View {
         }
         .frame(minWidth: 720, minHeight: 540)
         .preferredColorScheme(vm.preferredColorScheme)
+        .onAppear {
+            presentRestoredQueuePromptIfNeeded()
+        }
+        .alert(
+            mainConfirmationTitle,
+            isPresented: mainConfirmationIsPresented,
+            presenting: pendingConfirmation
+        ) { confirmation in
+            mainConfirmationActions(for: confirmation)
+        } message: { confirmation in
+            Text(mainConfirmationMessage(for: confirmation))
+        }
+    }
+
+    @ViewBuilder
+    private func mainConfirmationActions(for confirmation: MainConfirmation) -> some View {
+        switch confirmation {
+        case .clearCaches:
+            Button("清缓存", role: .destructive) {
+                vm.clearCaches()
+            }
+            Button("取消", role: .cancel) {}
+        case .clearHistory:
+            Button("清空历史", role: .destructive) {
+                vm.clearRecentRecords()
+            }
+            Button("取消", role: .cancel) {}
+        case .addAllVisible:
+            Button("加入队列") {
+                vm.startDownload()
+            }
+            Button("取消", role: .cancel) {}
+        case .restoredQueue:
+            Button("继续下载") {
+                vm.resumeRestoredQueue()
+            }
+            Button("打开下载管理") {
+                vm.dismissRestoredQueuePrompt()
+                showDownloadManager = true
+            }
+            Button("稍后处理", role: .cancel) {
+                vm.dismissRestoredQueuePrompt()
+            }
+        }
+    }
+
+    private func mainConfirmationMessage(for confirmation: MainConfirmation) -> String {
+        switch confirmation {
+        case .clearCaches:
+            return "这会清空当前输入、解析结果和缓存内容，但不会删除已经下载到本地的文件。"
+        case .clearHistory(let count):
+            return "将删除 \(count) 条最近打开记录。此操作不会影响下载文件。"
+        case .addAllVisible(let count):
+            return "当前没有单独选择章节，将把当前可见的全部 \(count) 话加入下载队列。"
+        case .restoredQueue(let summary):
+            return "\(summary)\n你可以继续排队任务、打开下载管理查看详情，或稍后处理。"
+        }
+    }
+
+    private func presentRestoredQueuePromptIfNeeded() {
+        guard !didCheckRestoredQueue else { return }
+        didCheckRestoredQueue = true
+        guard vm.shouldOfferRestoredQueuePrompt else { return }
+        pendingConfirmation = .restoredQueue(summary: vm.restoredQueuePromptSummary)
+    }
+
+    private func requestStartDownload() {
+        if !vm.selectedChapterIDs.isEmpty || vm.comic == nil {
+            vm.startDownload()
+            return
+        }
+
+        let visibleCount = vm.visibleChapters.count
+        guard visibleCount > 0 else {
+            vm.startDownload()
+            return
+        }
+
+        pendingConfirmation = .addAllVisible(count: visibleCount)
     }
 
     private var background: some View {
@@ -345,6 +465,22 @@ struct ContentView: View {
                         }
                         .buttonStyle(MGActionButtonStyle(variant: .neutral))
                     }
+                    HStack(spacing: 8) {
+                        Button("复制错误") {
+                            vm.copyCurrentError()
+                        }
+                        .buttonStyle(MGActionButtonStyle(variant: .neutral))
+
+                        Button("打开日志") {
+                            showLogPanel = true
+                        }
+                        .buttonStyle(MGActionButtonStyle(variant: .neutral))
+
+                        Button("站点入口") {
+                            showSiteEntryPanel = true
+                        }
+                        .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                    }
                 }
             }
 
@@ -491,7 +627,7 @@ struct ContentView: View {
             Button("打开下载目录") {
                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: vm.destinationFolder.path)
             }
-            Button("清缓存") { vm.clearCaches() }
+            Button("清缓存") { pendingConfirmation = .clearCaches }
             if !vm.recentRecords.isEmpty {
                 Divider()
                 Text("最近打开")
@@ -511,7 +647,7 @@ struct ContentView: View {
                     }
                 }
                 Button("清空历史", role: .destructive) {
-                    vm.clearRecentRecords()
+                    pendingConfirmation = .clearHistory(count: vm.recentRecords.count)
                 }
             }
         } label: {
@@ -852,7 +988,7 @@ struct ContentView: View {
                             .buttonStyle(MGActionButtonStyle(variant: .neutral))
                         Button("清空") { vm.deselectAllVisible() }
                             .buttonStyle(MGActionButtonStyle(variant: .neutral))
-                        Button("加入队列") { vm.startDownload() }
+                        Button("加入队列") { requestStartDownload() }
                             .buttonStyle(MGActionButtonStyle(variant: .accent))
                             .disabled(vm.comic == nil && vm.downloader.taskItems.isEmpty)
                     }
@@ -871,7 +1007,7 @@ struct ContentView: View {
                             .buttonStyle(MGActionButtonStyle(variant: .neutral))
                         Button("清空") { vm.deselectAllVisible() }
                             .buttonStyle(MGActionButtonStyle(variant: .neutral))
-                        Button("加入队列") { vm.startDownload() }
+                        Button("加入队列") { requestStartDownload() }
                             .buttonStyle(MGActionButtonStyle(variant: .accent))
                             .disabled(vm.comic == nil && vm.downloader.taskItems.isEmpty)
                         Spacer(minLength: 0)
@@ -1028,6 +1164,12 @@ struct ContentView: View {
                             Label("下载管理", systemImage: "list.bullet.rectangle.portrait")
                         }
                         .buttonStyle(MGActionButtonStyle(variant: .accent))
+                        if vm.canOpenRecentDownload {
+                            Button("显示最近下载") {
+                                vm.openRecentDownload()
+                            }
+                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                        }
                         Button(showLogPanel ? "隐藏日志" : "显示日志") {
                             showLogPanel.toggle()
                         }
@@ -1074,6 +1216,13 @@ struct ContentView: View {
                         Label("下载管理", systemImage: "list.bullet.rectangle.portrait")
                     }
                     .buttonStyle(MGActionButtonStyle(variant: .accent))
+
+                    if vm.canOpenRecentDownload {
+                        Button("显示最近下载") {
+                            vm.openRecentDownload()
+                        }
+                        .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                    }
 
                     Button(showLogPanel ? "隐藏日志" : "显示日志") {
                         showLogPanel.toggle()

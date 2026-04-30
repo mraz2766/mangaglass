@@ -77,6 +77,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DesignSystem.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift"
         },
         {
@@ -118,6 +122,7 @@
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DownloadCoordinator.swift.o",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/ChapterSelection.swift.o",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/ContentView.swift.o",
+        "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DesignSystem.swift.o",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DownloadManagerView.swift.o",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/JSONNavigator.swift.o",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/ProxySessionFactory.swift.o",
@@ -207,6 +212,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DesignSystem.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DownloadManagerView.swift.o"
         },
         {
@@ -238,6 +247,7 @@
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Services/DownloadCoordinator.swift",
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/ChapterSelection.swift",
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/ContentView.swift",
+        "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DesignSystem.swift",
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift",
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/JSONNavigator.swift",
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/ProxySessionFactory.swift",
@@ -268,6 +278,7 @@
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Services/DownloadCoordinator.swift",
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/ChapterSelection.swift",
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/ContentView.swift",
+      "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DesignSystem.swift",
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift",
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/JSONNavigator.swift",
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/ProxySessionFactory.swift",
@@ -382,6 +393,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DesignSystem.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift"
         },
         {
@@ -425,6 +440,10 @@
         {
           "kind" : "file",
           "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/CopyRenderedDOMExtractor.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DesignSystem.swift.o"
         },
         {
           "kind" : "file",
