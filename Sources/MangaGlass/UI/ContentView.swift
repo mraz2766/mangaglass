@@ -1112,8 +1112,12 @@ struct ContentView: View {
         let counts = vm.downloader.countsSummary()
         let failures = vm.downloader.failureSummary()
         let progressSummary = vm.downloader.progressSummary()
+        let durationSummary = vm.downloader.comicDurationSummaries().first
         let hasQueue = vm.downloader.isRunning || !vm.downloader.taskItems.isEmpty
         let stateText = vm.downloader.isRunning ? "队列执行中" : (vm.downloader.taskItems.isEmpty ? "队列空闲" : "队列已暂停")
+        let durationText = durationSummary.map { summary in
+            "\(summary.comicName) · 耗时 \(summary.durationText)"
+        }
         let detailText: String = {
             if !vm.downloader.currentTaskTitle.isEmpty {
                 return vm.downloader.currentTaskTitle
@@ -1125,6 +1129,10 @@ struct ContentView: View {
         }()
 
         return VStack(alignment: .leading, spacing: 7) {
+            if let circuit = vm.downloader.manhuaGuiSoftCircuit {
+                manhuaGuiSoftCircuitBanner(circuit)
+            }
+
             if metrics.isNarrow {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
@@ -1154,6 +1162,13 @@ struct ContentView: View {
                         .font(MGFont.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+
+                    if let durationText {
+                        Text(durationText)
+                            .font(MGFont.captionStrong)
+                            .foregroundStyle(MGTheme.accentStrong)
+                            .lineLimit(1)
+                    }
 
                     HStack(spacing: 8) {
                         inlineStat("排队", counts.queued, tint: MGTheme.queued, suffix: "话")
@@ -1210,6 +1225,14 @@ struct ContentView: View {
                         Text(vm.downloader.speedText)
                             .font(MGFont.number)
                             .foregroundStyle(MGTheme.accentStrong)
+                    }
+
+                    if let durationSummary {
+                        Text("耗时 \(durationSummary.durationText)")
+                            .font(MGFont.captionStrong)
+                            .foregroundStyle(MGTheme.accentStrong)
+                            .lineLimit(1)
+                            .help(durationText ?? "")
                     }
 
                     Button(action: { showDownloadManager = true }) {
@@ -1275,6 +1298,33 @@ struct ContentView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .mgPanel(cornerRadius: 10, shadow: false)
+    }
+
+    private func manhuaGuiSoftCircuitBanner(_ circuit: DownloadCoordinator.ManhuaGuiSoftCircuit) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(MGTheme.warning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("漫画柜疑似触发风控")
+                    .font(MGFont.captionStrong)
+                Text("\(circuit.chapterTitle) · HTTP \(circuit.statusCode) · \(circuit.host)")
+                    .font(MGFont.micro)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Button("打开网页检查") {
+                vm.openManhuaGuiWebCheck()
+            }
+            .buttonStyle(MGActionButtonStyle(variant: .neutral))
+            Button("我已确认，继续下载") {
+                vm.continueManhuaGuiDownloadAfterCheck()
+            }
+            .buttonStyle(MGActionButtonStyle(variant: .accent))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(MGTheme.warning.opacity(colorScheme == .dark ? 0.20 : 0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private var placeholderCover: some View {

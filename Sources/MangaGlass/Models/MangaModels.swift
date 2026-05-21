@@ -191,14 +191,27 @@ struct DownloadTaskItem: Identifiable, Codable {
     var state: State
     let destination: URL
     let cookie: String?
+    var startedAt: Date?
+    var finishedAt: Date?
 
-    init(id: UUID = UUID(), comic: ComicInfo, chapter: ComicChapter, state: State, destination: URL, cookie: String?) {
+    init(
+        id: UUID = UUID(),
+        comic: ComicInfo,
+        chapter: ComicChapter,
+        state: State,
+        destination: URL,
+        cookie: String?,
+        startedAt: Date? = nil,
+        finishedAt: Date? = nil
+    ) {
         self.id = id
         self.comic = comic
         self.chapter = chapter
         self.state = state
         self.destination = destination
         self.cookie = cookie
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
     }
 
     var queueIdentity: String {

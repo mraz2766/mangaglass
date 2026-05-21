@@ -111,7 +111,7 @@ struct DownloadManagerView: View {
     private var managerConfirmationTitle: String {
         switch pendingConfirmation {
         case .cancelAll:
-            return "取消所有下载？"
+            return "取消并清空所有下载？"
         case .clearAll:
             return "清空下载队列？"
         case nil:
@@ -134,8 +134,8 @@ struct DownloadManagerView: View {
     private func managerConfirmationActions(for confirmation: ManagerConfirmation) -> some View {
         switch confirmation {
         case .cancelAll:
-            Button("取消所有", role: .destructive) {
-                vm.cancelDownload()
+            Button("取消并清空", role: .destructive) {
+                vm.cancelAndClearAllDownloads()
             }
             Button("返回", role: .cancel) {}
         case .clearAll:
@@ -149,7 +149,7 @@ struct DownloadManagerView: View {
     private func managerConfirmationMessage(for confirmation: ManagerConfirmation) -> String {
         switch confirmation {
         case .cancelAll:
-            return "当前正在执行的下载会被取消，已完成的文件不会被删除。"
+            return "这会取消当前正在执行的下载，并清空下载管理器中的全部任务状态；已经下载到本地的文件不会被删除。"
         case .clearAll:
             return "这会移除当前下载管理器中的全部任务记录，但不会删除已经下载到本地的文件。"
         }
@@ -157,6 +157,7 @@ struct DownloadManagerView: View {
 
     private func header(metrics: LayoutMetrics) -> some View {
         let progressSummary = vm.downloader.progressSummary()
+        let durationSummary = vm.downloader.comicDurationSummaries().first
         return HStack {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
@@ -173,6 +174,15 @@ struct DownloadManagerView: View {
                     summaryPill("完成", count(for: .done), tint: MGTheme.success)
                     Text("页进度 \(progressSummary.completedPages)/\(progressSummary.totalPages)")
                         .mgStatusPill()
+                    if let durationSummary {
+                        Text("漫画耗时 \(durationSummary.durationText)")
+                            .mgStatusPill(tint: MGTheme.accent, selected: durationSummary.isRunning)
+                            .help("\(durationSummary.comicName) · 耗时 \(durationSummary.durationText)")
+                    }
+                }
+
+                if let circuit = vm.downloader.manhuaGuiSoftCircuit {
+                    manhuaGuiSoftCircuitInline(circuit)
                 }
             }
 
@@ -260,8 +270,13 @@ struct DownloadManagerView: View {
                         Button("开始/继续") { vm.startDownload() }
                             .disabled(vm.downloader.taskItems.filter { $0.state == .queued }.isEmpty)
 
+                        if vm.downloader.manhuaGuiSoftCircuit != nil {
+                            Button("打开漫画柜网页") { vm.openManhuaGuiWebCheck() }
+                            Button("我已确认，继续下载") { vm.continueManhuaGuiDownloadAfterCheck() }
+                        }
+
                         Button("取消所有") { pendingConfirmation = .cancelAll }
-                            .disabled(!vm.downloader.isRunning)
+                            .disabled(vm.downloader.taskItems.isEmpty)
 
                         Divider()
 
@@ -287,6 +302,25 @@ struct DownloadManagerView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .mgPanel(cornerRadius: 10, prominence: 0.78, shadow: false)
+    }
+
+    private func manhuaGuiSoftCircuitInline(_ circuit: DownloadCoordinator.ManhuaGuiSoftCircuit) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(MGTheme.warning)
+            Text("漫画柜风控提示：HTTP \(circuit.statusCode) · \(circuit.host)")
+                .font(MGFont.microStrong)
+                .foregroundStyle(MGTheme.warning)
+                .lineLimit(1)
+            Button("打开网页") {
+                vm.openManhuaGuiWebCheck()
+            }
+            .buttonStyle(MGActionButtonStyle(variant: .neutral))
+            Button("继续") {
+                vm.continueManhuaGuiDownloadAfterCheck()
+            }
+            .buttonStyle(MGActionButtonStyle(variant: .accent))
+        }
     }
 
     private func summaryPill(_ title: String, _ value: Int, tint: Color) -> some View {
@@ -411,6 +445,12 @@ struct DownloadManagerView: View {
                                 .foregroundStyle(MGTheme.danger)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                        if let durationText = vm.downloader.durationText(for: item) {
+                            Text("该话耗时 \(durationText)")
+                                .font(MGFont.micro)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                     .padding(.leading, 18)
                 }
@@ -427,53 +467,77 @@ struct DownloadManagerView: View {
 
     private func progressFooter(metrics: LayoutMetrics) -> some View {
         let progressSummary = vm.downloader.progressSummary()
-        return HStack(spacing: 10) {
-            Text(vm.downloader.message)
-                .font(MGFont.micro)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+        let durationSummaries = vm.downloader.comicDurationSummaries()
+        return VStack(alignment: .leading, spacing: 6) {
+            if !durationSummaries.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(durationSummaries.prefix(6)) { summary in
+                            comicDurationChip(summary)
+                        }
+                    }
+                }
+            }
 
-            if !vm.downloader.currentTaskTitle.isEmpty {
-                Text(vm.downloader.currentTaskTitle)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
+            HStack(spacing: 10) {
+                Text(vm.downloader.message)
+                    .font(MGFont.micro)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .frame(maxWidth: metrics.footerTaskWidth, alignment: .leading)
-            }
 
-            Spacer(minLength: 0)
-
-            Text("已下载 \(progressSummary.completedPages)/\(progressSummary.totalPages) 页 · 完成 \(progressSummary.completedTasks)/\(progressSummary.totalTasks) 话")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            ProgressView(value: vm.downloader.progress)
-                .progressViewStyle(.linear)
-                .frame(maxWidth: metrics.isNarrow ? 120 : 180)
-
-            if !vm.downloader.speedText.isEmpty {
-                Text(vm.downloader.speedText)
-                    .font(MGFont.number)
-                    .foregroundStyle(MGTheme.accentStrong)
-                    .lineLimit(1)
-            }
-
-            Button("打开下载目录") {
-                vm.openDownloadDirectory()
-            }
-            .buttonStyle(MGActionButtonStyle(variant: .neutral))
-
-            if vm.canOpenRecentDownload {
-                Button("显示最近下载") {
-                    vm.openRecentDownload()
+                if !vm.downloader.currentTaskTitle.isEmpty {
+                    Text(vm.downloader.currentTaskTitle)
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: metrics.footerTaskWidth, alignment: .leading)
                 }
-                .buttonStyle(MGActionButtonStyle(variant: .accent))
+
+                Spacer(minLength: 0)
+
+                Text("已下载 \(progressSummary.completedPages)/\(progressSummary.totalPages) 页 · 完成 \(progressSummary.completedTasks)/\(progressSummary.totalTasks) 话")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                ProgressView(value: vm.downloader.progress)
+                    .progressViewStyle(.linear)
+                    .frame(maxWidth: metrics.isNarrow ? 120 : 180)
+
+                if !vm.downloader.speedText.isEmpty {
+                    Text(vm.downloader.speedText)
+                        .font(MGFont.number)
+                        .foregroundStyle(MGTheme.accentStrong)
+                        .lineLimit(1)
+                }
+
+                Button("打开下载目录") {
+                    vm.openDownloadDirectory()
+                }
+                .buttonStyle(MGActionButtonStyle(variant: .neutral))
+
+                if vm.canOpenRecentDownload {
+                    Button("显示最近下载") {
+                        vm.openRecentDownload()
+                    }
+                    .buttonStyle(MGActionButtonStyle(variant: .accent))
+                }
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .mgPanel(cornerRadius: 10, prominence: 0.78, shadow: false)
+    }
+
+    private func comicDurationChip(_ summary: DownloadCoordinator.ComicDurationSummary) -> some View {
+        let problemText = summary.failedOrCanceledTasks > 0 ? " · 失败/取消 \(summary.failedOrCanceledTasks)" : ""
+        return Text("\(summary.comicName) · 完成 \(summary.completedTasks)/\(summary.totalTasks) 话 · 耗时 \(summary.durationText)\(problemText)")
+            .font(MGFont.microStrong)
+            .foregroundStyle(summary.isRunning ? MGTheme.accentStrong : .secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(MGTheme.insetFill(for: colorScheme, prominence: 0.78), in: Capsule())
     }
 
     private var headerSubtitle: String {
@@ -548,7 +612,7 @@ struct DownloadManagerView: View {
     }
 
     private func shouldShowDetailsToggle(for item: DownloadTaskItem) -> Bool {
-        failureReason(for: item.state) != nil
+        failureReason(for: item.state) != nil || vm.downloader.durationText(for: item) != nil
     }
 
     private func layoutMetrics(for width: CGFloat) -> LayoutMetrics {

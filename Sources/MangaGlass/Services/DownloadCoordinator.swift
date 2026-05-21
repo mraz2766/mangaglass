@@ -3,6 +3,33 @@ import UserNotifications
 
 @MainActor
 final class DownloadCoordinator: ObservableObject {
+    struct ComicDurationSummary: Identifiable, Equatable {
+        let id: String
+        let comicName: String
+        let totalTasks: Int
+        let completedTasks: Int
+        let failedOrCanceledTasks: Int
+        let isRunning: Bool
+        let startedAt: Date?
+        let finishedAt: Date?
+        let elapsedSeconds: TimeInterval
+
+        var durationText: String {
+            DownloadCoordinator.formatDuration(elapsedSeconds)
+        }
+    }
+
+    struct ManhuaGuiSoftCircuit: Equatable {
+        let statusCode: Int
+        let host: String
+        let chapterTitle: String
+        let triggeredAt: Date
+
+        var message: String {
+            "漫画柜疑似触发风控（HTTP \(statusCode)，\(host)）。请先打开网页确认是否可访问，再决定是否继续下载。"
+        }
+    }
+
     private struct ChapterFailureTracker {
         var notFound = 0
         var throttled = 0
@@ -156,6 +183,7 @@ final class DownloadCoordinator: ObservableObject {
     @Published var speedText = ""
     @Published var currentTaskTitle = ""
     @Published var lastCompletedOutputURL: URL?
+    @Published var manhuaGuiSoftCircuit: ManhuaGuiSoftCircuit?
 
     private let api: CopyMangaAPI
     private let fileManager = FileManager.default
@@ -169,8 +197,8 @@ final class DownloadCoordinator: ObservableObject {
         relaxStepMS: 50
     )
     private let manhuaGuiPacer = RequestPacer(
-        minDelayMS: 420,
-        maxDelayMS: 760,
+        minDelayMS: 240,
+        maxDelayMS: 460,
         maxPenaltyMS: 10000,
         throttleStepMS: 1000,
         relaxStepMS: 100
@@ -295,9 +323,13 @@ final class DownloadCoordinator: ObservableObject {
     private func clearQueueState() {
         taskItems = []
         progress = 0
+        isRunning = false
         isPaused = false
         message = ""
+        speedText = ""
         currentTaskTitle = ""
+        lastCompletedOutputURL = nil
+        manhuaGuiSoftCircuit = nil
         manhuaGuiPreferredHost = nil
         chapterExpectedPages = [:]
         chapterCompletedPages = [:]
@@ -329,7 +361,7 @@ final class DownloadCoordinator: ObservableObject {
 
     func start(maxConcurrent: Int = 4) {
         guard !isRunning else {
-            if hasQueuedItems() {
+            if hasEligibleQueuedItems() {
                 message = "已加入队列，当前下载会自动继续。"
                 log("启动跳过：已有下载任务运行中，新增排队项将自动接续")
             } else {
@@ -337,10 +369,15 @@ final class DownloadCoordinator: ObservableObject {
             }
             return
         }
-        let pendingItems = taskItems.filter { $0.state == .queued }
+        let pendingItems = taskItems.filter { isEligibleQueuedItem($0) }
         guard !pendingItems.isEmpty else {
-            message = "队列中没有等待下载的章节。"
-            log("启动失败：队列为空")
+            if manhuaGuiSoftCircuit != nil, hasQueuedManhuaGuiItems() {
+                message = "漫画柜疑似触发风控，请确认后再继续下载。"
+                log("启动暂停：漫画柜软熔断中，等待用户确认")
+            } else {
+                message = "队列中没有等待下载的章节。"
+                log("启动失败：队列为空")
+            }
             return
         }
 
@@ -351,6 +388,9 @@ final class DownloadCoordinator: ObservableObject {
         message = "下载开始..."
         updateCurrentTaskTitle()
         log("下载开始：并发 \(maxConcurrent)")
+        if pendingItems.contains(where: isManhuaGuiItem) {
+            log("ManhuaGui 策略：章节并发 4，图片并发 2，请求间隔 240-460ms")
+        }
         applySleepAssertion(active: true)
         
         if progress == 0 || downloadStartTime == nil {
@@ -408,6 +448,11 @@ final class DownloadCoordinator: ObservableObject {
                 self.applySleepAssertion(active: false)
                 self.resetSpeedEstimateState()
                 self.updateCurrentTaskTitle()
+                if let circuit = self.manhuaGuiSoftCircuit {
+                    self.message = circuit.message
+                    self.log("下载批次因 ManhuaGui 软熔断暂停：HTTP \(circuit.statusCode) host=\(circuit.host)")
+                    return
+                }
                 let failed = self.taskItems.filter {
                     switch $0.state {
                     case .failed, .canceled:
@@ -484,6 +529,21 @@ final class DownloadCoordinator: ObservableObject {
         log("下载已取消")
     }
 
+    func cancelAndClearAll() {
+        log("收到取消并清空全部下载请求")
+        isCancelling = true
+        currentRunID = UUID()
+        masterTask?.cancel()
+        masterTask = nil
+        Task { await pauseGate.resume() }
+        progressRefreshTask?.cancel()
+        progressRefreshTask = nil
+        clearQueueState()
+        message = "已取消并清空下载队列。"
+        applySleepAssertion(active: false)
+        log("已取消并清空全部下载队列")
+    }
+
     func cancelItem(_ id: UUID) {
         explicitlyCanceledItemIDs.insert(id)
         if let idx = taskItems.firstIndex(where: { $0.id == id }) {
@@ -497,11 +557,45 @@ final class DownloadCoordinator: ObservableObject {
         }
     }
 
+    func clearManhuaGuiSoftCircuit() {
+        guard let circuit = manhuaGuiSoftCircuit else { return }
+        manhuaGuiSoftCircuit = nil
+        message = "已确认漫画柜网页可访问，可继续下载。"
+        log("ManhuaGui 软熔断已由用户手动解除：HTTP \(circuit.statusCode) host=\(circuit.host)")
+        updateCurrentTaskTitle()
+    }
+
+    private func triggerManhuaGuiSoftCircuitIfNeeded(statusCode: Int, host: String?, itemID: UUID) {
+        guard let idx = taskItems.firstIndex(where: { $0.id == itemID }) else { return }
+        let item = taskItems[idx]
+        guard isManhuaGuiItem(item) else { return }
+
+        let hostText = host?.lowercased() ?? "-"
+        let chapterTitle = "[\(item.chapter.volumeName)] \(item.chapter.displayName)"
+        manhuaGuiSoftCircuit = ManhuaGuiSoftCircuit(
+            statusCode: statusCode,
+            host: hostText,
+            chapterTitle: chapterTitle,
+            triggeredAt: Date()
+        )
+        taskItems = taskItems.map { existing in
+            var updated = existing
+            if isManhuaGuiItem(updated), updated.state == .running {
+                updated.state = .queued
+            }
+            return updated
+        }
+        updateProgress()
+        updateCurrentTaskTitle()
+        message = manhuaGuiSoftCircuit?.message ?? "漫画柜疑似触发风控，已停止当前批次。"
+        log("ManhuaGui 软熔断：HTTP \(statusCode) host=\(hostText) chapter=\(chapterTitle)，已停止当前漫画柜批次并保留队列")
+    }
+
     private func run(item: DownloadTaskItem, runID: UUID) async {
         if Task.isCancelled || !shouldContinue(runID: runID, itemID: item.id) {
             await MainActor.run {
                 if self.currentRunID == runID {
-                    self.setState(.canceled, for: item.id)
+                    self.setState(self.stoppedState(for: item), for: item.id)
                 }
             }
             return
@@ -511,7 +605,7 @@ final class DownloadCoordinator: ObservableObject {
         if Task.isCancelled || !shouldContinue(runID: runID, itemID: item.id) {
             await MainActor.run {
                 if self.currentRunID == runID {
-                    self.setState(.canceled, for: item.id)
+                    self.setState(self.stoppedState(for: item), for: item.id)
                 }
             }
             return
@@ -566,7 +660,7 @@ final class DownloadCoordinator: ObservableObject {
         } catch is CancellationError {
             await MainActor.run {
                 guard self.currentRunID == runID || self.explicitlyCanceledItemIDs.contains(item.id) else { return }
-                self.setState(.canceled, for: item.id)
+                self.setState(self.stoppedState(for: item), for: item.id)
                 self.markChapterFinished(for: item.id, succeeded: false)
                 self.resetDownloadProtection(for: item.id)
                 self.scheduleProgressRefresh(force: true)
@@ -621,7 +715,29 @@ final class DownloadCoordinator: ObservableObject {
 
     private func setState(_ state: DownloadTaskItem.State, for id: UUID) {
         guard let idx = taskItems.firstIndex(where: { $0.id == id }) else { return }
+        let now = Date()
+        switch state {
+        case .running:
+            if taskItems[idx].startedAt == nil {
+                taskItems[idx].startedAt = now
+            }
+            taskItems[idx].finishedAt = nil
+        case .done, .failed, .canceled:
+            if taskItems[idx].startedAt == nil {
+                taskItems[idx].startedAt = now
+            }
+            taskItems[idx].finishedAt = now
+        case .queued:
+            break
+        }
         taskItems[idx].state = state
+    }
+
+    private func stoppedState(for item: DownloadTaskItem) -> DownloadTaskItem.State {
+        if manhuaGuiSoftCircuit != nil, isManhuaGuiItem(item), !explicitlyCanceledItemIDs.contains(item.id) {
+            return .queued
+        }
+        return .canceled
     }
 
     private func downloadChapter(item: DownloadTaskItem, imageURLs: [URL], runID: UUID) async throws {
@@ -812,8 +928,23 @@ final class DownloadCoordinator: ObservableObject {
                             self.log("ManhuaGui 图片请求失败：host=\(candidate.host ?? "-") status=\(http.statusCode) signed=\(hasSignature ? "是" : "否")")
                         }
                         if [403, 429, 503].contains(http.statusCode) {
-                            await pacer.markThrottled()
-                            if let stopMessage = self.noteImageFailure(itemID: itemID, host: candidate.host?.lowercased(), kind: .throttled) {
+                            if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
+                                self.triggerManhuaGuiSoftCircuitIfNeeded(
+                                    statusCode: http.statusCode,
+                                    host: candidate.host,
+                                    itemID: itemID
+                                )
+                            } else {
+                                await pacer.markThrottled()
+                            }
+                            if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
+                                throw DownloadCircuitBreakError(message: "漫画柜疑似触发风控（HTTP \(http.statusCode)），已停止当前批次。")
+                            }
+                            if let stopMessage = self.noteImageFailure(
+                                itemID: itemID,
+                                host: candidate.host?.lowercased(),
+                                kind: .throttled
+                            ) {
                                 throw DownloadCircuitBreakError(message: stopMessage)
                             }
                         } else if http.statusCode == 404 {
@@ -840,7 +971,9 @@ final class DownloadCoordinator: ObservableObject {
                     log("ManhuaGui 图片下载异常：host=\(candidate.host ?? "-") error=\(error.localizedDescription)")
                 }
                 if let urlError = error as? URLError, urlError.code == .timedOut {
-                    await self.pacer(for: site).markThrottled()
+                    if site.webBase.host?.lowercased().contains("manhuagui.com") != true {
+                        await self.pacer(for: site).markThrottled()
+                    }
                     if let stopMessage = self.noteImageFailure(itemID: itemID, host: candidate.host?.lowercased(), kind: .timeout) {
                         throw DownloadCircuitBreakError(message: stopMessage)
                     }
@@ -852,7 +985,6 @@ final class DownloadCoordinator: ObservableObject {
 
         throw lastError ?? DownloadRequestError.httpStatus(404, retryAfter: nil)
     }
-
     private func fileName(comic: String, volume: String, chapter: String, index: Int) -> String {
         let cleanComic = sanitize(comic)
         let cleanVolume = sanitize(volume)
@@ -986,17 +1118,37 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     private func shouldContinue(runID: UUID, itemID: UUID) -> Bool {
-        currentRunID == runID && !isCancelling && !explicitlyCanceledItemIDs.contains(itemID)
+        guard currentRunID == runID, !isCancelling, !explicitlyCanceledItemIDs.contains(itemID) else {
+            return false
+        }
+        guard manhuaGuiSoftCircuit != nil,
+              let item = taskItems.first(where: { $0.id == itemID }),
+              isManhuaGuiItem(item) else {
+            return true
+        }
+        return false
     }
 
-    private func hasQueuedItems() -> Bool {
-        taskItems.contains { $0.state == .queued }
+    private func hasEligibleQueuedItems() -> Bool {
+        taskItems.contains { isEligibleQueuedItem($0) }
     }
 
     private func nextQueuedItem(excluding inFlightItemIDs: Set<UUID>) -> DownloadTaskItem? {
         taskItems.first {
-            $0.state == .queued && !inFlightItemIDs.contains($0.id)
+            isEligibleQueuedItem($0) && !inFlightItemIDs.contains($0.id)
         }
+    }
+
+    private func isEligibleQueuedItem(_ item: DownloadTaskItem) -> Bool {
+        item.state == .queued && !(manhuaGuiSoftCircuit != nil && isManhuaGuiItem(item))
+    }
+
+    private func hasQueuedManhuaGuiItems() -> Bool {
+        taskItems.contains { $0.state == .queued && isManhuaGuiItem($0) }
+    }
+
+    private func isManhuaGuiItem(_ item: DownloadTaskItem) -> Bool {
+        item.comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true
     }
 
     private func updateSpeedEstimate(elapsed: TimeInterval, currentCompleted: Int) {
@@ -1188,6 +1340,109 @@ final class DownloadCoordinator: ObservableObject {
         return (knownExpectedPages, completedKnownPages, unresolvedChapters, resolvedIDs.count)
     }
 
+    func comicDurationSummaries(now: Date = Date()) -> [ComicDurationSummary] {
+        struct Bucket {
+            var comicName = ""
+            var totalTasks = 0
+            var completedTasks = 0
+            var failedOrCanceledTasks = 0
+            var isRunning = false
+            var startedAt: Date?
+            var finishedAt: Date?
+        }
+
+        var buckets: [String: Bucket] = [:]
+
+        for item in taskItems {
+            let key = [
+                item.comic.slug.lowercased(),
+                item.destination.path.lowercased()
+            ].joined(separator: "::")
+
+            var bucket = buckets[key] ?? Bucket()
+            bucket.comicName = item.comic.name
+            bucket.totalTasks += 1
+
+            switch item.state {
+            case .running:
+                bucket.isRunning = true
+            case .done:
+                bucket.completedTasks += 1
+            case .failed, .canceled:
+                bucket.failedOrCanceledTasks += 1
+            case .queued:
+                break
+            }
+
+            if let startedAt = item.startedAt {
+                bucket.startedAt = bucket.startedAt.map { min($0, startedAt) } ?? startedAt
+            }
+            if let finishedAt = item.finishedAt {
+                bucket.finishedAt = bucket.finishedAt.map { max($0, finishedAt) } ?? finishedAt
+            }
+
+            buckets[key] = bucket
+        }
+
+        return buckets.map { key, bucket in
+            let hasOpenTasks = bucket.completedTasks + bucket.failedOrCanceledTasks < bucket.totalTasks
+            let effectiveEnd: Date?
+            if bucket.isRunning || hasOpenTasks {
+                effectiveEnd = bucket.startedAt.map { _ in now }
+            } else {
+                effectiveEnd = bucket.finishedAt
+            }
+
+            let elapsed = max(0, effectiveEnd?.timeIntervalSince(bucket.startedAt ?? effectiveEnd ?? now) ?? 0)
+            return ComicDurationSummary(
+                id: key,
+                comicName: bucket.comicName,
+                totalTasks: bucket.totalTasks,
+                completedTasks: bucket.completedTasks,
+                failedOrCanceledTasks: bucket.failedOrCanceledTasks,
+                isRunning: bucket.isRunning,
+                startedAt: bucket.startedAt,
+                finishedAt: bucket.isRunning || hasOpenTasks ? nil : bucket.finishedAt,
+                elapsedSeconds: elapsed
+            )
+        }
+        .filter { $0.startedAt != nil }
+        .sorted { lhs, rhs in
+            if lhs.isRunning != rhs.isRunning {
+                return lhs.isRunning && !rhs.isRunning
+            }
+            let lhsDate = lhs.finishedAt ?? lhs.startedAt ?? .distantPast
+            let rhsDate = rhs.finishedAt ?? rhs.startedAt ?? .distantPast
+            if lhsDate != rhsDate {
+                return lhsDate > rhsDate
+            }
+            return lhs.comicName.localizedStandardCompare(rhs.comicName) == .orderedAscending
+        }
+    }
+
+    func durationText(for item: DownloadTaskItem, now: Date = Date()) -> String? {
+        guard let startedAt = item.startedAt else { return nil }
+        let effectiveEnd: Date
+        switch item.state {
+        case .done, .failed, .canceled:
+            effectiveEnd = item.finishedAt ?? now
+        case .queued, .running:
+            effectiveEnd = now
+        }
+        return Self.formatDuration(max(0, effectiveEnd.timeIntervalSince(startedAt)))
+    }
+
+    nonisolated static func formatDuration(_ seconds: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(seconds.rounded(.down)))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+
     func countsSummary() -> (queued: Int, running: Int, failed: Int, done: Int) {
         taskItems.reduce(into: (queued: 0, running: 0, failed: 0, done: 0)) { partial, item in
             switch item.state {
@@ -1282,7 +1537,7 @@ final class DownloadCoordinator: ObservableObject {
             currentTaskTitle = "[\(running.chapter.volumeName)] \(running.chapter.displayName)"
             return
         }
-        if let queued = taskItems.first(where: { $0.state == .queued }) {
+        if let queued = taskItems.first(where: { isEligibleQueuedItem($0) }) {
             currentTaskTitle = "待下载：[\(queued.chapter.volumeName)] \(queued.chapter.displayName)"
             return
         }

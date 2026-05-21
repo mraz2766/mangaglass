@@ -418,6 +418,13 @@ final class MainViewModel: ObservableObject {
         downloader.cancel()
     }
 
+    func cancelAndClearAllDownloads() {
+        let count = downloader.taskItems.count
+        downloader.cancelAndClearAll()
+        appendLog("已取消并清空下载队列：\(count) 条")
+        statusText = count > 0 ? "已取消并清空 \(count) 条下载任务。" : "下载队列已清空。"
+    }
+
     func cancelItem(_ item: DownloadTaskItem) {
         downloader.cancelItem(item.id)
     }
@@ -457,7 +464,7 @@ final class MainViewModel: ObservableObject {
         let failedIDs = Set(failed.map { $0.id })
         downloader.taskItems.removeAll { failedIDs.contains($0.id) }
         
-        downloader.start()
+        downloader.start(maxConcurrent: queueMaxConcurrent())
     }
 
     private func queueMaxConcurrent() -> Int {
@@ -465,7 +472,7 @@ final class MainViewModel: ObservableObject {
             $0.comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true
         }
         if hasManhuaGui {
-            return 3
+            return 4
         }
         let hasCopy = downloader.taskItems.contains {
             isCopyFamily($0.comic.site)
@@ -478,7 +485,7 @@ final class MainViewModel: ObservableObject {
 
     private func downloadConcurrent(for site: MangaSiteConfig) -> Int {
         if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
-            return 3
+            return 4
         }
         if isCopyFamily(site) {
             return 4
@@ -531,6 +538,19 @@ final class MainViewModel: ObservableObject {
         let url = downloader.lastCompletedOutputURL ?? destinationFolder
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
         statusText = "已在 Finder 中显示下载位置。"
+    }
+
+    func openManhuaGuiWebCheck() {
+        let url = URL(string: "https://www.manhuagui.com")!
+        NSWorkspace.shared.open(url)
+        statusText = "已打开漫画柜网页，请确认是否可访问。"
+        appendLog("已打开漫画柜网页供用户检查")
+    }
+
+    func continueManhuaGuiDownloadAfterCheck() {
+        downloader.clearManhuaGuiSoftCircuit()
+        appendLog("用户确认漫画柜网页可访问，继续下载")
+        downloader.start(maxConcurrent: queueMaxConcurrent())
     }
 
     func clearCaches() {
