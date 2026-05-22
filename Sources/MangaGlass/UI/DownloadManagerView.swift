@@ -215,25 +215,27 @@ struct DownloadManagerView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(FilterType.allCases) { type in
+                        let selected = filter == type
                         Button(action: { filter = type }) {
                             HStack(spacing: 5) {
                                 Text(type.rawValue)
-                                    .font(MGFont.microStrong)
                                 Text("\(count(for: type))")
-                                    .font(MGFont.microStrong)
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 1)
-                                    .background(filter == type ? Color.white.opacity(0.24) : MGTheme.insetFill(for: colorScheme, prominence: 0.7), in: Capsule())
+                                    .background(selected ? Color.white.opacity(0.22) : MGTheme.insetFill(for: colorScheme, prominence: 0.8), in: Capsule())
                             }
-                            .foregroundStyle(filter == type ? .white : .primary.opacity(0.78))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(filter == type ? AnyShapeStyle(MGTheme.accentStrong) : AnyShapeStyle(MGTheme.insetFill(for: colorScheme, prominence: 0.65)))
-                            )
+                            .frame(minWidth: 54)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(
+                            MGSelectionButtonStyle(
+                                selected: selected,
+                                tint: MGTheme.accentStrong,
+                                font: MGFont.microStrong,
+                                horizontalPadding: 9,
+                                verticalPadding: 6,
+                                cornerRadius: 8
+                            )
+                        )
                     }
 
                     if !metrics.isNarrow {
@@ -266,30 +268,40 @@ struct DownloadManagerView: View {
                         .background(MGTheme.danger.opacity(colorScheme == .dark ? 0.20 : 0.10), in: Capsule())
                     }
 
+                    let queuedCount = count(for: .queued)
+                    let failedCount = count(for: .failed)
+                    let hasTasks = !vm.downloader.taskItems.isEmpty
+                    let hasCircuit = vm.downloader.manhuaGuiSoftCircuit != nil
                     Menu {
-                        Button("开始/继续") { vm.startDownload() }
-                            .disabled(vm.downloader.taskItems.filter { $0.state == .queued }.isEmpty)
-
-                        if vm.downloader.manhuaGuiSoftCircuit != nil {
-                            Button("打开漫画柜网页") { vm.openManhuaGuiWebCheck() }
-                            Button("我已确认，继续下载") { vm.continueManhuaGuiDownloadAfterCheck() }
+                        if queuedCount > 0 || failedCount > 0 {
+                            Text("下载操作")
+                            if queuedCount > 0 {
+                                Button("开始/继续 \(queuedCount) 项") { vm.startDownload() }
+                            }
+                            if failedCount > 0 {
+                                Button("重试失败 \(failedCount) 项") { vm.retryFailed() }
+                            }
+                            Divider()
                         }
 
-                        Button("取消所有") { pendingConfirmation = .cancelAll }
-                            .disabled(vm.downloader.taskItems.isEmpty)
+                        if hasCircuit {
+                            Text("风控处理")
+                            Button("打开漫画柜网页") { vm.openManhuaGuiWebCheck() }
+                            Button("确认后继续下载") { vm.continueManhuaGuiDownloadAfterCheck() }
+                            Divider()
+                        }
 
-                        Divider()
-
-                        Button("重试失败") { vm.retryFailed() }
-                            .disabled(vm.downloader.failedItems().isEmpty)
-
-                        Button("清空所有") { pendingConfirmation = .clearAll }
-                            .disabled(vm.downloader.isRunning)
-
-                        Divider()
-
+                        Text("管理")
                         Button("打开下载目录") {
                             vm.openDownloadDirectory()
+                        }
+
+                        if hasTasks {
+                            Divider()
+                            Text("危险操作")
+                            Button("取消并清空队列", role: .destructive) { pendingConfirmation = .cancelAll }
+                            Button("清空全部记录", role: .destructive) { pendingConfirmation = .clearAll }
+                                .disabled(vm.downloader.isRunning)
                         }
                     } label: {
                         Label("更多", systemImage: "ellipsis.circle")

@@ -165,7 +165,7 @@ struct ContentView: View {
         case .clearHistory:
             return "清空历史记录？"
         case .addAllVisible:
-            return "加入全部可见章节？"
+            return "加入全部章节？"
         case .restoredQueue:
             return "发现上次未完成的队列"
         }
@@ -210,7 +210,14 @@ struct ContentView: View {
                 }
                 .padding(metrics.pagePadding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if let confirmation = vm.terminationConfirmation {
+                    terminationConfirmationOverlay(confirmation, size: proxy.size)
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        .zIndex(10)
+                }
             }
+            .animation(.easeOut(duration: 0.16), value: vm.terminationConfirmation?.id)
         }
         .frame(minWidth: 720, minHeight: 540)
         .preferredColorScheme(vm.preferredColorScheme)
@@ -226,6 +233,76 @@ struct ContentView: View {
         } message: { confirmation in
             Text(mainConfirmationMessage(for: confirmation))
         }
+    }
+
+    private func terminationConfirmationOverlay(_ confirmation: MainViewModel.TerminationConfirmation, size: CGSize) -> some View {
+        ZStack(alignment: .top) {
+            Color.black.opacity(colorScheme == .dark ? 0.28 : 0.16)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    vm.cancelTermination()
+                }
+
+            VStack(spacing: 14) {
+                VStack(spacing: 9) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(MGTheme.warning.opacity(colorScheme == .dark ? 0.22 : 0.14))
+                            .frame(width: 42, height: 42)
+                        Image(systemName: "power")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(MGTheme.warning)
+                    }
+
+                    VStack(spacing: 5) {
+                        Text("退出 MangaGlass？")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.primary)
+                        Text(confirmation.message)
+                            .font(.system(size: 11, weight: .regular, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(1)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        vm.cancelTermination()
+                    } label: {
+                        Text("取消")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                    .keyboardShortcut(.cancelAction)
+
+                    Button {
+                        vm.confirmTermination()
+                    } label: {
+                        Text("退出")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(MGActionButtonStyle(variant: .danger))
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(18)
+            .frame(width: min(max(size.width * 0.27, 300), 348), alignment: .center)
+            .background(appleExitCardFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08), lineWidth: 0.8)
+            )
+            .padding(.top, max(96, size.height * 0.31))
+            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.34 : 0.14), radius: 22, y: 11)
+        }
+    }
+
+    private var appleExitCardFill: Color {
+        colorScheme == .dark
+            ? Color(red: 0.13, green: 0.14, blue: 0.15)
+            : Color(red: 0.97, green: 0.97, blue: 0.98)
     }
 
     @ViewBuilder
@@ -267,7 +344,7 @@ struct ContentView: View {
         case .clearHistory(let count):
             return "将删除 \(count) 条最近打开记录。此操作不会影响下载文件。"
         case .addAllVisible(let count):
-            return "当前没有单独选择章节，将把当前可见的全部 \(count) 话加入下载队列。"
+            return "当前没有单独选择章节，将把当前全部 \(count) 话加入下载队列。"
         case .restoredQueue(let summary):
             return "\(summary)\n你可以继续排队任务、打开下载管理查看详情，或稍后处理。"
         }
@@ -609,16 +686,36 @@ struct ContentView: View {
 
     private var toolbarSecondaryMenu: some View {
         Menu {
-            Menu("主题") {
-                ForEach(AppThemeMode.allCases) { mode in
-                    Button {
-                        vm.themeMode = mode
-                    } label: {
-                        HStack {
-                            Text(mode.title)
-                            Spacer()
-                            if vm.themeMode == mode {
-                                Image(systemName: "checkmark")
+            Menu("外观") {
+                Menu("主题模式") {
+                    ForEach(AppThemeMode.allCases) { mode in
+                        Button {
+                            vm.themeMode = mode
+                        } label: {
+                            HStack {
+                                Text(mode.title)
+                                Spacer()
+                                if vm.themeMode == mode {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+                Menu("皮肤") {
+                    ForEach(AppColorTheme.allCases) { colorTheme in
+                        Button {
+                            vm.colorTheme = colorTheme
+                        } label: {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(themePreviewColor(colorTheme))
+                                    .frame(width: 10, height: 10)
+                                Text(colorTheme.title)
+                                Spacer()
+                                if vm.colorTheme == colorTheme {
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                     }
@@ -877,7 +974,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Color.white.opacity(0.24), in: Capsule())
+        .background(MGTheme.insetFill(for: colorScheme, prominence: 0.78), in: Capsule())
     }
 
     private var volumeSelectionStrip: some View {
@@ -889,11 +986,11 @@ struct ContentView: View {
                     .font(MGFont.micro)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("全选") {
+                Button("全选分类") {
                     vm.selectAllVolumes()
                 }
                 .buttonStyle(MGActionButtonStyle(variant: .neutral))
-                Button("清空") {
+                Button("清空分类") {
                     vm.deselectAllVolumes()
                 }
                 .buttonStyle(MGActionButtonStyle(variant: .neutral))
@@ -903,6 +1000,7 @@ struct ContentView: View {
                 HStack(spacing: 6) {
                     ForEach(vm.displayVolumes) { volume in
                         let selected = vm.selectedVolumeIDs.contains(volume.id)
+                        let selectedChapters = vm.selectedChapterCount(in: volume.id)
                         Button {
                             vm.toggleVolume(volume.id)
                         } label: {
@@ -912,18 +1010,34 @@ struct ContentView: View {
                                 Text(volume.displayName)
                                     .font(selected ? MGFont.captionStrong : MGFont.caption)
                                     .lineLimit(1)
-                                Text("\(volume.chapters.count)")
+                                Text("\(selectedChapters)/\(volume.chapters.count)")
                                     .font(MGFont.micro)
                                     .foregroundStyle(.secondary.opacity(0.82))
                             }
                             .padding(.horizontal, 7)
                             .padding(.vertical, 4)
                             .mgStatusPill(tint: MGTheme.accentStrong, selected: selected)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
                         }
                         .buttonStyle(.plain)
+                        .help("\(volume.displayName) · 已选 \(selectedChapters) / \(volume.chapters.count) 话")
                     }
                 }
             }
+        }
+    }
+
+    private func themePreviewColor(_ theme: AppColorTheme) -> Color {
+        switch theme {
+        case .classicBlue:
+            return Color(red: 0.09, green: 0.38, blue: 0.82)
+        case .nordicAurora:
+            return Color(red: 1.00, green: 0.34, blue: 0.00)
+        case .champagneLuxury:
+            return Color(red: 0.77, green: 0.63, blue: 0.35)
+        case .cyberNeon:
+            return Color(red: 0.00, green: 0.54, blue: 0.48)
         }
     }
 
@@ -975,96 +1089,68 @@ struct ContentView: View {
 
     private func chapterPanel(metrics: LayoutMetrics) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if metrics.isNarrow {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        chapterPanelTitle
-                        Spacer(minLength: 0)
-                        chapterSelectionPill
-                        sortPicker(width: metrics.sortControlWidth)
-                    }
-                    HStack(spacing: 8) {
-                        Button("全选") { vm.selectAllVisible() }
-                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
-                        Button("清空") { vm.deselectAllVisible() }
-                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
-                        Button("加入队列") { requestStartDownload() }
-                            .buttonStyle(MGActionButtonStyle(variant: .accent))
-                            .disabled(vm.comic == nil && vm.downloader.taskItems.isEmpty)
-                    }
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline) {
-                        chapterPanelTitle
-                        Spacer()
-                        chapterSelectionPill
-                    }
-
-                    HStack(spacing: 8) {
-                        sortPicker(width: metrics.sortControlWidth)
-                        Button("全选") { vm.selectAllVisible() }
-                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
-                        Button("清空") { vm.deselectAllVisible() }
-                            .buttonStyle(MGActionButtonStyle(variant: .neutral))
-                        Button("加入队列") { requestStartDownload() }
-                            .buttonStyle(MGActionButtonStyle(variant: .accent))
-                            .disabled(vm.comic == nil && vm.downloader.taskItems.isEmpty)
-                        Spacer(minLength: 0)
-                    }
-                }
-            }
+            chapterSelectionToolbar(metrics: metrics)
 
             volumeSelectionStrip
 
             if let emptyState = emptyStateContent {
                 emptyStateCard(title: emptyState.title, detail: emptyState.detail, systemImage: emptyState.systemImage)
             } else {
-                ScrollView {
-                    chapterSections(metrics: metrics)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            vm.deselectAllVisible()
-                        }
-                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.visibleChapters.count)
-                }
-                .coordinateSpace(name: "chapter-canvas")
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 6)
-                        .onChanged { value in
-                            if dragStart == nil {
-                                dragStart = value.startLocation
-                                dragAdditive = currentModifiers().contains(.command)
-                                dragStartChapterID = chapterID(at: value.startLocation)
-                                dragLastChapterID = dragStartChapterID
+                ZStack(alignment: .bottom) {
+                    ScrollView {
+                        chapterSections(metrics: metrics)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                vm.deselectAllVisible()
                             }
-                            dragCurrent = value.location
-                            updateDragSelection()
-                        }
-                        .onEnded { value in
-                            if let start = dragStart {
-                                let dx = value.location.x - start.x
-                                let dy = value.location.y - start.y
-                                let distance = hypot(dx, dy)
-                                if distance < 6,
-                                   !dragAdditive,
-                                   dragStartChapterID == nil,
-                                   chapterID(at: value.location) == nil {
-                                    vm.deselectAllVisible()
+                            .padding(.bottom, selectedCount > 0 ? 48 : 0)
+                            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: vm.visibleChapters.count)
+                    }
+                    .coordinateSpace(name: "chapter-canvas")
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 6)
+                            .onChanged { value in
+                                if dragStart == nil {
+                                    dragStart = value.startLocation
+                                    dragAdditive = currentModifiers().contains(.command)
+                                    dragStartChapterID = chapterID(at: value.startLocation)
+                                    dragLastChapterID = dragStartChapterID
                                 }
+                                dragCurrent = value.location
+                                updateDragSelection()
                             }
-                            dragStart = nil
-                            dragCurrent = nil
-                            dragAdditive = false
-                            dragStartChapterID = nil
-                            dragLastChapterID = nil
-                        }
-                )
-                .overlay(DragRectOverlay(rect: dragRect))
-                .onPreferenceChange(ChapterFrameKey.self) { frames in
-                    chapterFrames = frames
+                            .onEnded { value in
+                                if let start = dragStart {
+                                    let dx = value.location.x - start.x
+                                    let dy = value.location.y - start.y
+                                    let distance = hypot(dx, dy)
+                                    if distance < 6,
+                                       !dragAdditive,
+                                       dragStartChapterID == nil,
+                                       chapterID(at: value.location) == nil {
+                                        vm.deselectAllVisible()
+                                    }
+                                }
+                                dragStart = nil
+                                dragCurrent = nil
+                                dragAdditive = false
+                                dragStartChapterID = nil
+                                dragLastChapterID = nil
+                            }
+                    )
+                    .overlay(DragRectOverlay(rect: dragRect))
+                    .onPreferenceChange(ChapterFrameKey.self) { frames in
+                        chapterFrames = frames
+                    }
+
+                    if selectedCount > 0 {
+                        selectionSummaryBar
+                            .padding(.horizontal, 8)
+                            .padding(.bottom, 8)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -1072,6 +1158,54 @@ struct ContentView: View {
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .mgPanel()
+    }
+
+    private func chapterSelectionToolbar(metrics: LayoutMetrics) -> some View {
+        let summary = "已选 \(vm.selectedVisibleChapterCount) / 共 \(vm.visibleChapterCount)"
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                chapterPanelTitle
+                Spacer(minLength: 0)
+                Text(summary)
+                    .mgStatusPill(tint: MGTheme.accentStrong, selected: selectedCount > 0)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+
+            HStack(spacing: 8) {
+                sortPicker(width: metrics.sortControlWidth)
+                Button("全选") { vm.selectAllVisible() }
+                    .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                Button("清空选择") { vm.deselectAllVisible() }
+                    .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                if selectedCount == 0 {
+                    Button("加入全部") { requestStartDownload() }
+                        .buttonStyle(MGActionButtonStyle(variant: .accent))
+                        .disabled(vm.comic == nil && vm.downloader.taskItems.isEmpty)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var selectionSummaryBar: some View {
+        HStack(spacing: 10) {
+            Label("已选 \(selectedCount) 话", systemImage: "checkmark.circle.fill")
+                .font(MGFont.captionStrong)
+                .foregroundStyle(MGTheme.accentStrong)
+            Spacer(minLength: 0)
+            Button("清空") {
+                vm.deselectAllVisible()
+            }
+            .buttonStyle(MGActionButtonStyle(variant: .neutral))
+            Button("加入队列") {
+                requestStartDownload()
+            }
+            .buttonStyle(MGActionButtonStyle(variant: .accent))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .mgPanel(cornerRadius: 10, prominence: 1.04, shadow: true)
     }
 
     private var chapterPanelTitle: some View {
@@ -1098,14 +1232,30 @@ struct ContentView: View {
     }
 
     private func sortPicker(width: CGFloat) -> some View {
-        Picker("排序", selection: $vm.chapterSortDirection) {
+        HStack(spacing: 3) {
             ForEach(SortDirection.allCases) { direction in
-                Text(direction.rawValue).tag(direction)
+                let selected = vm.chapterSortDirection == direction
+                Button {
+                    vm.chapterSortDirection = direction
+                } label: {
+                    Text(direction.rawValue)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(
+                    MGSelectionButtonStyle(
+                        selected: selected,
+                        tint: MGTheme.accentStrong,
+                        font: MGFont.captionStrong,
+                        horizontalPadding: 0,
+                        verticalPadding: 5,
+                        cornerRadius: 7
+                    )
+                )
+                .accessibilityLabel("排序\(direction.rawValue)")
             }
         }
-        .labelsHidden()
-        .pickerStyle(.segmented)
         .frame(width: width)
+        .mgSegmentContainer(cornerRadius: 10, prominence: 0.66)
     }
 
     private func simplifiedDownloadPanel(metrics: LayoutMetrics) -> some View {
@@ -1413,6 +1563,8 @@ struct ContentView: View {
     private func chapterSections(metrics: LayoutMetrics) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(vm.filteredVolumeSections) { section in
+                let selectedInSection = vm.selectedChapterCount(in: section.id)
+                let sectionActionTitle = sectionSelectionActionTitle(for: section.id)
                 VStack(alignment: .leading, spacing: 6) {
                     if metrics.isNarrow {
                         VStack(alignment: .leading, spacing: 4) {
@@ -1426,11 +1578,11 @@ struct ContentView: View {
                             }
 
                             HStack {
-                                Text("已选 \(vm.selectedChapterCount(in: section.id)) / \(section.chapterCount)")
+                                Text("已选 \(selectedInSection) / \(section.chapterCount)")
                                     .font(MGFont.micro)
                                     .foregroundStyle(.secondary)
                                 Spacer(minLength: 0)
-                                Button(vm.areAllChaptersSelected(in: section.id) ? "清空本分类" : "全选本分类") {
+                                Button(sectionActionTitle) {
                                     vm.toggleVolumeChapterSelection(volumeID: section.id)
                                 }
                                 .buttonStyle(MGActionButtonStyle(variant: .neutral))
@@ -1445,13 +1597,13 @@ struct ContentView: View {
                             Text("\(section.chapterCount) 话")
                                 .mgStatusPill(tint: MGTheme.accent, selected: false)
 
-                            Text("已选 \(vm.selectedChapterCount(in: section.id)) / \(section.chapterCount)")
+                            Text("已选 \(selectedInSection) / \(section.chapterCount)")
                                 .font(MGFont.micro)
                                 .foregroundStyle(.secondary)
 
                             Spacer(minLength: 0)
 
-                            Button(vm.areAllChaptersSelected(in: section.id) ? "清空本分类" : "全选本分类") {
+                            Button(sectionActionTitle) {
                                 vm.toggleVolumeChapterSelection(volumeID: section.id)
                             }
                             .buttonStyle(MGActionButtonStyle(variant: .neutral))
@@ -1467,6 +1619,16 @@ struct ContentView: View {
         .padding(.top, 2)
     }
 
+    private func sectionSelectionActionTitle(for volumeID: String) -> String {
+        if vm.areAllChaptersSelected(in: volumeID) {
+            return "清空本组"
+        }
+        if vm.isVolumeChapterSelectionPartial(volumeID: volumeID) {
+            return "补全本组"
+        }
+        return "选择本组"
+    }
+
     private func sectionChapterGrid(_ chapters: [ComicChapter], columns: Int) -> some View {
         let gridColumns = Array(repeating: GridItem(.flexible(minimum: 108, maximum: 210), spacing: 6), count: max(1, columns))
         return LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 6) {
@@ -1480,6 +1642,7 @@ struct ContentView: View {
     private func chapterCell(_ chapter: ComicChapter) -> some View {
         ChapterChip(chapter: chapter, isSelected: vm.selectedChapterIDs.contains(chapter.id))
             .frame(maxWidth: .infinity, alignment: .leading)
+            .help(chapter.volumeName.isEmpty ? chapter.displayName : "\(chapter.displayName) · \(chapter.volumeName)")
             .background(
                 GeometryReader { proxy in
                     Color.clear.preference(

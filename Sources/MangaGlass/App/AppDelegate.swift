@@ -74,18 +74,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return true
         }
 
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "退出 MangaGlass？"
-        alert.informativeText = terminationInformativeText()
-        alert.addButton(withTitle: "退出")
-        alert.addButton(withTitle: "取消")
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            didConfirmTermination = true
+        guard let viewModel else {
             return true
         }
 
+        viewModel.presentTerminationConfirmation(message: terminationInformativeText()) { [weak self] in
+            self?.didConfirmTermination = true
+            NSApp.terminate(nil)
+        }
         return false
     }
 

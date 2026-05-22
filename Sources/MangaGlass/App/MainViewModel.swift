@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import QuartzCore
 import SwiftUI
 
 enum SortDirection: String, CaseIterable, Identifiable {
@@ -34,6 +35,24 @@ enum AppThemeMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum AppColorTheme: String, CaseIterable, Identifiable {
+    case classicBlue = "classicBlue"
+    case nordicAurora = "nordicAurora"
+    case champagneLuxury = "champagneLuxury"
+    case cyberNeon = "cyberNeon"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .classicBlue: return "经典"
+        case .nordicAurora: return "工业"
+        case .champagneLuxury: return "书卷"
+        case .cyberNeon: return "江南"
+        }
+    }
+}
+
 private enum StorageKey {
     static let inputURL = "inputURL"
     static let authCookie = "authCookie"
@@ -42,6 +61,7 @@ private enum StorageKey {
     static let lastComic = "lastComic"
     static let downloadQueue = "downloadQueue"
     static let themeMode = "themeMode"
+    static let colorTheme = "colorTheme"
 }
 
 @MainActor
@@ -54,6 +74,12 @@ final class MainViewModel: ObservableObject {
         var chapterCount: Int { chapters.count }
     }
 
+    struct TerminationConfirmation: Identifiable {
+        let id = UUID()
+        let message: String
+        let confirm: () -> Void
+    }
+
     @Published var inputURL = "" {
         didSet { persistString(inputURL, key: StorageKey.inputURL) }
     }
@@ -64,7 +90,16 @@ final class MainViewModel: ObservableObject {
         let raw = UserDefaults.standard.string(forKey: StorageKey.themeMode) ?? AppThemeMode.system.rawValue
         return AppThemeMode(rawValue: raw) ?? .system
     }() {
-        didSet { persistString(themeMode.rawValue, key: StorageKey.themeMode) }
+        didSet {
+            persistString(themeMode.rawValue, key: StorageKey.themeMode)
+            updateAppAppearance()
+        }
+    }
+    @Published var colorTheme: AppColorTheme = {
+        let raw = UserDefaults.standard.string(forKey: StorageKey.colorTheme) ?? AppColorTheme.classicBlue.rawValue
+        return AppColorTheme(rawValue: raw) ?? .classicBlue
+    }() {
+        didSet { persistString(colorTheme.rawValue, key: StorageKey.colorTheme) }
     }
     @Published var comic: ComicInfo? {
         didSet { persistCodable(comic, key: StorageKey.lastComic) }
@@ -90,6 +125,7 @@ final class MainViewModel: ObservableObject {
     @Published var lastMirrorSuggestion: CopyMangaMirror?
     @Published var lastFailedInput: String = ""
     @Published var shouldOfferRestoredQueuePrompt = false
+    @Published var terminationConfirmation: TerminationConfirmation?
 
     let api: CopyMangaAPI
     let downloader: DownloadCoordinator
@@ -102,6 +138,7 @@ final class MainViewModel: ObservableObject {
         self.api = api
         self.downloader = DownloadCoordinator(api: api)
         restorePersistedState()
+        updateAppAppearance()
         self.api.setLogger { [weak self] message in
             Task { @MainActor in self?.appendLog(message) }
         }
@@ -151,6 +188,18 @@ final class MainViewModel: ObservableObject {
         filteredVolumeSections.flatMap(\.chapters)
     }
 
+    var visibleChapterCount: Int {
+        visibleChapters.count
+    }
+
+    var selectedVisibleChapterCount: Int {
+        visibleChapters.reduce(into: 0) { partial, chapter in
+            if selectedChapterIDs.contains(chapter.id) {
+                partial += 1
+            }
+        }
+    }
+
     var totalChapterCount: Int {
         displayVolumes.reduce(0) { $0 + $1.chapters.count }
     }
@@ -177,6 +226,25 @@ final class MainViewModel: ObservableObject {
         themeMode.colorScheme
     }
 
+    func updateAppAppearance() {
+        CATransaction.begin()
+        switch themeMode {
+        case .system:
+            NSApp.appearance = nil
+        case .light:
+            NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark:
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+
+        for window in NSApp.windows {
+            window.appearance = NSApp.appearance
+            window.invalidateShadow()
+            window.contentView?.displayIfNeeded()
+        }
+        CATransaction.commit()
+    }
+
     var restoredQueuePromptSummary: String {
         let counts = downloader.countsSummary()
         return "已恢复上次队列：排队 \(counts.queued) 话，失败或已取消 \(counts.failed) 话，已完成 \(counts.done) 话。"
@@ -184,6 +252,20 @@ final class MainViewModel: ObservableObject {
 
     var canOpenRecentDownload: Bool {
         downloader.lastCompletedOutputURL != nil || downloader.countsSummary().done > 0
+    }
+
+    func presentTerminationConfirmation(message: String, confirm: @escaping () -> Void) {
+        terminationConfirmation = TerminationConfirmation(message: message, confirm: confirm)
+    }
+
+    func confirmTermination() {
+        let confirmation = terminationConfirmation
+        terminationConfirmation = nil
+        confirmation?.confirm()
+    }
+
+    func cancelTermination() {
+        terminationConfirmation = nil
     }
 
     func loadComic() {
@@ -371,6 +453,12 @@ final class MainViewModel: ObservableObject {
                 partial += 1
             }
         }
+    }
+
+    func isVolumeChapterSelectionPartial(volumeID: String) -> Bool {
+        guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return false }
+        let selected = selectedChapterCount(in: volumeID)
+        return selected > 0 && selected < volume.chapters.count
     }
 
     func startDownload() {

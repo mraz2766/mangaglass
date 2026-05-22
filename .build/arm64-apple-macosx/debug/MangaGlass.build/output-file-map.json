@@ -72,6 +72,13 @@
     "swift-dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/ContentView.swiftdeps",
     "diagnostics": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/ContentView.dia"
   },
+  "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DesignSystem.swift": {
+    "dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DesignSystem.d",
+    "object": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DesignSystem.swift.o",
+    "swiftmodule": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DesignSystem~partial.swiftmodule",
+    "swift-dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DesignSystem.swiftdeps",
+    "diagnostics": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DesignSystem.dia"
+  },
   "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift": {
     "dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadManagerView.d",
     "object": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadManagerView.swift.o",
