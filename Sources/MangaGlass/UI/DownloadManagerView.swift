@@ -207,7 +207,7 @@ struct DownloadManagerView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .mgPanel(cornerRadius: 12, prominence: 0.92)
+        .mgPanel(cornerRadius: 12, prominence: 0.84, shadow: false)
     }
 
     private func controlBar(metrics: LayoutMetrics) -> some View {
@@ -222,7 +222,7 @@ struct DownloadManagerView: View {
                                 Text("\(count(for: type))")
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 1)
-                                    .background(selected ? Color.white.opacity(0.22) : MGTheme.insetFill(for: colorScheme, prominence: 0.8), in: Capsule())
+                                    .background(selected ? Color.white.opacity(0.18) : Color.clear, in: Capsule())
                             }
                             .frame(minWidth: 54)
                         }
@@ -313,7 +313,7 @@ struct DownloadManagerView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .mgPanel(cornerRadius: 10, prominence: 0.78, shadow: false)
+        .mgPanel(cornerRadius: 10, prominence: 0.64, shadow: false)
     }
 
     private func manhuaGuiSoftCircuitInline(_ circuit: DownloadCoordinator.ManhuaGuiSoftCircuit) -> some View {
@@ -344,7 +344,7 @@ struct DownloadManagerView: View {
                 .font(MGFont.captionStrong)
                 .foregroundStyle(tint)
         }
-        .mgStatusPill(tint: tint, selected: false)
+        .fixedSize()
     }
 
     private func listContent(metrics: LayoutMetrics) -> some View {
@@ -380,22 +380,21 @@ struct DownloadManagerView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .mgPanel(cornerRadius: 12, prominence: 0.72, shadow: false)
+        .mgPanel(cornerRadius: 12, prominence: 0.64, shadow: false)
     }
 
     private func taskRow(for item: DownloadTaskItem, metrics: LayoutMetrics) -> some View {
         HStack(spacing: 0) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(statusColor(for: item.state).opacity(0.88))
-                .frame(width: 6)
+                .fill(statusColor(for: item.state).opacity(0.78))
+                .frame(width: 4)
                 .padding(.vertical, 8)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: metrics.isNarrow ? 8 : 10) {
                     Circle()
                         .fill(statusColor(for: item.state))
-                        .frame(width: 8, height: 8)
-                        .shadow(color: statusColor(for: item.state).opacity(0.22), radius: 3)
+                        .frame(width: 7, height: 7)
 
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
@@ -473,7 +472,7 @@ struct DownloadManagerView: View {
         .background(taskBackground(for: item.state), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(MGTheme.stroke(for: colorScheme, prominence: 0.50), lineWidth: 0.8)
+                .stroke(MGTheme.stroke(for: colorScheme, prominence: 0.32), lineWidth: 0.8)
         )
     }
 
@@ -538,7 +537,7 @@ struct DownloadManagerView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .mgPanel(cornerRadius: 10, prominence: 0.78, shadow: false)
+        .mgPanel(cornerRadius: 10, prominence: 0.64, shadow: false)
     }
 
     private func comicDurationChip(_ summary: DownloadCoordinator.ComicDurationSummary) -> some View {
@@ -547,9 +546,9 @@ struct DownloadManagerView: View {
             .font(MGFont.microStrong)
             .foregroundStyle(summary.isRunning ? MGTheme.accentStrong : .secondary)
             .lineLimit(1)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(MGTheme.insetFill(for: colorScheme, prominence: 0.78), in: Capsule())
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(MGTheme.insetFill(for: colorScheme, prominence: 0.42), in: Capsule())
     }
 
     private var headerSubtitle: String {
@@ -567,7 +566,7 @@ struct DownloadManagerView: View {
         ZStack {
             MGTheme.appBackground(for: colorScheme)
             LinearGradient(
-                colors: [MGTheme.accent.opacity(colorScheme == .dark ? 0.10 : 0.07), .clear],
+                colors: [MGTheme.accent.opacity(colorScheme == .dark ? 0.025 : 0.018), .clear],
                 startPoint: .topLeading,
                 endPoint: .center
             )
@@ -576,7 +575,12 @@ struct DownloadManagerView: View {
     }
 
     private func taskBackground(for state: DownloadTaskItem.State) -> some ShapeStyle {
-        AnyShapeStyle(MGTheme.statusFill(for: state, scheme: colorScheme))
+        switch state {
+        case .running, .failed, .canceled:
+            return AnyShapeStyle(MGTheme.statusFill(for: state, scheme: colorScheme))
+        case .queued, .done:
+            return AnyShapeStyle(MGTheme.panelFill(for: colorScheme, prominence: 0.42))
+        }
     }
 
     private func count(for type: FilterType) -> Int {

@@ -94,16 +94,7 @@ enum MGTheme {
     }
 
     static var fontDesign: Font.Design {
-        switch activeTheme {
-        case .classicBlue:
-            return .rounded
-        case .nordicAurora:
-            return .default    // 现代无衬线理性几何
-        case .champagneLuxury:
-            return .serif      // 中古人文典雅衬线
-        case .cyberNeon:
-            return .serif      // 东方古典雅致衬线
-        }
+        .default
     }
 
     static func appBackground(for scheme: ColorScheme) -> LinearGradient {
@@ -115,111 +106,33 @@ enum MGTheme {
     }
 
     private static var lightBackgroundColors: [Color] {
-        switch activeTheme {
-        case .classicBlue:
-            return [Color(red: 0.96, green: 0.98, blue: 0.99), Color(red: 0.91, green: 0.94, blue: 0.97)]
-        case .nordicAurora:
-            return [Color(red: 0.93, green: 0.93, blue: 0.94), Color(red: 0.88, green: 0.88, blue: 0.89)] // 阳极氧化钛合金浅灰
-        case .champagneLuxury:
-            return [Color(red: 0.98, green: 0.96, blue: 0.92), Color(red: 0.93, green: 0.90, blue: 0.84)] // 中古手工羊皮宣纸色
-        case .cyberNeon:
-            return [Color(red: 0.95, green: 0.96, blue: 0.94), Color(red: 0.89, green: 0.91, blue: 0.88)] // 禅意温润浅竹素白
-        }
+        [Color(red: 0.965, green: 0.970, blue: 0.975), Color(red: 0.935, green: 0.942, blue: 0.950)]
     }
 
     private static var darkBackgroundColors: [Color] {
-        switch activeTheme {
-        case .classicBlue:
-            return [Color(red: 0.08, green: 0.09, blue: 0.11), Color(red: 0.05, green: 0.06, blue: 0.08)]
-        case .nordicAurora:
-            return [Color(red: 0.09, green: 0.09, blue: 0.10), Color(red: 0.05, green: 0.05, blue: 0.06)] // 工业冷峻信号黑
-        case .champagneLuxury:
-            return [Color(red: 0.10, green: 0.09, blue: 0.07), Color(red: 0.06, green: 0.05, blue: 0.04)]
-        case .cyberNeon:
-            return [Color(red: 0.08, green: 0.10, blue: 0.11), Color(red: 0.04, green: 0.05, blue: 0.06)] // 湿润青石板黛绿黑
-        }
+        [Color(red: 0.105, green: 0.110, blue: 0.120), Color(red: 0.070, green: 0.074, blue: 0.082)]
     }
 
     static func panelFill(for scheme: ColorScheme, prominence: Double = 1) -> Color {
-        switch activeTheme {
-        case .classicBlue:
-            return scheme == .dark
-                ? Color.black.opacity(0.28 * prominence)
-                : Color.white.opacity(0.82 * prominence)
-        case .nordicAurora:
-            return scheme == .dark
-                ? Color(red: 0.13, green: 0.13, blue: 0.15).opacity(0.95 * prominence) // 工业黑钛金质地
-                : Color(red: 0.95, green: 0.95, blue: 0.96).opacity(0.92 * prominence) // 钛铝合金面板
-        case .champagneLuxury:
-            return scheme == .dark
-                ? Color(red: 0.12, green: 0.11, blue: 0.09).opacity(0.95 * prominence)
-                : Color(red: 0.97, green: 0.95, blue: 0.90).opacity(0.96 * prominence)
-        case .cyberNeon:
-            return scheme == .dark
-                ? Color(red: 0.11, green: 0.13, blue: 0.14).opacity(0.95 * prominence) // 雨后湿石板绿黑底色
-                : Color(red: 0.97, green: 0.97, blue: 0.96).opacity(0.96 * prominence) // 素雅竹素白玉面板
-        }
+        scheme == .dark
+            ? Color.white.opacity(0.040 * prominence)
+            : Color.white.opacity(0.700 * prominence)
     }
 
     static func insetFill(for scheme: ColorScheme, prominence: Double = 1) -> Color {
-        switch activeTheme {
-        case .classicBlue:
-            return scheme == .dark
-                ? Color.black.opacity(0.18 * prominence)
-                : Color.white.opacity(0.42 * prominence)
-        case .nordicAurora:
-            return scheme == .dark
-                ? Color(red: 0.08, green: 0.08, blue: 0.09).opacity(prominence)
-                : Color(red: 0.89, green: 0.89, blue: 0.91).opacity(prominence)
-        case .champagneLuxury:
-            return scheme == .dark
-                ? Color(red: 0.08, green: 0.07, blue: 0.06).opacity(0.85 * prominence)
-                : Color(red: 0.93, green: 0.90, blue: 0.84).opacity(0.88 * prominence)
-        case .cyberNeon:
-            return scheme == .dark
-                ? Color(red: 0.05, green: 0.07, blue: 0.08).opacity(prominence)
-                : Color(red: 0.93, green: 0.93, blue: 0.91).opacity(prominence) // 凹陷竹青茶洗暗槽
-        }
+        scheme == .dark
+            ? Color.black.opacity(0.180 * prominence)
+            : Color.black.opacity(0.035 * prominence)
     }
 
     static func stroke(for scheme: ColorScheme, prominence: Double = 1) -> Color {
-        switch activeTheme {
-        case .classicBlue:
-            return scheme == .dark
-                ? Color.white.opacity(0.12 * prominence)
-                : Color.white.opacity(0.62 * prominence)
-        case .nordicAurora:
-            return scheme == .dark
-                ? Color(red: 0.24, green: 0.24, blue: 0.26).opacity(0.80 * prominence) // 银灰钛金装配槽线
-                : Color(red: 0.72, green: 0.72, blue: 0.75).opacity(0.70 * prominence)
-        case .champagneLuxury:
-            return scheme == .dark
-                ? Color(red: 0.56, green: 0.43, blue: 0.23).opacity(0.75 * prominence)
-                : Color(red: 0.77, green: 0.63, blue: 0.35).opacity(0.80 * prominence)
-        case .cyberNeon:
-            return scheme == .dark
-                ? Color(red: 0.00, green: 0.54, blue: 0.48).opacity(0.20 * prominence) // 极简松石绿接缝
-                : Color(red: 0.00, green: 0.54, blue: 0.48).opacity(0.18 * prominence)
-        }
+        scheme == .dark
+            ? Color.white.opacity(0.090 * prominence)
+            : Color.black.opacity(0.080 * prominence)
     }
 
     static func shadow(for scheme: ColorScheme) -> Color {
-        switch activeTheme {
-        case .classicBlue:
-            return scheme == .dark ? Color.black.opacity(0.24) : Color.black.opacity(0.045)
-        case .nordicAurora:
-            return scheme == .dark
-                ? Color.black.opacity(0.35) // 硬朗投影
-                : Color.black.opacity(0.08)
-        case .champagneLuxury:
-            return scheme == .dark
-                ? Color.black.opacity(0.45)
-                : Color(red: 0.30, green: 0.22, blue: 0.12).opacity(0.08)
-        case .cyberNeon:
-            return scheme == .dark
-                ? Color.black.opacity(0.35)
-                : Color(red: 0.08, green: 0.12, blue: 0.10).opacity(0.045) // 极淡翠玉阴影
-        }
+        scheme == .dark ? Color.black.opacity(0.22) : Color.black.opacity(0.035)
     }
 
     static func statusColor(for state: DownloadTaskItem.State) -> Color {
@@ -520,73 +433,43 @@ private struct MGSegmentContainerModifier: ViewModifier {
 
 private struct MGSurfaceModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage("colorTheme") private var colorThemeRaw = AppColorTheme.classicBlue.rawValue
     let cornerRadius: CGFloat
     let prominence: Double
     let shadow: Bool
 
     func body(content: Content) -> some View {
-        let theme = AppColorTheme(rawValue: colorThemeRaw) ?? .classicBlue
-        let goldGradient = LinearGradient(
-            colors: [
-                Color(red: 0.90, green: 0.77, blue: 0.46), // 香槟金
-                Color(red: 0.77, green: 0.63, blue: 0.35), // 黄铜金
-                Color(red: 0.56, green: 0.43, blue: 0.23)  // 古铜金
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(MGTheme.panelFill(for: colorScheme, prominence: prominence))
             )
             .overlay(
-                Group {
-                    if theme == .champagneLuxury {
-                        // 🌟 弱化线条感设计：摒弃双层线，采用单层典雅微透金箔描边，宽度统一为 0.8
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .stroke(goldGradient.opacity(0.48), lineWidth: 0.8)
-                    } else {
-                        // 其它主题统一采用与经典原版完全相同的极简单层 0.8px 细描边，杜绝繁杂
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .stroke(MGTheme.stroke(for: colorScheme), lineWidth: 0.8)
-                    }
-                }
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(MGTheme.stroke(for: colorScheme, prominence: 0.72), lineWidth: 0.8)
             )
             .shadow(
                 color: shadow ? MGTheme.shadow(for: colorScheme) : .clear,
-                radius: shadow ? (theme == .classicBlue ? 12 : (theme == .nordicAurora ? 10 : (theme == .champagneLuxury ? 8 : 12))) : 0,
+                radius: shadow ? 8 : 0,
                 x: 0,
-                y: shadow ? (theme == .classicBlue ? 6 : (theme == .nordicAurora ? 4 : (theme == .champagneLuxury ? 3 : 2))) : 0
+                y: shadow ? 3 : 0
             )
     }
 }
 
 private struct MGInsetSurfaceModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage("colorTheme") private var colorThemeRaw = AppColorTheme.classicBlue.rawValue
     let cornerRadius: CGFloat
     let prominence: Double
 
     func body(content: Content) -> some View {
-        let theme = AppColorTheme(rawValue: colorThemeRaw) ?? .classicBlue
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(MGTheme.insetFill(for: colorScheme, prominence: prominence))
             )
             .overlay(
-                Group {
-                    if theme == .classicBlue {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .stroke(MGTheme.stroke(for: colorScheme, prominence: 0.45), lineWidth: 0.8)
-                    } else {
-                        // 极简扁平美学：非原版主题下的嵌套子面板一律取消描边线，杜绝线条过多过杂
-                        Color.clear
-                    }
-                }
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(MGTheme.stroke(for: colorScheme, prominence: 0.28), lineWidth: 0.8)
             )
     }
 }
@@ -601,19 +484,17 @@ private struct MGStatusPillModifier: ViewModifier {
         let theme = AppColorTheme(rawValue: colorThemeRaw) ?? .classicBlue
         content
             .font(MGFont.captionStrong)
-            .foregroundStyle(selected ? tint : Color.primary.opacity(0.78))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
+            .foregroundStyle(selected ? tint : Color.primary.opacity(0.68))
+            .padding(.horizontal, selected ? 8 : 6)
+            .padding(.vertical, selected ? 4 : 3)
             .background(
                 Capsule(style: .continuous)
-                    .fill(selected ? tint.opacity(colorScheme == .dark ? 0.22 : 0.13) : MGTheme.insetFill(for: colorScheme))
+                    .fill(selected ? tint.opacity(colorScheme == .dark ? 0.18 : 0.10) : Color.clear)
             )
             .overlay(
                 Capsule(style: .continuous)
                     .stroke(
-                        theme == .classicBlue
-                            ? (selected ? tint.opacity(0.42) : MGTheme.stroke(for: colorScheme, prominence: 0.45))
-                            : (selected ? tint.opacity(0.30) : Color.clear),
+                        selected ? tint.opacity(theme == .classicBlue ? 0.28 : 0.22) : Color.clear,
                         lineWidth: 0.8
                     )
             )

@@ -379,8 +379,8 @@ struct ContentView: View {
 
             LinearGradient(
                 colors: colorScheme == .dark
-                    ? [MGTheme.accent.opacity(0.10), .clear]
-                    : [MGTheme.accent.opacity(0.08), .clear],
+                    ? [MGTheme.accent.opacity(0.025), .clear]
+                    : [MGTheme.accent.opacity(0.018), .clear],
                 startPoint: .topLeading,
                 endPoint: .center
             )
@@ -446,7 +446,7 @@ struct ContentView: View {
             }
         }
         .padding(12)
-        .mgPanel(cornerRadius: 12, prominence: 0.92)
+        .mgPanel(cornerRadius: 12, prominence: 0.86, shadow: false)
         .sheet(isPresented: $showDownloadManager) {
             DownloadManagerView(vm: vm)
         }
@@ -472,7 +472,7 @@ struct ContentView: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .mgPanel()
+            .mgPanel(prominence: 0.84, shadow: false)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 coverView
@@ -488,7 +488,7 @@ struct ContentView: View {
             }
             .padding(12)
             .frame(width: metrics.sidePanelWidth)
-            .mgPanel()
+            .mgPanel(prominence: 0.84, shadow: false)
         }
     }
 
@@ -499,7 +499,7 @@ struct ContentView: View {
         return VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(comicName)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .font(.system(size: 20, weight: .bold, design: .default))
                     .lineLimit(expandComicTitle ? nil : (metrics.isWide ? 2 : 1))
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -526,7 +526,7 @@ struct ContentView: View {
             }
 
             Text(vm.statusText)
-                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(.secondary)
                 .lineLimit(vm.errorText.isEmpty ? 1 : 2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -534,7 +534,7 @@ struct ContentView: View {
             if !vm.errorText.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(vm.errorText)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .font(.system(size: 12, weight: .semibold, design: .default))
                         .foregroundStyle(.indigo)
                     if let suggestion = vm.lastMirrorSuggestion {
                         Button("切换到 \(suggestion.displayName) 重试") {
@@ -593,18 +593,15 @@ struct ContentView: View {
     }
 
     private var compactMetaSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                statItem("分类", "\(selectedVolumeCount)")
-                statItem("章节", "\(selectedCount)")
-            }
+        HStack(spacing: 14) {
+            statItem("分类", "\(selectedVolumeCount)")
+            statItem("章节", "\(selectedCount)")
         }
-        .padding(8)
-        .mgInsetPanel()
+        .padding(.vertical, 6)
     }
 
     private func statItem(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
             Text(title)
                 .font(MGFont.micro)
                 .foregroundStyle(.secondary)
@@ -613,10 +610,6 @@ struct ContentView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .mgInsetPanel(cornerRadius: 8, prominence: 0.7)
     }
 
     private func compactMetaRow(_ left: CompactMetaItem, _ right: CompactMetaItem) -> some View {
@@ -966,15 +959,13 @@ struct ContentView: View {
     private func inlineStat(_ title: String, _ value: Int, tint: Color, suffix: String = "") -> some View {
         HStack(spacing: 4) {
             Text(title)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .font(MGFont.micro)
                 .foregroundStyle(.secondary)
             Text("\(value)\(suffix)")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .font(MGFont.captionStrong)
                 .foregroundStyle(tint)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(MGTheme.insetFill(for: colorScheme, prominence: 0.78), in: Capsule())
+        .fixedSize()
     }
 
     private var volumeSelectionStrip: some View {
@@ -1157,7 +1148,7 @@ struct ContentView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .mgPanel()
+        .mgPanel(prominence: 0.86, shadow: false)
     }
 
     private func chapterSelectionToolbar(metrics: LayoutMetrics) -> some View {
@@ -1205,7 +1196,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .mgPanel(cornerRadius: 10, prominence: 1.04, shadow: true)
+        .mgPanel(cornerRadius: 10, prominence: 0.94, shadow: false)
     }
 
     private var chapterPanelTitle: some View {
@@ -1216,7 +1207,7 @@ struct ContentView: View {
                     .font(MGFont.title)
                 Text(selecting ? "选择模式 · 批量操作已激活" : "浏览模式 · 支持多选 / 框选")
                     .font(MGFont.micro)
-                    .foregroundStyle(.secondary.opacity(0.85))
+                    .foregroundStyle(.secondary.opacity(0.72))
             }
 
             Text(selecting ? "选择中" : "浏览中")
@@ -1446,8 +1437,8 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .mgPanel(cornerRadius: 10, shadow: false)
+        .padding(.vertical, 8)
+        .mgPanel(cornerRadius: 10, prominence: 0.72, shadow: false)
     }
 
     private func manhuaGuiSoftCircuitBanner(_ circuit: DownloadCoordinator.ManhuaGuiSoftCircuit) -> some View {
@@ -1707,17 +1698,17 @@ private struct ChapterChip: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(
                     isSelected
-                        ? AnyShapeStyle(MGTheme.accentSoft.opacity(colorScheme == .dark ? 0.22 : (isHovered ? 0.72 : 0.58)))
-                        : AnyShapeStyle(MGTheme.insetFill(for: colorScheme, prominence: isHovered ? 1.0 : 0.56))
+                        ? AnyShapeStyle(MGTheme.accentSoft.opacity(colorScheme == .dark ? 0.18 : (isHovered ? 0.48 : 0.36)))
+                        : AnyShapeStyle(Color.primary.opacity(colorScheme == .dark ? (isHovered ? 0.055 : 0.028) : (isHovered ? 0.035 : 0.012)))
                 )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(
-                    isSelected ? MGTheme.accentStrong.opacity(isHovered ? 0.66 : 0.45) : MGTheme.stroke(for: colorScheme, prominence: isHovered ? 0.72 : 0.38),
+                    isSelected ? MGTheme.accentStrong.opacity(isHovered ? 0.42 : 0.30) : Color.clear,
                     lineWidth: 0.8
                 )
         )
@@ -1727,7 +1718,6 @@ private struct ChapterChip: View {
                 .frame(width: 3)
                 .padding(.vertical, 4)
         }
-        .scaleEffect(isHovered ? 1.006 : 1.0)
         .animation(.easeOut(duration: 0.14), value: isHovered)
         .onHover { hovering in
             isHovered = hovering
