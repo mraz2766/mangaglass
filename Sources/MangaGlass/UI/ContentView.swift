@@ -743,7 +743,7 @@ struct ContentView: View {
         } label: {
             Label("更多", systemImage: "ellipsis.circle")
         }
-        .buttonStyle(MGActionButtonStyle(variant: .ghost))
+        .menuStyle(.borderlessButton)
     }
 
     private func historyMenuTitle(for record: RecentComicRecord) -> String {
@@ -773,13 +773,6 @@ struct ContentView: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: size, height: size)
-                .padding(5)
-                .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.white.opacity(0.58), lineWidth: 0.8)
-                )
-                .shadow(color: Color.black.opacity(0.08), radius: 6, y: 3)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("MangaGlass")
