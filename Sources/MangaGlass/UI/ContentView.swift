@@ -128,6 +128,7 @@ struct ContentView: View {
     @State private var expandComicTitle = false
     @State private var showDownloadManager = false
     @State private var showSiteEntryPanel = false
+    @State private var showVolumeFilters = false
     @State private var pendingConfirmation: MainConfirmation?
     @State private var didCheckRestoredQueue = false
     @Environment(\.colorScheme) private var colorScheme
@@ -751,20 +752,21 @@ struct ContentView: View {
     }
 
     private var directoryStatusBar: some View {
-        HStack(spacing: 8) {
+        let folderName = vm.destinationFolder.lastPathComponent.isEmpty ? vm.destinationFolder.path : vm.destinationFolder.lastPathComponent
+        return HStack(spacing: 8) {
             Image(systemName: "folder.fill")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(MGTheme.accent)
-            Text(vm.destinationFolder.path)
+            Text(folderName)
                 .font(MGFont.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .truncationMode(.middle)
+                .truncationMode(.tail)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .mgInsetPanel(cornerRadius: 9, prominence: 0.82)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .help(vm.destinationFolder.path)
     }
 
     private func toolbarBrand(size: CGFloat) -> some View {
@@ -963,49 +965,61 @@ struct ContentView: View {
 
     private var volumeSelectionStrip: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(selectedVolumeCount == 0 ? "浏览分类" : "已选分类")
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.easeOut(duration: 0.14)) {
+                        showVolumeFilters.toggle()
+                    }
+                } label: {
+                    Label(showVolumeFilters ? "收起分类" : "分类", systemImage: showVolumeFilters ? "chevron.up" : "line.3.horizontal.decrease.circle")
+                }
+                .buttonStyle(MGActionButtonStyle(variant: .ghost))
+
+                Text("\(selectedVolumeCount)/\(vm.displayVolumes.count)")
                     .font(MGFont.captionStrong)
-                Text(selectedVolumeCount == 0 ? "先选分类再批量挑章节" : "\(selectedVolumeCount) 个分类已激活")
-                    .font(MGFont.micro)
                     .foregroundStyle(.secondary)
+
                 Spacer()
-                Button("全选分类") {
-                    vm.selectAllVolumes()
+                if showVolumeFilters {
+                    Button("全选") {
+                        vm.selectAllVolumes()
+                    }
+                    .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                    Button("清空") {
+                        vm.deselectAllVolumes()
+                    }
+                    .buttonStyle(MGActionButtonStyle(variant: .neutral))
                 }
-                .buttonStyle(MGActionButtonStyle(variant: .neutral))
-                Button("清空分类") {
-                    vm.deselectAllVolumes()
-                }
-                .buttonStyle(MGActionButtonStyle(variant: .neutral))
             }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(vm.displayVolumes) { volume in
-                        let selected = vm.selectedVolumeIDs.contains(volume.id)
-                        let selectedChapters = vm.selectedChapterCount(in: volume.id)
-                        Button {
-                            vm.toggleVolume(volume.id)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selected ? MGTheme.accentStrong : .secondary)
-                                Text(volume.displayName)
-                                    .font(selected ? MGFont.captionStrong : MGFont.caption)
-                                    .lineLimit(1)
-                                Text("\(selectedChapters)/\(volume.chapters.count)")
-                                    .font(MGFont.micro)
-                                    .foregroundStyle(.secondary.opacity(0.82))
+            if showVolumeFilters {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(vm.displayVolumes) { volume in
+                            let selected = vm.selectedVolumeIDs.contains(volume.id)
+                            let selectedChapters = vm.selectedChapterCount(in: volume.id)
+                            Button {
+                                vm.toggleVolume(volume.id)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(selected ? MGTheme.accentStrong : .secondary)
+                                    Text(volume.displayName)
+                                        .font(selected ? MGFont.captionStrong : MGFont.caption)
+                                        .lineLimit(1)
+                                    Text("\(selectedChapters)/\(volume.chapters.count)")
+                                        .font(MGFont.micro)
+                                        .foregroundStyle(.secondary.opacity(0.82))
+                                }
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .mgStatusPill(tint: MGTheme.accentStrong, selected: selected)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.82)
                             }
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 4)
-                            .mgStatusPill(tint: MGTheme.accentStrong, selected: selected)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.82)
+                            .buttonStyle(.plain)
+                            .help("\(volume.displayName) · 已选 \(selectedChapters) / \(volume.chapters.count) 话")
                         }
-                        .buttonStyle(.plain)
-                        .help("\(volume.displayName) · 已选 \(selectedChapters) / \(volume.chapters.count) 话")
                     }
                 }
             }
@@ -1310,19 +1324,26 @@ struct ContentView: View {
                         inlineStat("完成", counts.done, tint: MGTheme.success, suffix: "话")
                         Spacer(minLength: 0)
                         Button(action: { showDownloadManager = true }) {
-                            Label("下载管理", systemImage: "list.bullet.rectangle.portrait")
+                            Image(systemName: "list.bullet.rectangle.portrait")
                         }
                         .buttonStyle(MGActionButtonStyle(variant: .accent))
+                        .help("下载管理")
                         if vm.canOpenRecentDownload {
-                            Button("显示最近下载") {
+                            Button {
                                 vm.openRecentDownload()
+                            } label: {
+                                Image(systemName: "folder")
                             }
                             .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                            .help("显示最近下载")
                         }
-                        Button(showLogPanel ? "隐藏日志" : "显示日志") {
+                        Button {
                             showLogPanel.toggle()
+                        } label: {
+                            Image(systemName: showLogPanel ? "doc.text.fill" : "doc.text")
                         }
                         .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                        .help(showLogPanel ? "隐藏日志" : "显示日志")
                     }
                 }
             } else {
@@ -1370,21 +1391,28 @@ struct ContentView: View {
                     }
 
                     Button(action: { showDownloadManager = true }) {
-                        Label("下载管理", systemImage: "list.bullet.rectangle.portrait")
+                        Image(systemName: "list.bullet.rectangle.portrait")
                     }
                     .buttonStyle(MGActionButtonStyle(variant: .accent))
+                    .help("下载管理")
 
                     if vm.canOpenRecentDownload {
-                        Button("显示最近下载") {
+                        Button {
                             vm.openRecentDownload()
+                        } label: {
+                            Image(systemName: "folder")
                         }
                         .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                        .help("显示最近下载")
                     }
 
-                    Button(showLogPanel ? "隐藏日志" : "显示日志") {
+                    Button {
                         showLogPanel.toggle()
+                    } label: {
+                        Image(systemName: showLogPanel ? "doc.text.fill" : "doc.text")
                     }
                     .buttonStyle(MGActionButtonStyle(variant: .neutral))
+                    .help(showLogPanel ? "隐藏日志" : "显示日志")
                 }
             }
 
