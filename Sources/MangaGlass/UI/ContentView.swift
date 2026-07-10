@@ -30,6 +30,7 @@ enum WorkspaceDestination: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @ObservedObject var vm: MainViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var destination: WorkspaceDestination = .download
     @State private var showLogs = false
     @State private var didCheckRestoredQueue = false
@@ -47,16 +48,19 @@ struct ContentView: View {
                 MGTheme.background(for: colorScheme)
                     .ignoresSafeArea()
 
-                workspace
-                    .padding(MGSpacing.md)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .id(destination)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                ForEach(WorkspaceDestination.allCases) { workspaceDestination in
+                    if workspaceDestination == destination {
+                        workspace(for: workspaceDestination)
+                            .padding(MGSpacing.md)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(workspaceTransition)
+                    }
+                }
             }
         }
         .frame(minWidth: 720, minHeight: 540)
         .preferredColorScheme(vm.preferredColorScheme)
-        .animation(.easeOut(duration: 0.18), value: destination)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: destination)
         .onAppear(perform: presentRestoredQueuePromptIfNeeded)
         .sheet(isPresented: $showLogs) {
             ActivityLogSheet(vm: vm)
@@ -80,8 +84,8 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private var workspace: some View {
-        switch destination {
+    private func workspace(for workspaceDestination: WorkspaceDestination) -> some View {
+        switch workspaceDestination {
         case .download:
             DownloadWorkspaceView(
                 vm: vm,
@@ -97,6 +101,14 @@ struct ContentView: View {
         case .settings:
             SettingsWorkspaceView(vm: vm)
         }
+    }
+
+    private var workspaceTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: 8)),
+            removal: .opacity.combined(with: .offset(y: -6))
+        )
     }
 
     private var restoredQueueBinding: Binding<Bool> {

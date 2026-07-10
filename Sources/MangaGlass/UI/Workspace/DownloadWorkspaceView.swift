@@ -233,7 +233,8 @@ struct DownloadWorkspaceView: View {
                 AsyncImage(url: cover) { phase in
                     switch phase {
                     case .success(let image):
-                        image.resizable().scaledToFit().padding(MGSpacing.xs)
+                        AnimatedCoverImage(image: image, reduceMotion: reduceMotion)
+                            .id(cover)
                     case .empty:
                         ZStack { placeholderCover; ProgressView() }
                     default:
@@ -577,5 +578,32 @@ struct DownloadWorkspaceView: View {
     private func openInBrowser(_ rawURL: String) {
         guard let url = URL(string: rawURL) else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+private struct AnimatedCoverImage: View {
+    let image: Image
+    let reduceMotion: Bool
+    @State private var isVisible = false
+
+    var body: some View {
+        image
+            .resizable()
+            .scaledToFit()
+            .padding(MGSpacing.xs)
+            .opacity(reduceMotion || isVisible ? 1 : 0)
+            .scaleEffect(reduceMotion || isVisible ? 1 : 0.98)
+            .onAppear {
+                guard !isVisible else { return }
+                guard !reduceMotion else {
+                    isVisible = true
+                    return
+                }
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        isVisible = true
+                    }
+                }
+            }
     }
 }
