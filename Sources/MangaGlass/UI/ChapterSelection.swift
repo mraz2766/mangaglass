@@ -15,10 +15,10 @@ struct DragRectOverlay: View {
         GeometryReader { _ in
             if let rect {
                 Rectangle()
-                    .fill(Color.accentColor.opacity(0.12))
+                    .fill(MGTheme.accent.opacity(0.12))
                     .overlay(
                         Rectangle()
-                            .stroke(Color.accentColor.opacity(0.8), lineWidth: 1)
+                            .stroke(MGTheme.accent.opacity(0.8), lineWidth: 1)
                     )
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)

@@ -35,24 +35,6 @@ enum AppThemeMode: String, CaseIterable, Identifiable {
     }
 }
 
-enum AppColorTheme: String, CaseIterable, Identifiable {
-    case classicBlue = "classicBlue"
-    case nordicAurora = "nordicAurora"
-    case champagneLuxury = "champagneLuxury"
-    case cyberNeon = "cyberNeon"
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .classicBlue: return "经典"
-        case .nordicAurora: return "工业"
-        case .champagneLuxury: return "书卷"
-        case .cyberNeon: return "江南"
-        }
-    }
-}
-
 private enum StorageKey {
     static let inputURL = "inputURL"
     static let authCookie = "authCookie"
@@ -61,7 +43,6 @@ private enum StorageKey {
     static let lastComic = "lastComic"
     static let downloadQueue = "downloadQueue"
     static let themeMode = "themeMode"
-    static let colorTheme = "colorTheme"
 }
 
 @MainActor
@@ -95,18 +76,13 @@ final class MainViewModel: ObservableObject {
             updateAppAppearance()
         }
     }
-    @Published var colorTheme: AppColorTheme = {
-        let raw = UserDefaults.standard.string(forKey: StorageKey.colorTheme) ?? AppColorTheme.classicBlue.rawValue
-        return AppColorTheme(rawValue: raw) ?? .classicBlue
-    }() {
-        didSet { persistString(colorTheme.rawValue, key: StorageKey.colorTheme) }
-    }
     @Published var comic: ComicInfo? {
         didSet { persistCodable(comic, key: StorageKey.lastComic) }
     }
     @Published var selectedVolumeIDs: Set<String> = []
     @Published var selectedChapterIDs: Set<String> = []
     @Published var chapterSortDirection: SortDirection = .ascending
+    @Published var chapterSearchQuery = ""
     @Published var destinationFolder: URL = {
         let path = UserDefaults.standard.string(forKey: StorageKey.lastDestinationPath) ?? "/Users/mraz/Documents/life/漫画/"
         return URL(fileURLWithPath: path, isDirectory: true)
@@ -167,6 +143,7 @@ final class MainViewModel: ObservableObject {
             .filter { selectedVolumeIDs.contains($0.id) }
             .map { volume in
                 let chapters = volume.chapters
+                    .filter { chapterMatchesSearch($0) }
                     .sorted { lhs, rhs in
                         let left = normalizedSortValue(from: lhs.displayName, fallback: lhs.order)
                         let right = normalizedSortValue(from: rhs.displayName, fallback: rhs.order)
@@ -277,6 +254,7 @@ final class MainViewModel: ObservableObject {
         errorText = ""
         lastMirrorSuggestion = nil
         lastFailedInput = ""
+        chapterSearchQuery = ""
         statusText = "加载中..."
         let normalizedInput = normalizeCopyURLIfNeeded(inputURL)
         if normalizedInput != inputURL {
@@ -314,6 +292,7 @@ final class MainViewModel: ObservableObject {
         comic = fetched
         selectedVolumeIDs = Set(fetched.volumes.map(\.id))
         selectedChapterIDs = []
+        chapterSearchQuery = ""
         lastSelectedChapterID = nil
         statusText = final
             ? "加载成功：\(fetched.name)（\(fetched.site.displayName)）"
@@ -406,9 +385,14 @@ final class MainViewModel: ObservableObject {
             selectedVolumeIDs.insert(volumeID)
         }
 
-        // Keep chapter selection coherent with current volume selection.
-        let visibleIDs = Set(visibleChapters.map(\.id))
-        selectedChapterIDs = selectedChapterIDs.intersection(visibleIDs)
+        // Search must not discard a selection; only hiding an entire volume does.
+        let selectedVolumeChapterIDs = Set(
+            displayVolumes
+                .filter { selectedVolumeIDs.contains($0.id) }
+                .flatMap(\.chapters)
+                .map(\.id)
+        )
+        selectedChapterIDs = selectedChapterIDs.intersection(selectedVolumeChapterIDs)
     }
 
     func selectAllVolumes() {
@@ -422,17 +406,17 @@ final class MainViewModel: ObservableObject {
 
     func selectVolumeChapters(volumeID: String) {
         guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return }
-        selectedChapterIDs.formUnion(volume.chapters.map(\.id))
+        selectedChapterIDs.formUnion(volume.chapters.filter(chapterMatchesSearch).map(\.id))
     }
 
     func deselectVolumeChapters(volumeID: String) {
         guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return }
-        selectedChapterIDs.subtract(volume.chapters.map(\.id))
+        selectedChapterIDs.subtract(volume.chapters.filter(chapterMatchesSearch).map(\.id))
     }
 
     func toggleVolumeChapterSelection(volumeID: String) {
         guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return }
-        let chapterIDs = Set(volume.chapters.map(\.id))
+        let chapterIDs = Set(volume.chapters.filter(chapterMatchesSearch).map(\.id))
         if chapterIDs.isSubset(of: selectedChapterIDs) {
             selectedChapterIDs.subtract(chapterIDs)
         } else {
@@ -442,13 +426,13 @@ final class MainViewModel: ObservableObject {
 
     func areAllChaptersSelected(in volumeID: String) -> Bool {
         guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return false }
-        let chapterIDs = Set(volume.chapters.map(\.id))
+        let chapterIDs = Set(volume.chapters.filter(chapterMatchesSearch).map(\.id))
         return !chapterIDs.isEmpty && chapterIDs.isSubset(of: selectedChapterIDs)
     }
 
     func selectedChapterCount(in volumeID: String) -> Int {
         guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return 0 }
-        return volume.chapters.reduce(into: 0) { partial, chapter in
+        return volume.chapters.filter(chapterMatchesSearch).reduce(into: 0) { partial, chapter in
             if selectedChapterIDs.contains(chapter.id) {
                 partial += 1
             }
@@ -458,7 +442,8 @@ final class MainViewModel: ObservableObject {
     func isVolumeChapterSelectionPartial(volumeID: String) -> Bool {
         guard let volume = displayVolumes.first(where: { $0.id == volumeID }) else { return false }
         let selected = selectedChapterCount(in: volumeID)
-        return selected > 0 && selected < volume.chapters.count
+        let matchingCount = volume.chapters.filter(chapterMatchesSearch).count
+        return selected > 0 && selected < matchingCount
     }
 
     func startDownload() {
@@ -754,6 +739,10 @@ final class MainViewModel: ObservableObject {
         comic = loadCodable(ComicInfo.self, key: StorageKey.lastComic)
         if let comic {
             selectedVolumeIDs = Set(comic.volumes.map(\.id))
+            let stats = parsedStats(from: comic)
+            statusText = "已恢复上次解析：\(comic.name)"
+            parseDoneText = "已恢复 · 分类 \(stats.groups) · 章节 \(stats.chapters)"
+            showParseDone = true
         }
         if let restoredItems = loadCodable([DownloadTaskItem].self, key: StorageKey.downloadQueue), !restoredItems.isEmpty {
             downloader.restoreQueue(restoredItems)
@@ -812,6 +801,11 @@ final class MainViewModel: ObservableObject {
             return fallback
         }
         return Double(text[range]) ?? fallback
+    }
+
+    private func chapterMatchesSearch(_ chapter: ComicChapter) -> Bool {
+        let query = chapterSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty || chapter.displayName.localizedCaseInsensitiveContains(query)
     }
 
     private func appendLog(_ message: String) {
