@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="MangaGlass"
-APP_VERSION="1.3.1"
+APP_VERSION="1.3.2"
 TMP_BASE="${TMPDIR:-/tmp}"
 TMP_BASE="${TMP_BASE%/}"
 BUILD_ROOT="${MANGAGLASS_BUILD_ROOT:-$TMP_BASE/${APP_NAME}-swiftpm-build}"
