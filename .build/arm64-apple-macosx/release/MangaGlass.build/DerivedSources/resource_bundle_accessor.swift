@@ -1,7 +1,7 @@
 import Foundation
 
 extension Foundation.Bundle {
-    static let module: Bundle = {
+    static nonisolated let module: Bundle = {
         let mainPath = Bundle.main.bundleURL.appendingPathComponent("MangaGlass_MangaGlass.bundle").path
         let buildPath = "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass_MangaGlass.bundle"
 

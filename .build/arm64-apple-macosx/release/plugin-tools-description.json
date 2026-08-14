@@ -31,7 +31,7 @@
   ],
   "swiftCommands" : {
     "C.MangaGlass-arm64-apple-macosx-release.module" : {
-      "executable" : "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
       "fileList" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/sources",
       "importPath" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/Modules",
       "inputs" : [
@@ -81,7 +81,19 @@
         },
         {
           "kind" : "file",
-          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift"
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/DownloadWorkspaceView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/HistoryAndSettingsWorkspace.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/QueueWorkspaceView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/WorkspaceChrome.swift"
         },
         {
           "kind" : "file",
@@ -97,7 +109,7 @@
         },
         {
           "kind" : "file",
-          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt"
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
         },
         {
           "kind" : "virtual",
@@ -123,7 +135,10 @@
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/ChapterSelection.swift.o",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/ContentView.swift.o",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DesignSystem.swift.o",
-        "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DownloadManagerView.swift.o",
+        "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DownloadWorkspaceView.swift.o",
+        "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/HistoryAndSettingsWorkspace.swift.o",
+        "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/QueueWorkspaceView.swift.o",
+        "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/WorkspaceChrome.swift.o",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/JSONNavigator.swift.o",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/ProxySessionFactory.swift.o",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/resource_bundle_accessor.swift.o"
@@ -148,19 +163,25 @@
         "MangaGlass_main",
         "-swift-version",
         "6",
-        "-I",
-        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
-        "-L",
-        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
         "-plugin-path",
-        "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
         "-sdk",
-        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
         "-g",
         "-Xcc",
         "-isysroot",
         "-Xcc",
-        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
         "-Xcc",
         "-fPIC",
         "-Xcc",
@@ -216,7 +237,19 @@
         },
         {
           "kind" : "file",
-          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DownloadManagerView.swift.o"
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DownloadWorkspaceView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/HistoryAndSettingsWorkspace.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/QueueWorkspaceView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/WorkspaceChrome.swift.o"
         },
         {
           "kind" : "file",
@@ -248,7 +281,10 @@
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/ChapterSelection.swift",
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/ContentView.swift",
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DesignSystem.swift",
-        "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift",
+        "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/DownloadWorkspaceView.swift",
+        "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/HistoryAndSettingsWorkspace.swift",
+        "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/QueueWorkspaceView.swift",
+        "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/WorkspaceChrome.swift",
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/JSONNavigator.swift",
         "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/ProxySessionFactory.swift",
         "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DerivedSources/resource_bundle_accessor.swift"
@@ -262,7 +298,7 @@
   },
   "swiftTargetScanArgs" : {
     "MangaGlass" : [
-      "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
       "-module-name",
       "MangaGlass",
       "-package-name",
@@ -279,7 +315,10 @@
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/ChapterSelection.swift",
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/ContentView.swift",
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DesignSystem.swift",
-      "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift",
+      "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/DownloadWorkspaceView.swift",
+      "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/HistoryAndSettingsWorkspace.swift",
+      "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/QueueWorkspaceView.swift",
+      "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/WorkspaceChrome.swift",
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/JSONNavigator.swift",
       "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/ProxySessionFactory.swift",
       "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DerivedSources/resource_bundle_accessor.swift",
@@ -304,19 +343,25 @@
       "MangaGlass_main",
       "-swift-version",
       "6",
-      "-I",
-      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
-      "-L",
-      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
       "-plugin-path",
-      "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
       "-sdk",
-      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
       "-g",
       "-Xcc",
       "-isysroot",
       "-Xcc",
-      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
       "-Xcc",
       "-fPIC",
       "-Xcc",
@@ -324,7 +369,7 @@
       "-package-name",
       "mangaglass",
       "-driver-use-frontend-path",
-      "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
     ]
   },
   "targetDependencyMap" : {
@@ -397,7 +442,19 @@
         },
         {
           "kind" : "file",
-          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift"
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/DownloadWorkspaceView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/HistoryAndSettingsWorkspace.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/QueueWorkspaceView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/WorkspaceChrome.swift"
         },
         {
           "kind" : "file",
@@ -451,7 +508,11 @@
         },
         {
           "kind" : "file",
-          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DownloadManagerView.swift.o"
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/DownloadWorkspaceView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/HistoryAndSettingsWorkspace.swift.o"
         },
         {
           "kind" : "file",
@@ -475,7 +536,15 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/QueueWorkspaceView.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/WindowAccessor.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.build/WorkspaceChrome.swift.o"
         },
         {
           "kind" : "file",
@@ -484,7 +553,7 @@
       ],
       "outputFilePath" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/MangaGlass.product/Objects.LinkFileList"
     },
-    "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt" : {
+    "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt" : {
       "alwaysOutOfDate" : true,
       "inputs" : [
         {
@@ -493,10 +562,10 @@
         },
         {
           "kind" : "file",
-          "name" : "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
         }
       ],
-      "outputFilePath" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt"
+      "outputFilePath" : "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
     }
   }
 }

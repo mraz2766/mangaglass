@@ -79,12 +79,33 @@
     "swift-dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DesignSystem.swiftdeps",
     "diagnostics": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DesignSystem.dia"
   },
-  "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/DownloadManagerView.swift": {
-    "dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadManagerView.d",
-    "object": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadManagerView.swift.o",
-    "swiftmodule": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadManagerView~partial.swiftmodule",
-    "swift-dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadManagerView.swiftdeps",
-    "diagnostics": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadManagerView.dia"
+  "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/DownloadWorkspaceView.swift": {
+    "dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadWorkspaceView.d",
+    "object": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadWorkspaceView.swift.o",
+    "swiftmodule": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadWorkspaceView~partial.swiftmodule",
+    "swift-dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadWorkspaceView.swiftdeps",
+    "diagnostics": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/DownloadWorkspaceView.dia"
+  },
+  "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/HistoryAndSettingsWorkspace.swift": {
+    "dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/HistoryAndSettingsWorkspace.d",
+    "object": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/HistoryAndSettingsWorkspace.swift.o",
+    "swiftmodule": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/HistoryAndSettingsWorkspace~partial.swiftmodule",
+    "swift-dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/HistoryAndSettingsWorkspace.swiftdeps",
+    "diagnostics": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/HistoryAndSettingsWorkspace.dia"
+  },
+  "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/QueueWorkspaceView.swift": {
+    "dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/QueueWorkspaceView.d",
+    "object": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/QueueWorkspaceView.swift.o",
+    "swiftmodule": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/QueueWorkspaceView~partial.swiftmodule",
+    "swift-dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/QueueWorkspaceView.swiftdeps",
+    "diagnostics": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/QueueWorkspaceView.dia"
+  },
+  "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/UI/Workspace/WorkspaceChrome.swift": {
+    "dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/WorkspaceChrome.d",
+    "object": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/WorkspaceChrome.swift.o",
+    "swiftmodule": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/WorkspaceChrome~partial.swiftmodule",
+    "swift-dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/WorkspaceChrome.swiftdeps",
+    "diagnostics": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/WorkspaceChrome.dia"
   },
   "/Users/mraz/work/proj/gitlab/mangaglass/Sources/MangaGlass/Utils/JSONNavigator.swift": {
     "dependencies": "/Users/mraz/work/proj/gitlab/mangaglass/.build/arm64-apple-macosx/debug/MangaGlass.build/JSONNavigator.d",
