@@ -67,6 +67,20 @@ final class MainViewModel: ObservableObject {
         let confirm: () -> Void
     }
 
+    struct PreparedDownload: Identifiable, Sendable {
+        let id = UUID()
+        let comic: ComicInfo
+        let chapters: [ComicChapter]
+        let destination: URL
+        let cookie: String?
+        let usesGroupFolder: Bool
+        let existingOutput: ExistingOutputSummary
+
+        var conflictMessage: String {
+            "所选章节中有 \(existingOutput.chapterCount) 话包含已下载文件，共 \(existingOutput.fileCount) 个。可以覆盖这些章节重新下载，或保留已有文件并只补全缺失页面。"
+        }
+    }
+
     @Published var inputURL = "" {
         didSet { persistString(inputURL, key: StorageKey.inputURL) }
     }
@@ -540,6 +554,72 @@ final class MainViewModel: ObservableObject {
         return .added(addedCount)
     }
 
+    func prepareSelectedDownload() async -> PreparedDownload? {
+        guard let comic, !selectedChapters.isEmpty else { return nil }
+        guard !isRetiredCopySite(comic.site) else {
+            presentRetiredSiteMessage()
+            return nil
+        }
+
+        let chapters = selectedChapters
+        let destination = destinationFolder
+        let cookie = normalizedCookie
+        let existingGroupKeys = downloader.taskItems.compactMap { item -> String? in
+            guard item.comic.slug == comic.slug,
+                  item.destination.standardizedFileURL == destination.standardizedFileURL else { return nil }
+            return canonicalGroupKey(item.chapter.volumeName)
+        }
+        let selectedGroupKeys = chapters.map { canonicalGroupKey($0.volumeName) }
+        let usesGroupFolder = Set(existingGroupKeys + selectedGroupKeys).count > 1
+        let summary = await Task.detached(priority: .userInitiated) {
+            DownloadOutputLayout.inspectExistingFiles(
+                comic: comic,
+                chapters: chapters,
+                destination: destination,
+                usesGroupFolder: usesGroupFolder
+            )
+        }.value
+
+        return PreparedDownload(
+            comic: comic,
+            chapters: chapters,
+            destination: destination,
+            cookie: cookie,
+            usesGroupFolder: usesGroupFolder,
+            existingOutput: summary
+        )
+    }
+
+    @discardableResult
+    func startPreparedDownload(
+        _ prepared: PreparedDownload,
+        existingFilePolicy: ExistingFilePolicy
+    ) -> EnqueueResult {
+        guard !isRetiredCopySite(prepared.comic.site) else {
+            presentRetiredSiteMessage()
+            return .unavailable
+        }
+        let addedCount = downloader.add(
+            chapters: prepared.chapters,
+            comic: prepared.comic,
+            destination: prepared.destination,
+            cookie: prepared.cookie,
+            existingFilePolicy: existingFilePolicy,
+            usesGroupFolder: prepared.usesGroupFolder,
+            replacingFinished: true
+        )
+        guard addedCount > 0 else {
+            statusText = "所选章节已在队列中。"
+            return .alreadyQueued
+        }
+        let saved = checkpointDownloadQueue()
+        appendLog("加入队列：\(prepared.comic.name) - 新增 \(addedCount) 话，已有文件策略：\(existingFilePolicy == .overwrite ? "覆盖" : "保留并补全")")
+        statusText = saved ? "已加入队列 \(addedCount) 话。" : "已加入 \(addedCount) 话，但队列保存失败。"
+        clearChapterSelection()
+        startQueuedDownloads()
+        return .added(addedCount)
+    }
+
     @discardableResult
     func startDownload() -> EnqueueResult {
         guard let comic, !selectedChapters.isEmpty else { return .unavailable }
@@ -612,7 +692,13 @@ final class MainViewModel: ObservableObject {
         }
         appendLog("重试单独章节：\(item.chapter.displayName)")
         downloader.taskItems.removeAll { $0.id == item.id }
-        downloader.add(chapters: [item.chapter], comic: item.comic, destination: item.destination, cookie: item.cookie)
+        downloader.add(
+            chapters: [item.chapter],
+            comic: item.comic,
+            destination: item.destination,
+            cookie: item.cookie,
+            usesGroupFolder: item.usesGroupFolder
+        )
         if !downloader.isRunning {
              let concurrent = downloadConcurrent(for: item.comic.site)
              downloader.start(maxConcurrent: concurrent)
@@ -640,14 +726,17 @@ final class MainViewModel: ObservableObject {
         for (_, items) in chaptersByComicAndDestination {
             if let first = items.first {
                 let chaptersToRetry = items.map { $0.chapter }
-                downloader.add(chapters: chaptersToRetry, comic: first.comic, destination: first.destination, cookie: first.cookie)
+                downloader.add(
+                    chapters: chaptersToRetry,
+                    comic: first.comic,
+                    destination: first.destination,
+                    cookie: first.cookie,
+                    usesGroupFolder: first.usesGroupFolder,
+                    replacingFinished: true
+                )
             }
         }
-        
-        // Remove old failed tasks that we just re-added
-        let failedIDs = Set(failed.map { $0.id })
-        downloader.taskItems.removeAll { failedIDs.contains($0.id) }
-        
+
         downloader.start(maxConcurrent: queueMaxConcurrent())
     }
 
@@ -662,7 +751,7 @@ final class MainViewModel: ObservableObject {
             isCopyFamily($0.comic.site)
         }
         if hasCopy {
-            return 4
+            return 2
         }
         return 5
     }
@@ -672,7 +761,7 @@ final class MainViewModel: ObservableObject {
             return 4
         }
         if isCopyFamily(site) {
-            return 4
+            return 2
         }
         return 5
     }
@@ -752,6 +841,16 @@ final class MainViewModel: ObservableObject {
     func continueManhuaGuiDownloadAfterCheck() {
         downloader.clearManhuaGuiSoftCircuit()
         appendLog("用户确认漫画柜网页可访问，继续下载")
+        downloader.start(maxConcurrent: queueMaxConcurrent())
+    }
+
+    func continueCopyDownloadAfterCooldown() {
+        guard downloader.clearCopySoftCircuitIfReady() else {
+            statusText = downloader.copySoftCircuit?.message ?? "拷贝漫画仍在冷却中。"
+            appendLog("拷贝漫画继续下载跳过：冷却尚未结束")
+            return
+        }
+        appendLog("拷贝漫画冷却结束，继续下载")
         downloader.start(maxConcurrent: queueMaxConcurrent())
     }
 

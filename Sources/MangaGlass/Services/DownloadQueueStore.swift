@@ -12,6 +12,8 @@ struct DownloadQueueSnapshot: Codable, Sendable {
         let cookie: String?
         let startedAt: Date?
         let finishedAt: Date?
+        let existingFilePolicy: ExistingFilePolicy?
+        let usesGroupFolder: Bool?
     }
 
     let version: Int
@@ -47,7 +49,9 @@ struct DownloadQueueSnapshot: Codable, Sendable {
                 destination: task.destination,
                 cookie: task.cookie,
                 startedAt: task.startedAt,
-                finishedAt: task.finishedAt
+                finishedAt: task.finishedAt,
+                existingFilePolicy: task.existingFilePolicy,
+                usesGroupFolder: task.usesGroupFolder
             ))
         }
 
@@ -70,7 +74,9 @@ struct DownloadQueueSnapshot: Codable, Sendable {
                 destination: item.destination,
                 cookie: item.cookie,
                 startedAt: item.startedAt,
-                finishedAt: item.finishedAt
+                finishedAt: item.finishedAt,
+                existingFilePolicy: item.existingFilePolicy,
+                usesGroupFolder: item.usesGroupFolder
             ))
         }
         return restored

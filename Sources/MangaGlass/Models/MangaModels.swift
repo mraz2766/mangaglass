@@ -183,6 +183,11 @@ struct ComicInfo: Codable, Sendable {
     let apiBaseURL: URL
 }
 
+enum ExistingFilePolicy: String, Codable, Sendable {
+    case keepExisting
+    case overwrite
+}
+
 struct DownloadTaskItem: Identifiable, Codable, Sendable {
     enum State: Equatable, Codable, Sendable {
         case queued
@@ -200,6 +205,8 @@ struct DownloadTaskItem: Identifiable, Codable, Sendable {
     let cookie: String?
     var startedAt: Date?
     var finishedAt: Date?
+    var existingFilePolicy: ExistingFilePolicy?
+    var usesGroupFolder: Bool?
 
     init(
         id: UUID = UUID(),
@@ -209,7 +216,9 @@ struct DownloadTaskItem: Identifiable, Codable, Sendable {
         destination: URL,
         cookie: String?,
         startedAt: Date? = nil,
-        finishedAt: Date? = nil
+        finishedAt: Date? = nil,
+        existingFilePolicy: ExistingFilePolicy? = nil,
+        usesGroupFolder: Bool? = nil
     ) {
         self.id = id
         self.comic = comic
@@ -219,6 +228,8 @@ struct DownloadTaskItem: Identifiable, Codable, Sendable {
         self.cookie = cookie
         self.startedAt = startedAt
         self.finishedAt = finishedAt
+        self.existingFilePolicy = existingFilePolicy
+        self.usesGroupFolder = usesGroupFolder
     }
 
     var queueIdentity: String {

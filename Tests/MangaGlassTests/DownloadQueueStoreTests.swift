@@ -17,7 +17,9 @@ final class DownloadQueueStoreTests: XCTestCase {
                 chapter: $0,
                 state: $0.id == "0" ? .running : .queued,
                 destination: URL(fileURLWithPath: "/tmp/MangaGlass", isDirectory: true),
-                cookie: "test-cookie"
+                cookie: "test-cookie",
+                existingFilePolicy: $0.id == "0" ? .overwrite : .keepExisting,
+                usesGroupFolder: true
             )
         }
 
@@ -27,6 +29,8 @@ final class DownloadQueueStoreTests: XCTestCase {
         XCTAssertEqual(restored.map(\.queueIdentity), tasks.map(\.queueIdentity))
         XCTAssertEqual(restored.first?.state, .running)
         XCTAssertEqual(restored.first?.cookie, "test-cookie")
+        XCTAssertEqual(restored.first?.existingFilePolicy, .overwrite)
+        XCTAssertEqual(restored.first?.usesGroupFolder, true)
 
         let coordinator = DownloadCoordinator(api: CopyMangaAPI())
         coordinator.restoreQueue(restored)

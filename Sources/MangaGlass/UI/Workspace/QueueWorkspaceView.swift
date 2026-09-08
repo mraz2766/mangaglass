@@ -11,6 +11,7 @@ private final class QueueStructureObserver: ObservableObject {
         forward(downloader.$isPaused)
         forward(downloader.$message)
         forward(downloader.$manhuaGuiSoftCircuit)
+        forward(downloader.$copySoftCircuit)
     }
 
     private func forward<P: Publisher>(_ publisher: P) where P.Failure == Never {
@@ -88,6 +89,9 @@ struct QueueWorkspaceView: View {
             filters
             if let circuit = downloader.manhuaGuiSoftCircuit {
                 softCircuitNotice(circuit)
+            }
+            if let circuit = downloader.copySoftCircuit {
+                copySoftCircuitNotice(circuit)
             }
             taskList
             progressFooter
@@ -305,6 +309,26 @@ struct QueueWorkspaceView: View {
             Button("打开网页") { vm.openManhuaGuiWebCheck() }
                 .buttonStyle(MGActionButtonStyle(variant: .secondary))
             Button("继续") { vm.continueManhuaGuiDownloadAfterCheck() }
+                .buttonStyle(MGActionButtonStyle(variant: .primary))
+        }
+        .padding(MGSpacing.sm)
+        .background(MGTheme.warning.opacity(colorScheme == .dark ? 0.16 : 0.09), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func copySoftCircuitNotice(_ circuit: DownloadCoordinator.CopySoftCircuit) -> some View {
+        HStack(spacing: MGSpacing.xs) {
+            Image(systemName: "shield.lefthalf.filled")
+                .foregroundStyle(MGTheme.warning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("拷贝漫画请求已自动降速暂停")
+                    .font(MGFont.bodyStrong)
+                Text("\(circuit.chapterTitle) · \(circuit.reason) · 约 \(circuit.remainingSeconds) 秒后可继续")
+                    .font(MGFont.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button("冷却后继续") { vm.continueCopyDownloadAfterCooldown() }
                 .buttonStyle(MGActionButtonStyle(variant: .primary))
         }
         .padding(MGSpacing.sm)

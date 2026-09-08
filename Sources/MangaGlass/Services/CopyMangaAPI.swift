@@ -28,6 +28,9 @@ enum CopyMangaError: LocalizedError {
         case .noImageInChapter(let chapter):
             return "章节 \(chapter) 未发现图片地址。"
         case .httpStatus(let status, let body):
+            if body.localizedCaseInsensitiveContains("<html") || body.localizedCaseInsensitiveContains("<!doctype") {
+                return "请求失败（HTTP \(status)）。站点返回了网页而不是章节数据，可能处于风控或镜像异常状态。"
+            }
             return "请求失败（HTTP \(status)）。\(body)"
         case .invalidJSON(let contentType, let snippet):
             return "接口返回非 JSON（Content-Type: \(contentType)）。响应片段：\(snippet)"

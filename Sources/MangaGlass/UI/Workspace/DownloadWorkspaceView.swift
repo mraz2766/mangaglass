@@ -26,6 +26,9 @@ struct DownloadWorkspaceView: View {
     @State private var enqueueFeedback: EnqueueFeedback?
     @State private var enqueuePulse = false
     @State private var enqueueFeedbackTask: Task<Void, Never>?
+    @State private var enqueuePreparationTask: Task<Void, Never>?
+    @State private var isCheckingExistingFiles = false
+    @State private var preparedDownload: MainViewModel.PreparedDownload?
     @FocusState private var linkFocused: Bool
 
     var body: some View {
@@ -61,7 +64,21 @@ struct DownloadWorkspaceView: View {
             .frame(minWidth: 360, idealWidth: 520, maxWidth: 700, minHeight: 400, idealHeight: 620, maxHeight: 800)
         }
         .onChange(of: vm.comic?.slug) { _ in vm.collapsedVolumeIDs.removeAll() }
-        .onDisappear { enqueueFeedbackTask?.cancel() }
+        .onDisappear {
+            enqueueFeedbackTask?.cancel()
+            enqueuePreparationTask?.cancel()
+        }
+        .alert("发现已有下载文件", isPresented: existingFilesConfirmationBinding, presenting: preparedDownload) { prepared in
+            Button("保留并补全") {
+                startPreparedDownload(prepared, policy: .keepExisting)
+            }
+            Button("覆盖重新下载", role: .destructive) {
+                startPreparedDownload(prepared, policy: .overwrite)
+            }
+            Button("取消", role: .cancel) {}
+        } message: { prepared in
+            Text(prepared.conflictMessage)
+        }
     }
 
     private var homeToolbar: some View {
@@ -379,7 +396,13 @@ struct DownloadWorkspaceView: View {
         Button(action: enqueueSelection) {
             ZStack {
                 Text("加入队列 \(vm.selectedChapters.count)")
-                    .opacity(enqueueFeedback == nil ? 1 : 0)
+                    .opacity(enqueueFeedback == nil && !isCheckingExistingFiles ? 1 : 0)
+                if isCheckingExistingFiles {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("检查文件")
+                    }
+                }
                 if let enqueueFeedback {
                     HStack(spacing: 6) {
                         Image(systemName: feedbackIcon(for: enqueueFeedback))
@@ -391,8 +414,8 @@ struct DownloadWorkspaceView: View {
             .frame(minWidth: 112)
         }
             .buttonStyle(MGActionButtonStyle(variant: .primary))
-            .disabled(enqueueFeedback == nil && (vm.selectedChapters.isEmpty || vm.isLoading || !vm.errorText.isEmpty))
-            .allowsHitTesting(enqueueFeedback == nil)
+            .disabled(enqueueFeedback == nil && !isCheckingExistingFiles && (vm.selectedChapters.isEmpty || vm.isLoading || !vm.errorText.isEmpty))
+            .allowsHitTesting(enqueueFeedback == nil && !isCheckingExistingFiles)
             .overlay {
                 RoundedRectangle(cornerRadius: 7)
                     .stroke(MGTheme.accent.opacity(enqueuePulse ? 0 : 0.55), lineWidth: 2)
@@ -405,12 +428,34 @@ struct DownloadWorkspaceView: View {
     }
 
     private var enqueueAccessibilityTitle: String {
+        if isCheckingExistingFiles { return "正在检查已有下载文件" }
         guard let enqueueFeedback else { return "加入队列 \(vm.selectedChapters.count) 话" }
         return feedbackTitle(for: enqueueFeedback)
     }
 
     private func enqueueSelection() {
-        let result = vm.startDownload()
+        enqueuePreparationTask?.cancel()
+        isCheckingExistingFiles = true
+        enqueuePreparationTask = Task { @MainActor in
+            guard let prepared = await vm.prepareSelectedDownload(), !Task.isCancelled else {
+                isCheckingExistingFiles = false
+                return
+            }
+            isCheckingExistingFiles = false
+            if prepared.existingOutput.hasExistingFiles {
+                preparedDownload = prepared
+            } else {
+                startPreparedDownload(prepared, policy: .keepExisting)
+            }
+        }
+    }
+
+    private func startPreparedDownload(_ prepared: MainViewModel.PreparedDownload, policy: ExistingFilePolicy) {
+        preparedDownload = nil
+        presentEnqueueResult(vm.startPreparedDownload(prepared, existingFilePolicy: policy))
+    }
+
+    private func presentEnqueueResult(_ result: EnqueueResult) {
         switch result {
         case .added(let count):
             showEnqueueFeedback(.added(count))
@@ -419,6 +464,15 @@ struct DownloadWorkspaceView: View {
         case .unavailable:
             break
         }
+    }
+
+    private var existingFilesConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { preparedDownload != nil },
+            set: { presented in
+                if !presented { preparedDownload = nil }
+            }
+        )
     }
 
     private func showEnqueueFeedback(_ feedback: EnqueueFeedback) {

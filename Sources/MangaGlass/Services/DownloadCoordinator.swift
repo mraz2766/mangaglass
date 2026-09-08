@@ -30,6 +30,22 @@ final class DownloadCoordinator: ObservableObject {
         }
     }
 
+    struct CopySoftCircuit: Equatable {
+        let reason: String
+        let host: String
+        let chapterTitle: String
+        let triggeredAt: Date
+        let cooldownUntil: Date
+
+        var remainingSeconds: Int {
+            max(0, Int(ceil(cooldownUntil.timeIntervalSinceNow)))
+        }
+
+        var message: String {
+            "拷贝漫画连续返回异常目录或页面，已暂停后续请求。请等待约 \(remainingSeconds) 秒再继续。"
+        }
+    }
+
     private struct ChapterFailureTracker {
         var notFound = 0
         var throttled = 0
@@ -184,6 +200,7 @@ final class DownloadCoordinator: ObservableObject {
     @Published var currentTaskTitle = ""
     @Published var lastCompletedOutputURL: URL?
     @Published var manhuaGuiSoftCircuit: ManhuaGuiSoftCircuit?
+    @Published var copySoftCircuit: CopySoftCircuit?
 
     private let api: CopyMangaAPI
     private let fileManager = FileManager.default
@@ -202,6 +219,13 @@ final class DownloadCoordinator: ObservableObject {
         maxPenaltyMS: 10000,
         throttleStepMS: 1000,
         relaxStepMS: 100
+    )
+    private let copyChapterPacer = RequestPacer(
+        minDelayMS: 650,
+        maxDelayMS: 1050,
+        maxPenaltyMS: 10000,
+        throttleStepMS: 1400,
+        relaxStepMS: 120
     )
     private var masterTask: Task<Void, Never>?
     private var logger: ((String) -> Void)?
@@ -245,6 +269,7 @@ final class DownloadCoordinator: ObservableObject {
         hostThrottleCooldownSeconds: 90,
         hostTimeoutCooldownSeconds: 45
     )
+    private var copySuspiciousChapterFailures = 0
 
     init(api: CopyMangaAPI) {
         self.api = api
@@ -260,10 +285,41 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     @discardableResult
-    func add(chapters: [ComicChapter], comic: ComicInfo, destination: URL, cookie: String?) -> Int {
+    func add(
+        chapters: [ComicChapter],
+        comic: ComicInfo,
+        destination: URL,
+        cookie: String?,
+        existingFilePolicy: ExistingFilePolicy = .keepExisting,
+        usesGroupFolder: Bool? = nil,
+        replacingFinished: Bool = false
+    ) -> Int {
+        if replacingFinished {
+            let requestedIdentities = Set(chapters.map { chapter in
+                DownloadTaskItem(
+                    comic: comic,
+                    chapter: chapter,
+                    state: .queued,
+                    destination: destination,
+                    cookie: cookie
+                ).queueIdentity
+            })
+            taskItems.removeAll { item in
+                guard requestedIdentities.contains(item.queueIdentity) else { return false }
+                return item.state != .queued && item.state != .running
+            }
+        }
         let existing = Set(taskItems.map(\.queueIdentity))
         let newItems = chapters.compactMap { chapter -> DownloadTaskItem? in
-            let item = DownloadTaskItem(comic: comic, chapter: chapter, state: .queued, destination: destination, cookie: cookie)
+            let item = DownloadTaskItem(
+                comic: comic,
+                chapter: chapter,
+                state: .queued,
+                destination: destination,
+                cookie: cookie,
+                existingFilePolicy: existingFilePolicy,
+                usesGroupFolder: usesGroupFolder
+            )
             return existing.contains(item.queueIdentity) ? nil : item
         }
         taskItems.append(contentsOf: newItems)
@@ -332,6 +388,7 @@ final class DownloadCoordinator: ObservableObject {
         currentTaskTitle = ""
         lastCompletedOutputURL = nil
         manhuaGuiSoftCircuit = nil
+        copySoftCircuit = nil
         manhuaGuiPreferredHost = nil
         chapterExpectedPages = [:]
         chapterCompletedPages = [:]
@@ -341,6 +398,7 @@ final class DownloadCoordinator: ObservableObject {
         progressRefreshTask = nil
         isCancelling = false
         protectionState.clear()
+        copySuspiciousChapterFailures = 0
         resetSpeedEstimateState()
     }
 
@@ -376,6 +434,9 @@ final class DownloadCoordinator: ObservableObject {
             if manhuaGuiSoftCircuit != nil, hasQueuedManhuaGuiItems() {
                 message = "漫画柜疑似触发风控，请确认后再继续下载。"
                 log("启动暂停：漫画柜软熔断中，等待用户确认")
+            } else if let circuit = copySoftCircuit, hasQueuedCopyItems() {
+                message = circuit.message
+                log("启动暂停：拷贝漫画软熔断冷却中")
             } else {
                 message = "队列中没有等待下载的章节。"
                 log("启动失败：队列为空")
@@ -392,6 +453,9 @@ final class DownloadCoordinator: ObservableObject {
         log("下载开始：并发 \(maxConcurrent)")
         if pendingItems.contains(where: isManhuaGuiItem) {
             log("ManhuaGui 策略：章节并发 4，图片并发 2，请求间隔 240-460ms")
+        }
+        if pendingItems.contains(where: { isCopyFamily($0.comic.site) }) {
+            log("拷贝漫画保护：章节并发 2，章节解析全局间隔 650-1050ms，连续异常自动暂停")
         }
         applySleepAssertion(active: true)
         
@@ -453,6 +517,11 @@ final class DownloadCoordinator: ObservableObject {
                 if let circuit = self.manhuaGuiSoftCircuit {
                     self.message = circuit.message
                     self.log("下载批次因 ManhuaGui 软熔断暂停：HTTP \(circuit.statusCode) host=\(circuit.host)")
+                    return
+                }
+                if let circuit = self.copySoftCircuit {
+                    self.message = circuit.message
+                    self.log("下载批次因拷贝漫画软熔断暂停：\(circuit.reason) host=\(circuit.host)")
                     return
                 }
                 let failed = self.taskItems.filter {
@@ -567,6 +636,77 @@ final class DownloadCoordinator: ObservableObject {
         updateCurrentTaskTitle()
     }
 
+    @discardableResult
+    func clearCopySoftCircuitIfReady() -> Bool {
+        guard let circuit = copySoftCircuit else { return true }
+        guard circuit.cooldownUntil <= Date() else {
+            message = circuit.message
+            return false
+        }
+        copySoftCircuit = nil
+        copySuspiciousChapterFailures = 0
+        message = "拷贝漫画冷却结束，可以继续下载。"
+        log("拷贝漫画软熔断冷却结束：host=\(circuit.host)")
+        updateCurrentTaskTitle()
+        return true
+    }
+
+    private func noteCopyChapterSuccess(for item: DownloadTaskItem) async {
+        guard isCopyFamily(item.comic.site) else { return }
+        copySuspiciousChapterFailures = 0
+        await copyChapterPacer.markSuccess()
+    }
+
+    private func noteCopyChapterFailure(_ error: Error, for item: DownloadTaskItem) async {
+        guard isCopyFamily(item.comic.site), let outcome = Self.copyFailureOutcome(error) else { return }
+        await copyChapterPacer.markThrottled()
+        copySuspiciousChapterFailures += 1
+        let threshold = outcome.immediate ? 1 : 3
+        guard copySuspiciousChapterFailures >= threshold, copySoftCircuit == nil else { return }
+
+        let host = item.comic.site.webBase.host?.lowercased() ?? "-"
+        copySoftCircuit = CopySoftCircuit(
+            reason: outcome.reason,
+            host: host,
+            chapterTitle: "[\(item.chapter.volumeName)] \(item.chapter.displayName)",
+            triggeredAt: Date(),
+            cooldownUntil: Date().addingTimeInterval(outcome.cooldown)
+        )
+        taskItems = taskItems.map { existing in
+            var updated = existing
+            if isCopyFamily(updated.comic.site), updated.id != item.id, updated.state == .running {
+                updated.state = .queued
+            }
+            return updated
+        }
+        updateProgress()
+        updateCurrentTaskTitle()
+        message = copySoftCircuit?.message ?? "拷贝漫画请求异常，已暂停当前批次。"
+        log("拷贝漫画软熔断：\(outcome.reason) host=\(host)，已保留后续队列")
+    }
+
+    static func copyFailureOutcome(_ error: Error) -> (reason: String, cooldown: TimeInterval, immediate: Bool)? {
+        guard let error = error as? CopyMangaError else { return nil }
+        switch error {
+        case .parseBlocked, .cooldown:
+            return ("站点明确返回风控或冷却状态", 20 * 60, true)
+        case .apiDetail(let detail) where detail.localizedCaseInsensitiveContains("ban") || detail.contains("风控"):
+            return ("接口返回风控状态", 20 * 60, true)
+        case .httpStatus(let code, _ ) where [403, 429, 503].contains(code):
+            return ("HTTP \(code)", 20 * 60, true)
+        case .httpStatus(let code, let body) where code == 404 && (body.localizedCaseInsensitiveContains("<html") || body.localizedCaseInsensitiveContains("<!doctype")):
+            return ("连续收到 HTML 404 页面", 5 * 60, false)
+        case .noImageInChapter:
+            return ("连续未解析到章节图片", 5 * 60, false)
+        case .invalidJSON(_, let snippet) where snippet.localizedCaseInsensitiveContains("<html"):
+            return ("连续收到非预期网页", 5 * 60, false)
+        case .allEndpoints404, .copyMirrorsUnavailable:
+            return ("连续镜像或章节入口不可用", 5 * 60, false)
+        default:
+            return nil
+        }
+    }
+
     private func triggerManhuaGuiSoftCircuitIfNeeded(statusCode: Int, host: String?, itemID: UUID) {
         guard let idx = taskItems.firstIndex(where: { $0.id == itemID }) else { return }
         let item = taskItems[idx]
@@ -625,6 +765,9 @@ final class DownloadCoordinator: ObservableObject {
         log("开始章节：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName)")
 
         do {
+            if isCopyFamily(item.comic.site) {
+                try await copyChapterPacer.waitTurn()
+            }
             let imageFetchStart = Date()
             let imageURLs = try await api.fetchImageURLs(
                 slug: item.comic.slug,
@@ -647,6 +790,7 @@ final class DownloadCoordinator: ObservableObject {
                 self.scheduleProgressRefresh()
             }
             if isCopyFamily(item.comic.site) {
+                await noteCopyChapterSuccess(for: item)
                 log(String(format: "拷贝漫画章节解析：[%@] %@ 拿到 %d 张图，耗时 %.2fs", item.chapter.volumeName, item.chapter.displayName, imageURLs.count, imageFetchElapsed))
             }
             try await downloadChapter(item: item, imageURLs: imageURLs, runID: runID)
@@ -676,6 +820,7 @@ final class DownloadCoordinator: ObservableObject {
                 self.resetDownloadProtection(for: item.id)
                 self.scheduleProgressRefresh(force: true)
             }
+            await noteCopyChapterFailure(error, for: item)
             log("章节失败：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName) - \(error.localizedDescription)")
         }
     }
@@ -739,24 +884,25 @@ final class DownloadCoordinator: ObservableObject {
         if manhuaGuiSoftCircuit != nil, isManhuaGuiItem(item), !explicitlyCanceledItemIDs.contains(item.id) {
             return .queued
         }
+        if copySoftCircuit != nil, isCopyFamily(item.comic.site), !explicitlyCanceledItemIDs.contains(item.id) {
+            return .queued
+        }
         return .canceled
     }
 
     private func downloadChapter(item: DownloadTaskItem, imageURLs: [URL], runID: UUID) async throws {
         let comicFolder = resolvedComicFolder(for: item)
         let groupName = canonicalGroupName(item.chapter.volumeName)
-        
-        // Calculate if we need group folder
-        let selectedKinds = Set(taskItems.filter { $0.comic.slug == item.comic.slug }.map { canonicalGroupKey($0.chapter.volumeName) })
-        let useGroupFolder = selectedKinds.count > 1
+        let chapterFolder = chapterOutputFolder(for: item)
+        let volumeFolder = chapterFolder.deletingLastPathComponent()
 
-        let volumeFolder: URL
-        if useGroupFolder {
-            volumeFolder = comicFolder.appendingPathComponent(sanitize(groupName), isDirectory: true)
-        } else {
-            volumeFolder = comicFolder
+        if item.existingFilePolicy == .overwrite {
+            try await Self.removeExistingChapterFolder(chapterFolder)
+            if let index = taskItems.firstIndex(where: { $0.id == item.id }) {
+                taskItems[index].existingFilePolicy = .keepExisting
+            }
+            log("覆盖已有章节目录：[\(item.chapter.volumeName)] \(item.chapter.displayName)")
         }
-        let chapterFolder = volumeFolder.appendingPathComponent(sanitize(item.chapter.displayName), isDirectory: true)
 
         try createDirIfNeeded(comicFolder)
         try createDirIfNeeded(volumeFolder)
@@ -845,27 +991,25 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     private func chapterOutputFolder(for item: DownloadTaskItem) -> URL {
-        let comicFolder = resolvedComicFolder(for: item)
-        let groupName = canonicalGroupName(item.chapter.volumeName)
-        let selectedKinds = Set(taskItems.filter { $0.comic.slug == item.comic.slug }.map { canonicalGroupKey($0.chapter.volumeName) })
-        let volumeFolder = selectedKinds.count > 1
-            ? comicFolder.appendingPathComponent(sanitize(groupName), isDirectory: true)
-            : comicFolder
-        return volumeFolder.appendingPathComponent(sanitize(item.chapter.displayName), isDirectory: true)
+        let selectedKinds = Set(taskItems.filter {
+            $0.comic.slug == item.comic.slug && $0.destination.standardizedFileURL == item.destination.standardizedFileURL
+        }.map { canonicalGroupKey($0.chapter.volumeName) })
+        return DownloadOutputLayout.chapterFolder(
+            comic: item.comic,
+            chapter: item.chapter,
+            destination: item.destination,
+            usesGroupFolder: item.usesGroupFolder ?? (selectedKinds.count > 1)
+        )
     }
 
     private func resolvedComicFolder(for item: DownloadTaskItem) -> URL {
-        if matchesComicFolderName(item.destination, comicName: item.comic.name) {
-            return item.destination
-        }
-        return item.destination.appendingPathComponent(sanitize(item.comic.name), isDirectory: true)
+        DownloadOutputLayout.comicFolder(comic: item.comic, destination: item.destination)
     }
 
-    private func matchesComicFolderName(_ folderURL: URL, comicName: String) -> Bool {
-        let folderName = folderURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
-        let comicFolderName = sanitize(comicName).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !folderName.isEmpty, !comicFolderName.isEmpty else { return false }
-        return sanitize(folderName).lowercased() == comicFolderName.lowercased()
+    nonisolated private static func removeExistingChapterFolder(_ folder: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            try DownloadOutputLayout.removeChapterFolder(at: folder)
+        }.value
     }
 
     private func downloadImage(
@@ -1123,12 +1267,10 @@ final class DownloadCoordinator: ObservableObject {
         guard currentRunID == runID, !isCancelling, !explicitlyCanceledItemIDs.contains(itemID) else {
             return false
         }
-        guard manhuaGuiSoftCircuit != nil,
-              let item = taskItems.first(where: { $0.id == itemID }),
-              isManhuaGuiItem(item) else {
-            return true
-        }
-        return false
+        guard let item = taskItems.first(where: { $0.id == itemID }) else { return false }
+        if manhuaGuiSoftCircuit != nil, isManhuaGuiItem(item) { return false }
+        if copySoftCircuit != nil, isCopyFamily(item.comic.site) { return false }
+        return true
     }
 
     private func hasEligibleQueuedItems() -> Bool {
@@ -1142,11 +1284,17 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     private func isEligibleQueuedItem(_ item: DownloadTaskItem) -> Bool {
-        item.state == .queued && !(manhuaGuiSoftCircuit != nil && isManhuaGuiItem(item))
+        item.state == .queued &&
+            !(manhuaGuiSoftCircuit != nil && isManhuaGuiItem(item)) &&
+            !(copySoftCircuit != nil && isCopyFamily(item.comic.site))
     }
 
     private func hasQueuedManhuaGuiItems() -> Bool {
         taskItems.contains { $0.state == .queued && isManhuaGuiItem($0) }
+    }
+
+    private func hasQueuedCopyItems() -> Bool {
+        taskItems.contains { $0.state == .queued && isCopyFamily($0.comic.site) }
     }
 
     private func isManhuaGuiItem(_ item: DownloadTaskItem) -> Bool {
