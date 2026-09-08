@@ -26,6 +26,7 @@ struct MangaSiteConfig: Hashable, Codable {
 enum CopyMangaMirror: String, CaseIterable, Identifiable {
     case mangacopy = "mangacopy.com"
     case copy2026 = "2026copy.com"
+    case copy4000 = "copy4000.com"
 
     static let retiredHost = "2025copy.com"
     static let retiredMessage = "2025 站点已停用，请使用主站或备用站链接。"
@@ -36,6 +37,7 @@ enum CopyMangaMirror: String, CaseIterable, Identifiable {
         switch self {
         case .mangacopy: return "主站"
         case .copy2026: return "备用站"
+        case .copy4000: return "国内站"
         }
     }
 

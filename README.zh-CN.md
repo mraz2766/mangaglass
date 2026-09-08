@@ -18,6 +18,7 @@ MangaGlass 是一个面向 macOS 的本地漫画解析与下载工具，基于 S
 - 拷贝漫画系列
   - `mangacopy.com`
   - `2026copy.com`
+  - `copy4000.com`（国内站）
 - 漫画柜
   - `manhuagui.com`
 - MYCOMIC

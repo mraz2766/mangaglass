@@ -2103,7 +2103,7 @@ final class CopyMangaAPI: @unchecked Sendable {
         }
 
         // Keep only likely image CDN/content hosts when possible.
-        let allowedHostHints = ["mangafun", "cdn77", "copymanga", "mangacopy", "2026copy"]
+        let allowedHostHints = ["mangafun", "cdn77", "copymanga", "mangacopy", "2026copy", "copy4000"]
         if let host = url.host?.lowercased(), !host.isEmpty {
             let hostLooksRelated = allowedHostHints.contains(where: { host.contains($0) })
             if !hostLooksRelated && !path.contains("/comic/") && !path.contains("/chapter/") {

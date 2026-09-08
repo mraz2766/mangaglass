@@ -593,7 +593,7 @@ final class MainViewModel: ObservableObject {
 
     private func isCopyFamily(_ site: MangaSiteConfig) -> Bool {
         guard let host = site.webBase.host?.lowercased() else { return false }
-        return host.contains("mangacopy.com") || host.contains("2026copy.com")
+        return CopyMangaMirror.mirror(for: host) != nil
     }
 
     private func isRetiredCopySite(_ site: MangaSiteConfig) -> Bool {
