@@ -39,9 +39,8 @@ struct DownloadWorkspaceView: View {
             let windowWidth = proxy.size.width + 97
             let coverWidth: CGFloat = windowWidth >= 1100 ? 280 : (windowWidth >= 900 ? 240 : 180)
             let coverHeight: CGFloat = windowWidth >= 1100 ? 390 : (windowWidth >= 900 ? 340 : 250)
-            VStack(spacing: 12) {
+            VStack(spacing: 16) {
                 homeToolbar
-                Divider()
                 HStack(alignment: .top, spacing: 20) {
                     ScrollView {
                         comicInspector(height: min(coverHeight, max(180, proxy.size.height - 220)))
@@ -138,7 +137,7 @@ struct DownloadWorkspaceView: View {
                 .help("清除链接、封面、卷与章节及解析状态")
                 .accessibilityLabel("清除首页搜索数据和状态")
             }
-            .mgTextField()
+            .mgQuietTextField()
             .overlay { RoundedRectangle(cornerRadius: 6).stroke(linkFocused ? MGTheme.accent : .clear, lineWidth: 2) }
             .background {
                 Button(action: undoLinkInput) { Color.clear.frame(width: 1, height: 1) }
@@ -192,7 +191,6 @@ struct DownloadWorkspaceView: View {
             Button { showCover = true } label: {
                 coverImage.frame(maxWidth: .infinity).frame(height: height)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain).disabled(vm.comic?.coverURL == nil)
@@ -205,7 +203,6 @@ struct DownloadWorkspaceView: View {
             } else {
                 Text("输入链接，解析后选择卷与章节。").font(MGFont.caption).foregroundStyle(.secondary)
             }
-            Divider()
             Button { vm.chooseDestination() } label: {
                 Label("下载到：\(vm.destinationFolder.lastPathComponent)", systemImage: "folder")
                     .lineLimit(1).truncationMode(.middle)
@@ -233,7 +230,10 @@ struct DownloadWorkspaceView: View {
         VStack(spacing: 10) {
             Image(systemName: "book.closed").font(.system(size: 40, weight: .light))
             Text("封面预览").font(MGFont.caption)
-        }.foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MGTheme.quietSurface(for: colorScheme), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     @ViewBuilder private var parseStatus: some View {
@@ -258,7 +258,6 @@ struct DownloadWorkspaceView: View {
     private var chapterWorkspace: some View {
         VStack(spacing: 8) {
             chapterToolbar
-            Divider()
             if vm.isLoading {
                 MGEmptyState(title: "正在解析目录", systemImage: "hourglass", detail: "目录就绪后即可选择章节。")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -290,8 +289,9 @@ struct DownloadWorkspaceView: View {
                 .onPreferenceChange(ChapterFrameKey.self) { chapterFrameStore.frames = $0 }
                 .overlay(DragRectOverlay(rect: dragRect))
             }
-            Divider()
             selectionBar
+                .padding(.top, 8)
+                .overlay(alignment: .top) { MGHairlineDivider() }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -299,12 +299,12 @@ struct DownloadWorkspaceView: View {
         VStack(spacing: 8) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
-                    Text("卷与章节 \(vm.totalChapterCount)").font(MGFont.section).fixedSize()
-                    MGSearchField(title: "搜索章节", text: $vm.chapterSearchQuery).frame(minWidth: 100)
+                    chapterTitle
+                    MGSearchField(title: "搜索章节", text: $vm.chapterSearchQuery, quiet: true).frame(minWidth: 100)
                     sortPicker
                 }
                 HStack(spacing: 8) {
-                    MGSearchField(title: "搜索章节", text: $vm.chapterSearchQuery)
+                    MGSearchField(title: "搜索章节", text: $vm.chapterSearchQuery, quiet: true)
                     sortPicker
                 }
             }
@@ -313,15 +313,27 @@ struct DownloadWorkspaceView: View {
                     Label(vm.selectedVolumeIDs.count == vm.displayVolumes.count ? "分类：全部" : "分类：\(vm.selectedVolumeIDs.count)",
                           systemImage: "line.3.horizontal.decrease")
                 }
-                .buttonStyle(MGActionButtonStyle(variant: .secondary))
+                .buttonStyle(MGActionButtonStyle(variant: .secondary, drawsBorder: false))
                 .popover(isPresented: $showCategories, arrowEdge: .bottom) { categoryPopover }
                 Spacer(minLength: 0)
-                Button("全选可见") { vm.selectAllVisible() }.buttonStyle(MGActionButtonStyle(variant: .secondary))
+                Button("全选可见") { vm.selectAllVisible() }
+                    .buttonStyle(MGActionButtonStyle(variant: .secondary, drawsBorder: false))
                     .disabled(vm.visibleChapterCount == 0)
                 Button("清除选择") { vm.clearChapterSelection() }.buttonStyle(MGActionButtonStyle(variant: .ghost))
                     .disabled(vm.selectedChapters.isEmpty)
             }
         }
+    }
+
+    private var chapterTitle: some View {
+        HStack(spacing: 5) {
+            Text("卷与章节").font(MGFont.section)
+            Text("\(vm.totalChapterCount)")
+                .font(MGFont.caption)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .fixedSize()
     }
 
     private var sortPicker: some View {

@@ -68,7 +68,7 @@ struct MGGroupSelectionButton: View {
                 .foregroundStyle(state == .none ? Color.secondary : MGTheme.accent)
                 .frame(width: 28, height: 28)
         }
-        .buttonStyle(MGActionButtonStyle(variant: .secondary, iconOnly: true))
+        .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
         .help(actionTitle)
         .accessibilityLabel("\(title)：\(actionTitle)")
         .accessibilityValue(state.description)
@@ -91,7 +91,7 @@ struct MGChapterSelectionCell: View {
             .padding(.horizontal, 8).frame(height: 38)
             .frame(maxWidth: .infinity).contentShape(Rectangle())
         }
-        .buttonStyle(MGChoiceButtonStyle(selected: selected))
+        .buttonStyle(MGChoiceButtonStyle(selected: selected, bordered: false, quietSurface: true))
         .help(title).accessibilityLabel(title).accessibilityValue(selected ? "已选择" : "未选择")
     }
 }
@@ -125,6 +125,10 @@ enum MGTheme {
 
     static func divider(for scheme: ColorScheme) -> Color {
         Color(nsColor: .separatorColor)
+    }
+
+    static func quietSurface(for scheme: ColorScheme) -> Color {
+        Color.primary.opacity(scheme == .dark ? 0.06 : 0.035)
     }
 
     static func statusColor(for state: DownloadTaskItem.State) -> Color {
@@ -168,9 +172,10 @@ enum MGMotion {
 struct MGActionButtonStyle: ButtonStyle {
     let variant: MGActionVariant
     var iconOnly = false
+    var drawsBorder = true
 
     func makeBody(configuration: Configuration) -> some View {
-        MGActionBody(configuration: configuration, variant: variant, iconOnly: iconOnly)
+        MGActionBody(configuration: configuration, variant: variant, iconOnly: iconOnly, drawsBorder: drawsBorder)
     }
 }
 
@@ -178,6 +183,7 @@ private struct MGActionBody: View {
     let configuration: ButtonStyle.Configuration
     let variant: MGActionVariant
     let iconOnly: Bool
+    let drawsBorder: Bool
     @Environment(\.isEnabled) private var enabled
     @Environment(\.colorScheme) private var scheme
     @Environment(\.isFocused) private var focused
@@ -193,7 +199,7 @@ private struct MGActionBody: View {
             .background(fill, in: RoundedRectangle(cornerRadius: 6))
             .overlay {
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(focused ? MGTheme.accent : (variant == .secondary ? MGTheme.divider(for: scheme) : .clear), lineWidth: focused ? 2 : 0.7)
+                    .stroke(focused ? MGTheme.accent : (variant == .secondary && drawsBorder ? MGTheme.divider(for: scheme) : .clear), lineWidth: focused ? 2 : 0.7)
             }
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
@@ -214,9 +220,10 @@ private struct MGActionBody: View {
 struct MGChoiceButtonStyle: ButtonStyle {
     let selected: Bool
     var bordered = true
+    var quietSurface = false
 
     func makeBody(configuration: Configuration) -> some View {
-        MGChoiceBody(configuration: configuration, selected: selected, bordered: bordered)
+        MGChoiceBody(configuration: configuration, selected: selected, bordered: bordered, quietSurface: quietSurface)
     }
 }
 
@@ -224,6 +231,7 @@ private struct MGChoiceBody: View {
     let configuration: ButtonStyle.Configuration
     let selected: Bool
     let bordered: Bool
+    let quietSurface: Bool
     @Environment(\.colorScheme) private var scheme
     @Environment(\.isEnabled) private var enabled
     @Environment(\.isFocused) private var focused
@@ -236,9 +244,9 @@ private struct MGChoiceBody: View {
             .background(fill, in: RoundedRectangle(cornerRadius: 6))
             .overlay {
                 RoundedRectangle(cornerRadius: 6).stroke(
-                    focused ? MGTheme.accent : (selected && bordered ? MGTheme.accent.opacity(0.6) :
+                    focused ? MGTheme.accent : (selected && (bordered || quietSurface) ? MGTheme.accent.opacity(0.68) :
                         (bordered ? MGTheme.divider(for: scheme).opacity(0.75) : .clear)),
-                    lineWidth: focused ? 2 : (selected ? 1 : 0.7))
+                    lineWidth: focused ? 2 : (selected && (bordered || quietSurface) ? 1 : 0.7))
             }
             .contentShape(Rectangle())
             .opacity(enabled ? 1 : 0.45)
@@ -249,8 +257,18 @@ private struct MGChoiceBody: View {
     }
 
     private var fill: Color {
-        let active = enabled && (hovering || configuration.isPressed)
-        if selected { return MGTheme.accent.opacity((scheme == .dark ? 0.20 : 0.10) + (active ? 0.07 : 0)) }
+        guard enabled else { return quietSurface ? MGTheme.quietSurface(for: scheme) : Color.primary.opacity(bordered ? 0.025 : 0) }
+        if selected {
+            let interactionBoost = configuration.isPressed ? 0.10 : (hovering ? 0.07 : 0)
+            return MGTheme.accent.opacity((scheme == .dark ? 0.20 : 0.10) + interactionBoost)
+        }
+        if quietSurface {
+            let opacity = configuration.isPressed
+                ? (scheme == .dark ? 0.13 : 0.085)
+                : (hovering ? (scheme == .dark ? 0.10 : 0.06) : (scheme == .dark ? 0.06 : 0.035))
+            return Color.primary.opacity(opacity)
+        }
+        let active = hovering || configuration.isPressed
         return Color.primary.opacity(active ? 0.065 : (bordered ? 0.025 : 0))
     }
 }
@@ -258,12 +276,33 @@ private struct MGChoiceBody: View {
 struct MGSearchField: View {
     let title: String
     @Binding var text: String
+    var quiet = false
     @FocusState private var focused: Bool
     @State private var undoStack: [String] = []
     @State private var previousText = ""
     @State private var isApplyingUndo = false
 
     var body: some View {
+        fieldContent
+            .background {
+                if quiet {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(MGTheme.quietSurface(for: colorScheme))
+                }
+            }
+            .modifier(MGSearchFieldFrame(quiet: quiet, focused: focused))
+            .background {
+                Button(action: undoSearch) { Color.clear.frame(width: 1, height: 1) }
+                    .keyboardShortcut("z", modifiers: .control)
+                    .disabled(!focused || undoStack.isEmpty)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
+    }
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var fieldContent: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField(title, text: $text)
@@ -289,15 +328,6 @@ struct MGSearchField: View {
         .font(MGFont.body)
         .padding(.horizontal, 8)
         .frame(height: 30)
-        .mgInset(radius: 6)
-        .overlay { RoundedRectangle(cornerRadius: 6).stroke(focused ? MGTheme.accent : .clear, lineWidth: 2) }
-        .background {
-            Button(action: undoSearch) { Color.clear.frame(width: 1, height: 1) }
-                .keyboardShortcut("z", modifiers: .control)
-                .disabled(!focused || undoStack.isEmpty)
-                .opacity(0)
-                .accessibilityHidden(true)
-        }
     }
 
     private func undoSearch() {
@@ -365,8 +395,26 @@ extension View {
         modifier(MGTextFieldModifier())
     }
 
+    func mgQuietTextField() -> some View {
+        modifier(MGQuietTextFieldModifier())
+    }
+
     func mgHoverBackground(radius: CGFloat = 6) -> some View {
         modifier(MGHoverBackgroundModifier(radius: radius))
+    }
+}
+
+private struct MGSearchFieldFrame: ViewModifier {
+    let quiet: Bool
+    let focused: Bool
+
+    func body(content: Content) -> some View {
+        if quiet {
+            content.overlay { RoundedRectangle(cornerRadius: 6).stroke(focused ? MGTheme.accent : .clear, lineWidth: 2) }
+        } else {
+            content.mgInset(radius: 6)
+                .overlay { RoundedRectangle(cornerRadius: 6).stroke(focused ? MGTheme.accent : .clear, lineWidth: 2) }
+        }
     }
 }
 
@@ -428,6 +476,30 @@ private struct MGTextFieldModifier: ViewModifier {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .stroke(MGTheme.divider(for: colorScheme), lineWidth: 0.6)
             }
+    }
+}
+
+private struct MGQuietTextFieldModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .font(MGFont.body)
+            .padding(.horizontal, 10)
+            .frame(minHeight: 32)
+            .background(MGTheme.quietSurface(for: colorScheme), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
+
+struct MGHairlineDivider: View {
+    var opacity: Double = 0.35
+
+    var body: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(opacity))
+            .frame(height: 0.5)
+            .accessibilityHidden(true)
     }
 }
 
