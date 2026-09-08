@@ -146,6 +146,17 @@ struct SettingsWorkspaceView: View {
                     .frame(width: 240)
                 }
 
+                settingsSection("关闭窗口时", detail: vm.windowCloseBehavior.detail + " Command-Q 或菜单“退出”仍会询问并完全退出应用。") {
+                    Picker("关闭窗口时", selection: $vm.windowCloseBehavior) {
+                        ForEach(WindowCloseBehavior.allCases) { behavior in
+                            Text(behavior.title).tag(behavior)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 320)
+                }
+
                 settingsSection("下载目录", detail: vm.destinationFolder.path) {
                     HStack {
                         Text(vm.destinationFolder.lastPathComponent.isEmpty ? vm.destinationFolder.path : vm.destinationFolder.lastPathComponent)

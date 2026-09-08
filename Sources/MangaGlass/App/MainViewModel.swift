@@ -67,6 +67,9 @@ final class MainViewModel: ObservableObject {
     @Published var authCookie = "" {
         didSet { persistString(authCookie, key: StorageKey.authCookie) }
     }
+    @Published var windowCloseBehavior: WindowCloseBehavior = .ask {
+        didSet { persistString(windowCloseBehavior.rawValue, key: WindowCloseBehavior.storageKey) }
+    }
     @Published var themeMode: AppThemeMode = {
         let raw = UserDefaults.standard.string(forKey: StorageKey.themeMode) ?? AppThemeMode.system.rawValue
         return AppThemeMode(rawValue: raw) ?? .system
@@ -120,6 +123,7 @@ final class MainViewModel: ObservableObject {
         self.api = api
         self.downloader = DownloadCoordinator(api: api)
         if persistsState {
+            windowCloseBehavior = WindowCloseBehavior.load()
             restorePersistedState()
             updateAppAppearance()
         }

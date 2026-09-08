@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var observer: NSObjectProtocol?
     private var configuredWindowNumbers: Set<Int> = []
     private var didConfirmTermination = false
+    private weak var mainWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -44,6 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configureIfNeeded(_ window: NSWindow) {
+        guard window.sheetParent == nil, !(window is NSPanel) else { return }
+        mainWindow = window
         window.delegate = self
 
         if configuredWindowNumbers.contains(window.windowNumber) {
@@ -62,10 +65,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if requestTerminationConfirmation() {
+        guard sender.sheetParent == nil, !(sender is NSPanel) else { return true }
+        switch viewModel?.windowCloseBehavior ?? .ask {
+        case .quit:
+            didConfirmTermination = true
             NSApp.terminate(nil)
+        case .background:
+            mainWindow = sender
+            sender.orderOut(nil)
+        case .ask:
+            if requestTerminationConfirmation() { NSApp.terminate(nil) }
         }
+        return false
+    }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard let mainWindow else { return true }
+        mainWindow.makeKeyAndOrderFront(nil)
+        sender.activate(ignoringOtherApps: true)
         return false
     }
 
@@ -76,6 +95,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard let viewModel else {
             return true
+        }
+
+        if let mainWindow, !mainWindow.isVisible {
+            mainWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
         }
 
         viewModel.presentTerminationConfirmation(message: terminationInformativeText()) { [weak self] in
