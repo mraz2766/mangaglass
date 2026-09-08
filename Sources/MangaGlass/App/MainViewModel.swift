@@ -35,6 +35,12 @@ enum AppThemeMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum EnqueueResult: Equatable {
+    case added(Int)
+    case alreadyQueued
+    case unavailable
+}
+
 private enum StorageKey {
     static let inputURL = "inputURL"
     static let authCookie = "authCookie"
@@ -116,9 +122,11 @@ final class MainViewModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
 
     private let persistsState: Bool
+    private let queueStore: DownloadQueueStore?
 
-    init(persistsState: Bool = true) {
+    init(persistsState: Bool = true, queueStore: DownloadQueueStore? = nil) {
         self.persistsState = persistsState
+        self.queueStore = persistsState ? (queueStore ?? DownloadQueueStore()) : nil
         let api = CopyMangaAPI()
         self.api = api
         self.downloader = DownloadCoordinator(api: api)
@@ -444,11 +452,9 @@ final class MainViewModel: ObservableObject {
     }
 
     func applyDragSelection(_ chapterIDs: Set<String>, additive: Bool) {
-        if additive {
-            selectedChapterIDs.formUnion(chapterIDs)
-        } else {
-            selectedChapterIDs = chapterIDs
-        }
+        let nextSelection = additive ? selectedChapterIDs.union(chapterIDs) : chapterIDs
+        guard nextSelection != selectedChapterIDs else { return }
+        selectedChapterIDs = nextSelection
     }
 
     func toggleVolume(_ volumeID: String) {
@@ -510,24 +516,41 @@ final class MainViewModel: ObservableObject {
         return selected > 0 && selected < matchingCount
     }
 
-    func enqueueSelectedChapters() {
-        guard let comic, !selectedChapters.isEmpty else { return }
+    @discardableResult
+    func enqueueSelectedChapters() -> EnqueueResult {
+        guard let comic, !selectedChapters.isEmpty else { return .unavailable }
         if isRetiredCopySite(comic.site) {
             presentRetiredSiteMessage()
-            return
+            return .unavailable
         }
-        downloader.add(chapters: selectedChapters, comic: comic, destination: destinationFolder, cookie: normalizedCookie)
-        appendLog("加入队列：\(comic.name) - \(selectedChapters.count) 话")
+        let addedCount = downloader.add(
+            chapters: selectedChapters,
+            comic: comic,
+            destination: destinationFolder,
+            cookie: normalizedCookie
+        )
+        guard addedCount > 0 else {
+            statusText = "所选章节已在队列中。"
+            return .alreadyQueued
+        }
+        let saved = checkpointDownloadQueue()
+        appendLog("加入队列：\(comic.name) - 新增 \(addedCount) 话")
+        statusText = saved ? "已加入队列 \(addedCount) 话。" : "已加入 \(addedCount) 话，但队列保存失败。"
+        clearChapterSelection()
+        return .added(addedCount)
     }
 
-    func startDownload() {
-        guard let comic, !selectedChapters.isEmpty else { return }
+    @discardableResult
+    func startDownload() -> EnqueueResult {
+        guard let comic, !selectedChapters.isEmpty else { return .unavailable }
         guard !isRetiredCopySite(comic.site) else {
             presentRetiredSiteMessage()
-            return
+            return .unavailable
         }
-        enqueueSelectedChapters()
+        let result = enqueueSelectedChapters()
+        guard result != .unavailable else { return result }
         startQueuedDownloads()
+        return result
     }
 
     func startQueuedDownloads() {
@@ -823,13 +846,9 @@ final class MainViewModel: ObservableObject {
     }
 
     private func bindPersistence() {
-        downloader.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
-
         downloader.$taskItems
             .sink { [weak self] items in
-                self?.persistCodable(items, key: StorageKey.downloadQueue)
+                self?.queueStore?.save(items)
             }
             .store(in: &cancellables)
 
@@ -854,11 +873,25 @@ final class MainViewModel: ObservableObject {
             parseDoneText = "已恢复 · 分类 \(stats.groups) · 章节 \(stats.chapters)"
             showParseDone = true
         }
-        if let restoredItems = loadCodable([DownloadTaskItem].self, key: StorageKey.downloadQueue), !restoredItems.isEmpty {
+        let durableItems = queueStore?.load()
+        let legacyItems = durableItems == nil
+            ? loadCodable([DownloadTaskItem].self, key: StorageKey.downloadQueue)
+            : nil
+        if let restoredItems = durableItems ?? legacyItems, !restoredItems.isEmpty {
             downloader.restoreQueue(restoredItems)
             let counts = downloader.countsSummary()
             shouldOfferRestoredQueuePrompt = counts.queued > 0 || counts.failed > 0
         }
+        if durableItems == nil, let legacyItems, queueStore?.saveSynchronously(legacyItems) == true {
+            defaults.removeObject(forKey: StorageKey.downloadQueue)
+            appendLog("已将旧版下载队列迁移为可靠快照")
+        }
+    }
+
+    @discardableResult
+    func checkpointDownloadQueue() -> Bool {
+        guard let queueStore else { return !persistsState }
+        return queueStore.saveSynchronously(downloader.taskItems)
     }
 
     private func persistString(_ value: String, key: String) {

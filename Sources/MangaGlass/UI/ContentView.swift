@@ -37,7 +37,7 @@ struct ContentView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            WorkspaceSidebar(vm: vm, destination: $destination)
+            WorkspaceSidebar(downloader: vm.downloader, destination: $destination)
                 .frame(width: 64)
 
             Rectangle()

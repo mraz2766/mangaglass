@@ -1,4 +1,25 @@
+import Combine
 import SwiftUI
+
+@MainActor
+private final class QueueStructureObserver: ObservableObject {
+    private var cancellables: Set<AnyCancellable> = []
+
+    init(downloader: DownloadCoordinator) {
+        forward(downloader.$taskItems)
+        forward(downloader.$isRunning)
+        forward(downloader.$isPaused)
+        forward(downloader.$message)
+        forward(downloader.$manhuaGuiSoftCircuit)
+    }
+
+    private func forward<P: Publisher>(_ publisher: P) where P.Failure == Never {
+        publisher
+            .dropFirst()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+    }
+}
 
 struct QueueWorkspaceView: View {
     private enum QueueFilter: String, CaseIterable, Identifiable {
@@ -23,7 +44,9 @@ struct QueueWorkspaceView: View {
         }
     }
 
-    @ObservedObject var vm: MainViewModel
+    let vm: MainViewModel
+    private let downloader: DownloadCoordinator
+    @StateObject private var structureObserver: QueueStructureObserver
     @Binding var showLogs: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -31,8 +54,15 @@ struct QueueWorkspaceView: View {
     @State private var expandedTaskID: UUID?
     @State private var confirmation: QueueConfirmation?
 
+    init(vm: MainViewModel, showLogs: Binding<Bool>) {
+        self.vm = vm
+        self.downloader = vm.downloader
+        self._structureObserver = StateObject(wrappedValue: QueueStructureObserver(downloader: vm.downloader))
+        self._showLogs = showLogs
+    }
+
     private var filteredItems: [DownloadTaskItem] {
-        vm.downloader.taskItems.filter { item in
+        downloader.taskItems.filter { item in
             switch filter {
             case .all: return true
             case .active: return item.state == .running
@@ -46,7 +76,7 @@ struct QueueWorkspaceView: View {
     }
 
     private var counts: (queued: Int, running: Int, failed: Int, done: Int) {
-        vm.downloader.countsSummary()
+        downloader.countsSummary()
     }
 
     var body: some View {
@@ -56,7 +86,7 @@ struct QueueWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 8) { header; controls }
             }
             filters
-            if let circuit = vm.downloader.manhuaGuiSoftCircuit {
+            if let circuit = downloader.manhuaGuiSoftCircuit {
                 softCircuitNotice(circuit)
             }
             taskList
@@ -100,13 +130,13 @@ struct QueueWorkspaceView: View {
 
     private var controls: some View {
         HStack(spacing: MGSpacing.xs) {
-            if counts.queued > 0 && !vm.downloader.isRunning {
+            if counts.queued > 0 && !downloader.isRunning {
                 Button("开始 \(counts.queued)") { vm.startQueuedDownloads() }
                     .buttonStyle(MGActionButtonStyle(variant: .primary))
             }
-            if vm.downloader.isRunning {
-                Button(vm.downloader.isPaused ? "继续" : "暂停") {
-                    vm.downloader.isPaused ? vm.resumeDownload() : vm.pauseDownload()
+            if downloader.isRunning {
+                Button(downloader.isPaused ? "继续" : "暂停") {
+                    downloader.isPaused ? vm.resumeDownload() : vm.pauseDownload()
                 }
                 .buttonStyle(MGActionButtonStyle(variant: .secondary))
             }
@@ -120,9 +150,9 @@ struct QueueWorkspaceView: View {
                     .disabled(counts.done == 0)
                 Divider()
                 Button("取消并清空队列", role: .destructive) { confirmation = .cancelAll }
-                    .disabled(vm.downloader.taskItems.isEmpty)
+                    .disabled(downloader.taskItems.isEmpty)
                 Button("清空全部记录", role: .destructive) { confirmation = .clearAll }
-                    .disabled(vm.downloader.taskItems.isEmpty || vm.downloader.isRunning)
+                    .disabled(downloader.taskItems.isEmpty || downloader.isRunning)
             } label: {
                 Image(systemName: "ellipsis")
             }
@@ -219,7 +249,7 @@ struct QueueWorkspaceView: View {
             .frame(width: 28, height: 28)
             .help("重试任务")
         }
-        if failureReason(item.state) != nil || vm.downloader.durationText(for: item) != nil {
+        if failureReason(item.state) != nil || downloader.durationText(for: item) != nil {
             Button {
                 expandedTaskID = expandedTaskID == item.id ? nil : item.id
             } label: {
@@ -240,7 +270,7 @@ struct QueueWorkspaceView: View {
                     .foregroundStyle(MGTheme.danger)
                     .textSelection(.enabled)
             }
-            if let duration = vm.downloader.durationText(for: item) {
+            if let duration = downloader.durationText(for: item) {
                 Text("该话耗时 \(duration)")
                     .font(MGFont.caption)
                     .foregroundStyle(.secondary)
@@ -256,34 +286,7 @@ struct QueueWorkspaceView: View {
     }
 
     private var progressFooter: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                Text(vm.downloader.message).font(MGFont.caption).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 8)
-                progressMetrics
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(vm.downloader.message).font(MGFont.caption).foregroundStyle(.secondary).lineLimit(1)
-                progressMetrics
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 44, maxHeight: 64)
-        .overlay(alignment: .top) { Divider() }
-    }
-
-    private var progressMetrics: some View {
-        let summary = vm.downloader.progressSummary()
-        return HStack(spacing: 8) {
-            Text("已下载 \(summary.completedPages)/\(summary.totalPages) 页 · 完成 \(summary.completedTasks)/\(summary.totalTasks) 话")
-                .font(MGFont.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
-            ProgressView(value: vm.downloader.progress)
-                .progressViewStyle(.linear).frame(minWidth: 60, maxWidth: .infinity)
-            if !vm.downloader.speedText.isEmpty {
-                Text(vm.downloader.speedText).font(MGFont.caption).monospacedDigit()
-                    .foregroundStyle(MGTheme.accent).fixedSize()
-            }
-        }
+        QueueProgressFooter(downloader: downloader)
     }
 
     private func softCircuitNotice(_ circuit: DownloadCoordinator.ManhuaGuiSoftCircuit) -> some View {
@@ -309,10 +312,10 @@ struct QueueWorkspaceView: View {
     }
 
     private var headerSubtitle: String {
-        if vm.downloader.isRunning {
+        if downloader.isRunning {
             return "正在执行 · 排队 \(counts.queued) · 进行中 \(counts.running)"
         }
-        return vm.downloader.taskItems.isEmpty ? "队列空闲" : "等待操作 · 共 \(vm.downloader.taskItems.count) 项"
+        return downloader.taskItems.isEmpty ? "队列空闲" : "等待操作 · 共 \(downloader.taskItems.count) 项"
     }
 
     private var confirmationTitle: String {
@@ -329,7 +332,7 @@ struct QueueWorkspaceView: View {
 
     private func count(for item: QueueFilter) -> Int {
         switch item {
-        case .all: return vm.downloader.taskItems.count
+        case .all: return downloader.taskItems.count
         case .active: return counts.running
         case .queued: return counts.queued
         case .done: return counts.done
@@ -360,5 +363,54 @@ struct QueueWorkspaceView: View {
     private func failureReason(_ state: DownloadTaskItem.State) -> String? {
         guard case .failed(let message) = state else { return nil }
         return message.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct QueueProgressFooter: View {
+    @ObservedObject var downloader: DownloadCoordinator
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                message
+                Spacer(minLength: 8)
+                progressMetrics
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                message
+                progressMetrics
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 44, maxHeight: 64)
+        .overlay(alignment: .top) { Divider() }
+    }
+
+    private var message: some View {
+        Text(downloader.message)
+            .font(MGFont.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+
+    private var progressMetrics: some View {
+        let summary = downloader.progressSummary()
+        return HStack(spacing: 8) {
+            Text("已下载 \(summary.completedPages)/\(summary.totalPages) 页 · 完成 \(summary.completedTasks)/\(summary.totalTasks) 话")
+                .font(MGFont.caption)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .fixedSize()
+            ProgressView(value: downloader.progress)
+                .progressViewStyle(.linear)
+                .frame(minWidth: 60, maxWidth: .infinity)
+            if !downloader.speedText.isEmpty {
+                Text(downloader.speedText)
+                    .font(MGFont.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(MGTheme.accent)
+                    .fixedSize()
+            }
+        }
     }
 }

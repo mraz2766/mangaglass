@@ -259,7 +259,8 @@ final class DownloadCoordinator: ObservableObject {
         self.logger = logger
     }
 
-    func add(chapters: [ComicChapter], comic: ComicInfo, destination: URL, cookie: String?) {
+    @discardableResult
+    func add(chapters: [ComicChapter], comic: ComicInfo, destination: URL, cookie: String?) -> Int {
         let existing = Set(taskItems.map(\.queueIdentity))
         let newItems = chapters.compactMap { chapter -> DownloadTaskItem? in
             let item = DownloadTaskItem(comic: comic, chapter: chapter, state: .queued, destination: destination, cookie: cookie)
@@ -270,7 +271,7 @@ final class DownloadCoordinator: ObservableObject {
         if newItems.isEmpty {
             message = "所选章节已在队列中。"
             log("添加任务跳过：\(comic.name) 所选章节均已在队列中")
-            return
+            return 0
         }
         if isRunning {
             message = "已加入 \(newItems.count) 话，当前下载会自动继续。"
@@ -278,6 +279,7 @@ final class DownloadCoordinator: ObservableObject {
             message = "队列共 \(taskItems.count) 话。"
         }
         log("添加任务：由 \(comic.name) 添加 \(newItems.count) 话，当前队列共 \(taskItems.count) 话")
+        return newItems.count
     }
 
     func restoreQueue(_ items: [DownloadTaskItem]) {

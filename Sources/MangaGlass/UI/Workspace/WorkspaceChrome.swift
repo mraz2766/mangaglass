@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct WorkspaceSidebar: View {
-    @ObservedObject var vm: MainViewModel
+    @ObservedObject var downloader: DownloadCoordinator
     @Binding var destination: WorkspaceDestination
 
     var body: some View {
@@ -17,19 +17,19 @@ struct WorkspaceSidebar: View {
             navigationButton(.settings)
             Button { destination = .queue } label: {
                 VStack(spacing: 3) {
-                    Image(systemName: vm.downloader.isRunning ? "arrow.down.circle.fill" : "tray")
-                    if vm.downloader.isRunning {
-                        ProgressView(value: vm.downloader.progress).frame(width: 28)
-                    } else if vm.downloader.countsSummary().queued > 0 {
-                        Text("\(vm.downloader.countsSummary().queued)").font(.system(size: 10)).monospacedDigit()
+                    Image(systemName: downloader.isRunning ? "arrow.down.circle.fill" : "tray")
+                    if downloader.isRunning {
+                        ProgressView(value: downloader.progress).frame(width: 28)
+                    } else if downloader.countsSummary().queued > 0 {
+                        Text("\(downloader.countsSummary().queued)").font(.system(size: 10)).monospacedDigit()
                     }
                 }
                 .frame(width: 40, height: 40)
                 .contentShape(Rectangle())
             }
             .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
-            .help(vm.downloader.isRunning ? "正在下载 · \(vm.downloader.speedText)" :
-                    (vm.downloader.countsSummary().queued > 0 ? "等待下载 \(vm.downloader.countsSummary().queued) 话" : "队列空闲"))
+            .help(downloader.isRunning ? "正在下载 · \(downloader.speedText)" :
+                    (downloader.countsSummary().queued > 0 ? "等待下载 \(downloader.countsSummary().queued) 话" : "队列空闲"))
             .accessibilityLabel("打开队列状态")
         }
         .padding(.vertical, 8)

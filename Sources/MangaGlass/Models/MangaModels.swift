@@ -1,6 +1,6 @@
 import Foundation
 
-struct MangaSiteConfig: Hashable, Codable {
+struct MangaSiteConfig: Hashable, Codable, Sendable {
     let displayName: String
     let webBase: URL
     let apiBaseURLs: [URL]
@@ -133,14 +133,14 @@ enum CopyMangaMirror: String, CaseIterable, Identifiable {
     }
 }
 
-struct ComicVolume: Identifiable, Hashable, Codable {
+struct ComicVolume: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let displayName: String
     let pathWord: String
     let chapters: [ComicChapter]
 }
 
-struct ComicChapter: Identifiable, Hashable, Codable {
+struct ComicChapter: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let uuid: String
     let displayName: String
@@ -173,7 +173,7 @@ func canonicalGroupKey(_ raw: String) -> String {
     )
 }
 
-struct ComicInfo: Codable {
+struct ComicInfo: Codable, Sendable {
     let slug: String
     let name: String
     let coverURL: URL?
@@ -183,8 +183,8 @@ struct ComicInfo: Codable {
     let apiBaseURL: URL
 }
 
-struct DownloadTaskItem: Identifiable, Codable {
-    enum State: Equatable, Codable {
+struct DownloadTaskItem: Identifiable, Codable, Sendable {
+    enum State: Equatable, Codable, Sendable {
         case queued
         case running
         case done

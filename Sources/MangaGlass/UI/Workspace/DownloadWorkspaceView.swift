@@ -2,6 +2,11 @@ import AppKit
 import SwiftUI
 
 struct DownloadWorkspaceView: View {
+    private enum EnqueueFeedback: Equatable {
+        case added(Int)
+        case alreadyQueued
+    }
+
     @ObservedObject var vm: MainViewModel
     @Binding var showLogs: Bool
     let openQueue: () -> Void
@@ -10,12 +15,17 @@ struct DownloadWorkspaceView: View {
     @State private var showCategories = false
     @State private var categoryQuery = ""
     @State private var showCover = false
-    @State private var chapterFrames: [String: CGRect] = [:]
+    @StateObject private var chapterFrameStore = ChapterFrameStore()
     @State private var dragStart: CGPoint?
     @State private var dragCurrent: CGPoint?
     @State private var dragAdditive = false
     @State private var dragStartChapterID: String?
     @State private var dragLastChapterID: String?
+    @State private var dragChapterOrder: [String] = []
+    @State private var dragChapterIDs: Set<String> = []
+    @State private var enqueueFeedback: EnqueueFeedback?
+    @State private var enqueuePulse = false
+    @State private var enqueueFeedbackTask: Task<Void, Never>?
     @FocusState private var linkFocused: Bool
 
     var body: some View {
@@ -51,6 +61,7 @@ struct DownloadWorkspaceView: View {
             .frame(minWidth: 360, idealWidth: 520, maxWidth: 700, minHeight: 400, idealHeight: 620, maxHeight: 800)
         }
         .onChange(of: vm.comic?.slug) { _ in vm.collapsedVolumeIDs.removeAll() }
+        .onDisappear { enqueueFeedbackTask?.cancel() }
     }
 
     private var homeToolbar: some View {
@@ -85,7 +96,7 @@ struct DownloadWorkspaceView: View {
                     showCover = false
                     dragStart = nil
                     dragCurrent = nil
-                    chapterFrames = [:]
+                    chapterFrameStore.frames = [:]
                     linkFocused = true
                 } label: {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
@@ -220,15 +231,17 @@ struct DownloadWorkspaceView: View {
                                 if !vm.collapsedVolumeIDs.contains(section.id) {
                                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 8)], spacing: 8) {
                                         ForEach(section.chapters) { chapter in chapterCell(chapter) }
-                                    }.padding(.horizontal, 2)
+                                    }
+                                    .padding(.horizontal, 2)
+                                    .contentShape(Rectangle())
+                                    .gesture(chapterDragGesture)
                                 }
                             } header: { sectionHeader(section) }
                         }
                     }.padding(.bottom, 4)
                 }
                 .coordinateSpace(name: "chapter-canvas")
-                .gesture(chapterDragGesture)
-                .onPreferenceChange(ChapterFrameKey.self) { chapterFrames = $0 }
+                .onPreferenceChange(ChapterFrameKey.self) { chapterFrameStore.frames = $0 }
                 .overlay(DragRectOverlay(rect: dragRect))
             }
             Divider()
@@ -300,19 +313,28 @@ struct DownloadWorkspaceView: View {
     private func sectionHeader(_ section: MainViewModel.FilteredVolumeSection) -> some View {
         HStack(spacing: 6) {
             Button {
-                withAnimation(reduceMotion ? nil : MGMotion.regular) {
-                    if vm.collapsedVolumeIDs.contains(section.id) { vm.collapsedVolumeIDs.remove(section.id) } else { vm.collapsedVolumeIDs.insert(section.id) }
+                if vm.collapsedVolumeIDs.contains(section.id) {
+                    vm.collapsedVolumeIDs.remove(section.id)
+                } else {
+                    vm.collapsedVolumeIDs.insert(section.id)
                 }
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: vm.collapsedVolumeIDs.contains(section.id) ? "chevron.right" : "chevron.down").font(.system(size: 10, weight: .semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .rotationEffect(.degrees(vm.collapsedVolumeIDs.contains(section.id) ? 0 : 90))
+                        .animation(reduceMotion ? nil : MGMotion.fast, value: vm.collapsedVolumeIDs.contains(section.id))
                     Text(section.volumeName).font(MGFont.section).lineLimit(1)
+                    Text("已选 \(vm.selectedChapterCount(in: section.id)) / \(section.chapterCount)")
+                        .font(MGFont.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+                    Spacer(minLength: 0)
                 }
-            }.buttonStyle(.plain)
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+                .mgHoverBackground(radius: 5)
                 .accessibilityLabel("\(vm.collapsedVolumeIDs.contains(section.id) ? "展开" : "折叠")\(section.volumeName)")
-            Text("已选 \(vm.selectedChapterCount(in: section.id)) / \(section.chapterCount)")
-                .font(MGFont.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
-            Spacer(minLength: 0)
             MGGroupSelectionButton(title: section.volumeName,
                                    state: vm.areAllChaptersSelected(in: section.id) ? .all :
                                     (vm.isVolumeChapterSelectionPartial(volumeID: section.id) ? .partial : .none)) {
@@ -354,10 +376,82 @@ struct DownloadWorkspaceView: View {
     }
 
     private var enqueueButton: some View {
-        Button("加入队列 \(vm.selectedChapters.count)") { vm.startDownload() }
+        Button(action: enqueueSelection) {
+            ZStack {
+                Text("加入队列 \(vm.selectedChapters.count)")
+                    .opacity(enqueueFeedback == nil ? 1 : 0)
+                if let enqueueFeedback {
+                    HStack(spacing: 6) {
+                        Image(systemName: feedbackIcon(for: enqueueFeedback))
+                        Text(feedbackTitle(for: enqueueFeedback))
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .frame(minWidth: 112)
+        }
             .buttonStyle(MGActionButtonStyle(variant: .primary))
-            .disabled(vm.selectedChapters.isEmpty || vm.isLoading || !vm.errorText.isEmpty)
+            .disabled(enqueueFeedback == nil && (vm.selectedChapters.isEmpty || vm.isLoading || !vm.errorText.isEmpty))
+            .allowsHitTesting(enqueueFeedback == nil)
+            .overlay {
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(MGTheme.accent.opacity(enqueuePulse ? 0 : 0.55), lineWidth: 2)
+                    .scaleEffect(enqueuePulse ? 1.08 : 1)
+                    .opacity(reduceMotion || enqueueFeedback == nil ? 0 : 1)
+                    .allowsHitTesting(false)
+            }
+            .accessibilityLabel(enqueueAccessibilityTitle)
             .help(vm.selectedChapters.isEmpty ? "请选择章节" : "加入全部已选章节，包含隐藏的选择")
+    }
+
+    private var enqueueAccessibilityTitle: String {
+        guard let enqueueFeedback else { return "加入队列 \(vm.selectedChapters.count) 话" }
+        return feedbackTitle(for: enqueueFeedback)
+    }
+
+    private func enqueueSelection() {
+        let result = vm.startDownload()
+        switch result {
+        case .added(let count):
+            showEnqueueFeedback(.added(count))
+        case .alreadyQueued:
+            showEnqueueFeedback(.alreadyQueued)
+        case .unavailable:
+            break
+        }
+    }
+
+    private func showEnqueueFeedback(_ feedback: EnqueueFeedback) {
+        enqueueFeedbackTask?.cancel()
+        enqueueFeedback = feedback
+        enqueuePulse = false
+        if !reduceMotion {
+            withAnimation(.easeOut(duration: 0.36)) {
+                enqueuePulse = true
+            }
+        }
+        enqueueFeedbackTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1_400))
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : MGMotion.regular) {
+                enqueueFeedback = nil
+                enqueuePulse = false
+            }
+        }
+    }
+
+    private func feedbackIcon(for feedback: EnqueueFeedback) -> String {
+        switch feedback {
+        case .added: return "checkmark"
+        case .alreadyQueued: return "tray.full"
+        }
+    }
+
+    private func feedbackTitle(for feedback: EnqueueFeedback) -> String {
+        switch feedback {
+        case .added(let count): return "已加入 \(count) 话"
+        case .alreadyQueued: return "已在队列中"
+        }
     }
 
     private var dragRect: CGRect? {
@@ -371,11 +465,13 @@ struct DownloadWorkspaceView: View {
     }
 
     private var chapterDragGesture: some Gesture {
-        DragGesture(minimumDistance: 6)
+        DragGesture(minimumDistance: 10)
             .onChanged { value in
                 if dragStart == nil {
                     dragStart = value.startLocation
                     dragAdditive = NSEvent.modifierFlags.contains(.command)
+                    dragChapterOrder = vm.visibleChapters.map(\.id)
+                    dragChapterIDs = Set(dragChapterOrder)
                     dragStartChapterID = chapterID(at: value.startLocation)
                     dragLastChapterID = dragStartChapterID
                 }
@@ -388,12 +484,16 @@ struct DownloadWorkspaceView: View {
                 dragAdditive = false
                 dragStartChapterID = nil
                 dragLastChapterID = nil
+                dragChapterOrder = []
+                dragChapterIDs = []
             }
     }
 
     private func updateDragSelection() {
         guard let rect = dragRect else { return }
-        let hitIDs = Set(chapterFrames.compactMap { id, frame in frame.intersects(rect) ? id : nil })
+        let hitIDs = Set(chapterFrameStore.frames.compactMap { id, frame in
+            dragChapterIDs.contains(id) && frame.intersects(rect) ? id : nil
+        })
         if hitIDs.isEmpty, let start = dragStartChapterID {
             let target = chapterID(at: dragCurrent ?? .zero) ?? dragLastChapterID ?? start
             dragLastChapterID = target
@@ -405,11 +505,13 @@ struct DownloadWorkspaceView: View {
     }
 
     private func chapterID(at point: CGPoint) -> String? {
-        chapterFrames.first { $0.value.contains(point) }?.key
+        chapterFrameStore.frames.first { id, frame in
+            (dragChapterIDs.isEmpty || dragChapterIDs.contains(id)) && frame.contains(point)
+        }?.key
     }
 
     private func chapterRange(from startID: String, to endID: String) -> Set<String> {
-        let ids = vm.visibleChapters.map(\.id)
+        let ids = dragChapterOrder.isEmpty ? vm.visibleChapters.map(\.id) : dragChapterOrder
         guard let start = ids.firstIndex(of: startID), let end = ids.firstIndex(of: endID) else { return [startID] }
         return Set(ids[min(start, end)...max(start, end)])
     }

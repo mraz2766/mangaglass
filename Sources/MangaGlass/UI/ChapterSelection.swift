@@ -1,5 +1,10 @@
 import SwiftUI
 
+@MainActor
+final class ChapterFrameStore: ObservableObject {
+    var frames: [String: CGRect] = [:]
+}
+
 struct ChapterFrameKey: PreferenceKey {
     static let defaultValue: [String: CGRect] = [:]
 

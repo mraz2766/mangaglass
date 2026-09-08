@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import XCTest
 @testable import MangaGlass
 
@@ -29,12 +30,13 @@ final class SelectionTests: XCTestCase {
         XCTAssertEqual(vm.hiddenSelectedChapterCount, 2)
         vm.chapterSearchQuery = "不存在"
         XCTAssertEqual(vm.hiddenSelectedChapterCount, 3)
-        vm.enqueueSelectedChapters()
+        XCTAssertEqual(vm.enqueueSelectedChapters(), .added(3))
         XCTAssertEqual(Set(vm.downloader.taskItems.map(\.chapter.id)), ["0", "1", "2"])
-        vm.enqueueSelectedChapters()
+        XCTAssertTrue(vm.selectedChapterIDs.isEmpty)
+        vm.selectedChapterIDs = ["0", "1", "2"]
+        XCTAssertEqual(vm.enqueueSelectedChapters(), .alreadyQueued)
         XCTAssertEqual(vm.downloader.taskItems.count, 3)
-        vm.clearChapterSelection()
-        XCTAssertEqual(vm.selectedChapters.count, 0)
+        XCTAssertEqual(vm.selectedChapters.count, 3)
         XCTAssertEqual(vm.downloader.taskItems.count, 3)
     }
 
@@ -88,6 +90,29 @@ final class SelectionTests: XCTestCase {
         XCTAssertEqual(vm.selectedChapters.count, 6)
         vm.applyDragSelection(["7", "9"], additive: false)
         XCTAssertEqual(vm.selectedChapterIDs, ["7", "9"])
+    }
+
+    func testRepeatedDragSelectionDoesNotRepublishIdenticalState() async {
+        let vm = model()
+        var publishedSelections = 0
+        let observation = vm.$selectedChapterIDs
+            .dropFirst()
+            .sink { _ in publishedSelections += 1 }
+        vm.applyDragSelection(["1", "3"], additive: false)
+        vm.applyDragSelection(["1", "3"], additive: false)
+        vm.applyDragSelection(["1"], additive: true)
+        XCTAssertEqual(publishedSelections, 1)
+        withExtendedLifetime(observation) {}
+    }
+
+    func testDownloadProgressDoesNotRefreshWholeHomeViewModel() async {
+        let vm = model()
+        var wholeViewModelRefreshes = 0
+        let observation = vm.objectWillChange.sink { wholeViewModelRefreshes += 1 }
+        vm.downloader.progress = 0.5
+        vm.downloader.speedText = "8.0 页/秒"
+        XCTAssertEqual(wholeViewModelRefreshes, 0)
+        withExtendedLifetime(observation) {}
     }
 
     func testSameComicRefreshPreservesSelectionNewComicClears() async {

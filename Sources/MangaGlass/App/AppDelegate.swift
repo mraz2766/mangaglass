@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        _ = viewModel?.checkpointDownloadQueue()
         if let observer {
             NotificationCenter.default.removeObserver(observer)
         }

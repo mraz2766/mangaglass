@@ -39,7 +39,7 @@ final class LayoutSnapshots: XCTestCase {
                     default: continue
                     }
                     let root = HStack(spacing: 0) {
-                        WorkspaceSidebar(vm: vm, destination: .constant(page)).frame(width: 64)
+                        WorkspaceSidebar(downloader: vm.downloader, destination: .constant(page)).frame(width: 64)
                         Divider()
                         body.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
