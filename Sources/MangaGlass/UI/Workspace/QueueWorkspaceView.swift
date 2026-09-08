@@ -89,9 +89,9 @@ struct QueueWorkspaceView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            queueMetric("进行中", counts.running, tint: MGTheme.accent)
-            queueMetric("失败", counts.failed, tint: MGTheme.danger)
-            queueMetric("完成", counts.done, tint: MGTheme.success)
+            Text("进行中 \(counts.running) · 失败 \(counts.failed) · 完成 \(counts.done)")
+                .font(MGFont.caption)
+                .foregroundStyle(.secondary)
             Button {
                 showLogs = true
             } label: {
@@ -141,8 +141,7 @@ struct QueueWorkspaceView: View {
             }
             .menuStyle(.borderlessButton)
         }
-        .padding(MGSpacing.xs)
-        .mgSurface()
+        .padding(.vertical, MGSpacing.xs)
     }
 
     private var taskList: some View {
@@ -170,18 +169,14 @@ struct QueueWorkspaceView: View {
     private func taskRow(_ item: DownloadTaskItem) -> some View {
         let tint = MGTheme.statusColor(for: item.state)
         return HStack(alignment: .top, spacing: MGSpacing.sm) {
-            Rectangle()
-                .fill(tint)
-                .frame(width: 3)
-                .clipShape(Capsule())
-
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
                     Text(item.comic.name)
                         .font(MGFont.bodyStrong)
                         .lineLimit(1)
-                    Text(statusTitle(item.state))
-                        .mgStatusTag(tint: tint, active: true)
+                    Label(statusTitle(item.state), systemImage: statusImage(item.state))
+                        .font(MGFont.caption)
+                        .foregroundStyle(tint)
                     Spacer()
                     taskActions(item)
                 }
@@ -197,6 +192,8 @@ struct QueueWorkspaceView: View {
         }
         .padding(.horizontal, MGSpacing.sm)
         .padding(.vertical, 10)
+        .frame(minHeight: 64)
+        .mgHoverBackground(radius: 0)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: expandedTaskID)
     }
 
@@ -209,6 +206,7 @@ struct QueueWorkspaceView: View {
                 Image(systemName: "xmark.circle")
             }
             .buttonStyle(MGActionButtonStyle(variant: .ghost))
+            .frame(width: 28, height: 28)
             .help("取消任务")
         } else if case .failed = item.state {
             Button {
@@ -217,6 +215,7 @@ struct QueueWorkspaceView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(MGActionButtonStyle(variant: .ghost))
+            .frame(width: 28, height: 28)
             .help("重试任务")
         }
         if failureReason(item.state) != nil || vm.downloader.durationText(for: item) != nil {
@@ -226,6 +225,7 @@ struct QueueWorkspaceView: View {
                 Image(systemName: expandedTaskID == item.id ? "chevron.up" : "chevron.down")
             }
             .buttonStyle(MGActionButtonStyle(variant: .ghost))
+            .frame(width: 28, height: 28)
             .help("任务详情")
         }
     }
@@ -248,6 +248,8 @@ struct QueueWorkspaceView: View {
                 .font(MGFont.mono)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .truncationMode(.middle)
+                .help(item.destination.path)
         }
         .padding(.top, 4)
     }
@@ -273,8 +275,9 @@ struct QueueWorkspaceView: View {
                     .foregroundStyle(MGTheme.accent)
             }
         }
-        .padding(MGSpacing.sm)
-        .mgSurface()
+        .padding(.horizontal, MGSpacing.sm)
+        .frame(minHeight: 44)
+        .overlay(alignment: .top) { Divider() }
     }
 
     private func softCircuitNotice(_ circuit: DownloadCoordinator.ManhuaGuiSoftCircuit) -> some View {
@@ -328,18 +331,6 @@ struct QueueWorkspaceView: View {
         }
     }
 
-    private func queueMetric(_ title: String, _ value: Int, tint: Color) -> some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            Text(title)
-                .font(MGFont.caption)
-                .foregroundStyle(.secondary)
-            Text("\(value)")
-                .font(MGFont.number)
-                .foregroundStyle(tint)
-        }
-        .frame(minWidth: 38, alignment: .trailing)
-    }
-
     private func statusTitle(_ state: DownloadTaskItem.State) -> String {
         switch state {
         case .queued: return "排队中"
@@ -347,6 +338,16 @@ struct QueueWorkspaceView: View {
         case .done: return "已完成"
         case .canceled: return "已取消"
         case .failed: return "失败"
+        }
+    }
+
+    private func statusImage(_ state: DownloadTaskItem.State) -> String {
+        switch state {
+        case .queued: return "clock"
+        case .running: return "arrow.down.circle"
+        case .done: return "checkmark.circle"
+        case .canceled: return "xmark.circle"
+        case .failed: return "exclamationmark.circle"
         }
     }
 

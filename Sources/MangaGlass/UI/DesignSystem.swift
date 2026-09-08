@@ -8,32 +8,27 @@ enum MGActionVariant {
 }
 
 enum MGTheme {
-    static let accent = Color(red: 0.039, green: 0.357, blue: 0.847)
-    static let accentStrong = Color(red: 0.027, green: 0.278, blue: 0.690)
+    static let accent = Color(nsColor: .systemBlue)
+    static let accentStrong = Color(nsColor: .systemBlue).opacity(0.82)
     static let success = Color(nsColor: .systemGreen)
     static let warning = Color(nsColor: .systemOrange)
     static let danger = Color(nsColor: .systemRed)
     static let queued = Color.secondary
 
     static func background(for scheme: ColorScheme) -> Color {
-        scheme == .dark
-            ? Color(red: 0.075, green: 0.078, blue: 0.090)
-            : Color(red: 0.965, green: 0.967, blue: 0.973)
+        Color(nsColor: .windowBackgroundColor)
     }
 
     static func surface(for scheme: ColorScheme, elevated: Bool = false) -> Color {
-        if scheme == .dark {
-            return Color.white.opacity(elevated ? 0.070 : 0.045)
-        }
-        return Color.white.opacity(elevated ? 0.94 : 0.78)
+        Color(nsColor: .controlBackgroundColor)
     }
 
     static func inset(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.black.opacity(0.22) : Color.black.opacity(0.045)
+        Color(nsColor: .controlBackgroundColor)
     }
 
     static func divider(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.11) : Color.black.opacity(0.10)
+        Color(nsColor: .separatorColor)
     }
 
     static func statusColor(for state: DownloadTaskItem.State) -> Color {
@@ -48,13 +43,13 @@ enum MGTheme {
 }
 
 enum MGFont {
-    static let appTitle = Font.system(size: 15, weight: .semibold)
-    static let title = Font.system(size: 22, weight: .bold)
+    static let appTitle = Font.system(size: 14, weight: .semibold)
+    static let title = Font.system(size: 22, weight: .semibold)
     static let section = Font.system(size: 14, weight: .semibold)
     static let body = Font.system(size: 13, weight: .regular)
-    static let bodyStrong = Font.system(size: 13, weight: .semibold)
-    static let caption = Font.system(size: 11, weight: .regular)
-    static let captionStrong = Font.system(size: 11, weight: .semibold)
+    static let bodyStrong = Font.system(size: 13, weight: .medium)
+    static let caption = Font.system(size: 12, weight: .regular)
+    static let captionStrong = Font.system(size: 12, weight: .medium)
     static let mono = Font.system(size: 11, weight: .medium, design: .monospaced)
     static let number = Font.system(size: 12, weight: .semibold, design: .monospaced)
 }
@@ -65,6 +60,7 @@ enum MGSpacing {
     static let sm: CGFloat = 12
     static let md: CGFloat = 16
     static let lg: CGFloat = 24
+    static let content: CGFloat = 20
 }
 
 struct MGActionButtonStyle: ButtonStyle {
@@ -75,14 +71,13 @@ struct MGActionButtonStyle: ButtonStyle {
         configuration.label
             .font(MGFont.bodyStrong)
             .foregroundStyle(foreground)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(background(pressed: configuration.isPressed), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 12)
+            .frame(minHeight: variant == .primary ? 32 : 28)
+            .background(background(pressed: configuration.isPressed), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(border, lineWidth: variant == .ghost ? 0 : 0.8)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(border, lineWidth: variant == .ghost ? 0 : 0.6)
             }
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 
@@ -130,12 +125,8 @@ struct MGSelectionButtonStyle: ButtonStyle {
             .foregroundStyle(selected ? tint : Color.primary.opacity(0.78))
             .padding(.horizontal, horizontalPadding)
             .padding(.vertical, verticalPadding)
-            .background(selected ? tint.opacity(colorScheme == .dark ? 0.25 : 0.12) : MGTheme.inset(for: colorScheme).opacity(0.56), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(selected ? tint.opacity(0.55) : MGTheme.divider(for: colorScheme).opacity(0.7), lineWidth: 0.8)
-            }
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .frame(minHeight: 28)
+            .background(selected ? tint.opacity(colorScheme == .dark ? 0.20 : 0.10) : (configuration.isPressed ? MGTheme.divider(for: colorScheme).opacity(0.45) : Color.clear), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }
 
@@ -161,7 +152,7 @@ struct MGEmptyState: View {
 }
 
 extension View {
-    func mgSurface(elevated: Bool = false, radius: CGFloat = 12) -> some View {
+    func mgSurface(elevated: Bool = false, radius: CGFloat = 10) -> some View {
         modifier(MGSurfaceModifier(elevated: elevated, radius: radius))
     }
 
@@ -176,6 +167,10 @@ extension View {
     func mgTextField() -> some View {
         modifier(MGTextFieldModifier())
     }
+
+    func mgHoverBackground(radius: CGFloat = 6) -> some View {
+        modifier(MGHoverBackgroundModifier(radius: radius))
+    }
 }
 
 private struct MGSurfaceModifier: ViewModifier {
@@ -188,7 +183,7 @@ private struct MGSurfaceModifier: ViewModifier {
             .background(MGTheme.surface(for: colorScheme, elevated: elevated), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(MGTheme.divider(for: colorScheme).opacity(elevated ? 1 : 0.72), lineWidth: 0.8)
+                    .stroke(MGTheme.divider(for: colorScheme).opacity(elevated ? 0.8 : 0), lineWidth: 0.6)
             }
     }
 }
@@ -230,11 +225,25 @@ private struct MGTextFieldModifier: ViewModifier {
             .textFieldStyle(.plain)
             .font(MGFont.body)
             .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(MGTheme.inset(for: colorScheme), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .frame(minHeight: 32)
+            .background(MGTheme.inset(for: colorScheme), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(MGTheme.divider(for: colorScheme), lineWidth: 0.8)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(MGTheme.divider(for: colorScheme), lineWidth: 0.6)
             }
+    }
+}
+
+private struct MGHoverBackgroundModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var hovering = false
+    let radius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .background(hovering ? (colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.04)) : .clear,
+                        in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.1), value: hovering)
     }
 }

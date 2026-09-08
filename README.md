@@ -17,7 +17,6 @@ This project is a desktop app. It is not a general-purpose crawler framework and
 
 - CopyManga family
   - `mangacopy.com`
-  - `2025copy.com`
   - `2026copy.com`
 - Manhuagui
   - `manhuagui.com`

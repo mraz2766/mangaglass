@@ -44,16 +44,18 @@ struct ContentView: View {
                 .fill(MGTheme.divider(for: colorScheme))
                 .frame(width: 1)
 
-            ZStack {
-                MGTheme.background(for: colorScheme)
-                    .ignoresSafeArea()
+            GeometryReader { proxy in
+                ZStack {
+                    MGTheme.background(for: colorScheme)
+                        .ignoresSafeArea()
 
-                ForEach(WorkspaceDestination.allCases) { workspaceDestination in
-                    if workspaceDestination == destination {
-                        workspace(for: workspaceDestination)
-                            .padding(MGSpacing.md)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .transition(workspaceTransition)
+                    ForEach(WorkspaceDestination.allCases) { workspaceDestination in
+                        if workspaceDestination == destination {
+                            workspace(for: workspaceDestination)
+                                .padding(proxy.size.width < 760 ? MGSpacing.md : MGSpacing.content)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(workspaceTransition)
+                        }
                     }
                 }
             }

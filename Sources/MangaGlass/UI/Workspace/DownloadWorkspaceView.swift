@@ -28,23 +28,19 @@ struct DownloadWorkspaceView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let compact = proxy.size.width < 760
+            let compact = proxy.size.width < 820
+            let short = proxy.size.height < 640
             VStack(alignment: .leading, spacing: MGSpacing.sm) {
-                pageHeader
+                pageHeader(showSubtitle: !short)
                 linkWorkspace
                 if compact {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: MGSpacing.sm) {
-                            comicInspector
-                            chapterWorkspace(columns: 2)
-                                .frame(minHeight: 420)
-                        }
-                    }
+                    comicSummary(short: short)
+                    chapterWorkspace
                 } else {
-                    HStack(alignment: .top, spacing: MGSpacing.sm) {
+                    HStack(alignment: .top, spacing: MGSpacing.content) {
                         comicInspector
-                            .frame(width: min(max(proxy.size.width * 0.25, 220), 272))
-                        chapterWorkspace(columns: proxy.size.width > 1180 ? 5 : 4)
+                            .frame(width: 200)
+                        chapterWorkspace
                     }
                 }
             }
@@ -61,26 +57,18 @@ struct DownloadWorkspaceView: View {
         }
     }
 
-    private var pageHeader: some View {
+    private func pageHeader(showSubtitle: Bool) -> some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("下载")
                     .font(MGFont.title)
-                Text("解析目录并选择要保存到本地的章节。")
-                    .font(MGFont.caption)
-                    .foregroundStyle(.secondary)
+                if showSubtitle {
+                    Text("解析目录并选择要保存到本地的章节。")
+                        .font(MGFont.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
-            if vm.showParseDone {
-                Label(vm.parseDoneText, systemImage: "checkmark.circle.fill")
-                    .mgStatusTag(tint: MGTheme.success)
-            } else if vm.isLoading {
-                HStack(spacing: 5) {
-                    ProgressView().controlSize(.small)
-                    Text(vm.parseLiveText.isEmpty ? "正在解析" : vm.parseLiveText)
-                }
-                .mgStatusTag(tint: MGTheme.accent)
-            }
             Button {
                 showLogs = true
             } label: {
@@ -94,6 +82,7 @@ struct DownloadWorkspaceView: View {
             .buttonStyle(MGActionButtonStyle(variant: .ghost))
             .help("打开队列")
         }
+        .frame(minHeight: 48)
     }
 
     private var linkWorkspace: some View {
@@ -120,6 +109,7 @@ struct DownloadWorkspaceView: View {
                             Button(mirror.displayName) {
                                 openInBrowser(mirror.webBaseURL.absoluteString)
                             }
+                            .help(mirror.webBaseURL.host ?? mirror.displayName)
                         }
                     }
                     Section("其他站点") {
@@ -140,11 +130,42 @@ struct DownloadWorkspaceView: View {
                 .help(vm.destinationFolder.path)
 
                 Spacer(minLength: 0)
-                if !vm.statusText.isEmpty && !vm.showParseDone && !vm.isLoading {
+                if vm.isLoading {
+                    HStack(spacing: 5) {
+                        ProgressView().controlSize(.small)
+                        Text(vm.parseLiveText.isEmpty ? "解析中" : vm.parseLiveText)
+                    }
+                    .font(MGFont.caption)
+                    .foregroundStyle(MGTheme.accent)
+                } else if vm.showParseDone {
+                    Label(vm.parseDoneText, systemImage: "checkmark.circle.fill")
+                        .font(MGFont.caption)
+                        .foregroundStyle(MGTheme.success)
+                } else if !vm.statusText.isEmpty {
                     Text(vm.statusText)
                         .font(MGFont.caption)
                         .foregroundStyle(vm.errorText.isEmpty ? .secondary : MGTheme.danger)
                         .lineLimit(1)
+                }
+            }
+
+            if !vm.errorText.isEmpty {
+                HStack(alignment: .top, spacing: MGSpacing.xs) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(MGTheme.danger)
+                    Text(vm.errorText)
+                        .font(MGFont.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 0)
+                    if let suggestion = vm.lastMirrorSuggestion {
+                        Button("切换到\(suggestion.displayName)") { vm.applySuggestedMirrorAndReload() }
+                            .buttonStyle(MGActionButtonStyle(variant: .secondary))
+                    }
+                    Button("复制错误") { vm.copyCurrentError() }
+                        .buttonStyle(MGActionButtonStyle(variant: .ghost))
+                    Button("查看日志") { showLogs = true }
+                        .buttonStyle(MGActionButtonStyle(variant: .ghost))
                 }
             }
         }
@@ -156,15 +177,15 @@ struct DownloadWorkspaceView: View {
         VStack(alignment: .leading, spacing: MGSpacing.sm) {
             coverView
                 .frame(maxWidth: .infinity)
-                .frame(height: 230)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .frame(height: 224)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(vm.comic?.name ?? "等待解析")
                     .font(MGFont.section)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(inspectorSubtitle)
+                Text(vm.comic?.site.displayName ?? "粘贴链接以开始")
                     .font(MGFont.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -179,41 +200,30 @@ struct DownloadWorkspaceView: View {
                 .padding(.top, 2)
             }
 
-            if !vm.errorText.isEmpty {
-                VStack(alignment: .leading, spacing: MGSpacing.xs) {
-                    Label("解析失败", systemImage: "exclamationmark.triangle.fill")
-                        .font(MGFont.captionStrong)
-                        .foregroundStyle(MGTheme.danger)
-                    Text(vm.errorText)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func comicSummary(short: Bool) -> some View {
+        HStack(spacing: MGSpacing.sm) {
+            coverView
+                .frame(width: short ? 40 : 56, height: short ? 54 : 76)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(vm.comic?.name ?? "等待解析")
+                    .font(MGFont.section)
+                    .lineLimit(1)
+                Text(vm.comic?.site.displayName ?? "粘贴链接以开始")
+                    .font(MGFont.caption)
+                    .foregroundStyle(.secondary)
+                if let comic = vm.comic {
+                    Text("分类 \(comic.volumes.count) · 章节 \(vm.totalChapterCount) · 已选 \(selectedCount)")
                         .font(MGFont.caption)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let suggestion = vm.lastMirrorSuggestion {
-                        Button("切换到 \(suggestion.displayName) 重试") {
-                            vm.applySuggestedMirrorAndReload()
-                        }
-                        .buttonStyle(MGActionButtonStyle(variant: .secondary))
-                    }
-                    HStack(spacing: MGSpacing.xs) {
-                        Button("复制错误") { vm.copyCurrentError() }
-                            .buttonStyle(MGActionButtonStyle(variant: .ghost))
-                        Button("查看日志") { showLogs = true }
-                            .buttonStyle(MGActionButtonStyle(variant: .ghost))
-                    }
                 }
-                .padding(MGSpacing.xs)
-                .mgInset()
             }
-
             Spacer(minLength: 0)
-            Text(vm.destinationFolder.path)
-                .font(MGFont.mono)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .textSelection(.enabled)
         }
-        .padding(MGSpacing.sm)
-        .mgSurface()
     }
 
     private func metadata(_ label: String, _ value: String) -> some View {
@@ -258,10 +268,6 @@ struct DownloadWorkspaceView: View {
     }
 
     private var chapterWorkspace: some View {
-        chapterWorkspace(columns: 4)
-    }
-
-    private func chapterWorkspace(columns: Int) -> some View {
         VStack(alignment: .leading, spacing: MGSpacing.sm) {
             chapterToolbar
             volumeFilters
@@ -269,27 +275,19 @@ struct DownloadWorkspaceView: View {
             if let empty = emptyState {
                 MGEmptyState(title: empty.title, systemImage: empty.image, detail: empty.detail)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .mgInset()
             } else {
-                ZStack(alignment: .bottom) {
-                    ScrollView {
-                        chapterSections(columns: columns)
-                            .padding(MGSpacing.sm)
-                    }
-                    .coordinateSpace(name: "chapter-canvas")
-                    .gesture(chapterDragGesture)
-                    .onPreferenceChange(ChapterFrameKey.self) { chapterFrames = $0 }
-                    .overlay(DragRectOverlay(rect: dragRect))
-
-                    if vm.selectedVisibleChapterCount > 0 {
-                        selectedActionBar
-                            .padding(MGSpacing.sm)
-                            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-                    }
+                ScrollView {
+                    chapterSections
+                        .padding(.vertical, MGSpacing.xs)
                 }
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: selectedCount)
-                .mgInset()
+                .coordinateSpace(name: "chapter-canvas")
+                .gesture(chapterDragGesture)
+                .onPreferenceChange(ChapterFrameKey.self) { chapterFrames = $0 }
+                .overlay(DragRectOverlay(rect: dragRect))
             }
+
+            Divider()
+            selectedActionBar
         }
         .padding(MGSpacing.sm)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -309,7 +307,7 @@ struct DownloadWorkspaceView: View {
                 Spacer()
                 Button("全选") { vm.selectAllVisible() }
                     .buttonStyle(MGActionButtonStyle(variant: .secondary))
-                Button("清空") { vm.deselectAllVisible() }
+                Button("清除章节选择") { vm.deselectAllVisible() }
                     .buttonStyle(MGActionButtonStyle(variant: .ghost))
             }
 
@@ -334,12 +332,12 @@ struct DownloadWorkspaceView: View {
                 .padding(.vertical, 7)
                 .mgInset()
 
-                HStack(spacing: 3) {
-                    ForEach(SortDirection.allCases) { direction in
-                        Button(direction.rawValue) { vm.chapterSortDirection = direction }
-                            .buttonStyle(MGSelectionButtonStyle(selected: vm.chapterSortDirection == direction, horizontalPadding: 8, verticalPadding: 6))
-                    }
+                Picker("排序", selection: $vm.chapterSortDirection) {
+                    ForEach(SortDirection.allCases) { direction in Text(direction.rawValue).tag(direction) }
                 }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 112)
             }
         }
     }
@@ -352,7 +350,7 @@ struct DownloadWorkspaceView: View {
                         showVolumeFilters.toggle()
                     }
                 } label: {
-                    Label(showVolumeFilters ? "隐藏分类" : "显示分类", systemImage: "square.grid.2x2")
+                    Label("分类", systemImage: showVolumeFilters ? "chevron.down" : "chevron.right")
                 }
                 .buttonStyle(MGActionButtonStyle(variant: .ghost))
                 Text("\(selectedVolumeCount)/\(vm.displayVolumes.count)")
@@ -360,16 +358,16 @@ struct DownloadWorkspaceView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if showVolumeFilters {
-                    Button("全部") { vm.selectAllVolumes() }
+                    Button("全部分类") { vm.selectAllVolumes() }
                         .buttonStyle(MGActionButtonStyle(variant: .ghost))
-                    Button("清空") { vm.deselectAllVolumes() }
+                    Button("清除分类") { vm.deselectAllVolumes() }
                         .buttonStyle(MGActionButtonStyle(variant: .ghost))
                 }
             }
 
             if showVolumeFilters {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 6)], alignment: .leading, spacing: 6) {
                         ForEach(vm.displayVolumes) { volume in
                             let selected = vm.selectedVolumeIDs.contains(volume.id)
                             let matching = volume.chapters.filter(matchesCurrentSearch).count
@@ -379,8 +377,7 @@ struct DownloadWorkspaceView: View {
                                 HStack(spacing: 5) {
                                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                                     Text(volume.displayName)
-                                    Text("\(vm.selectedChapterCount(in: volume.id))/\(matching)")
-                                        .foregroundStyle(.secondary)
+                                    Text("· \(matching)").foregroundStyle(.secondary)
                                 }
                             }
                             .buttonStyle(MGSelectionButtonStyle(selected: selected, horizontalPadding: 8, verticalPadding: 6))
@@ -388,11 +385,12 @@ struct DownloadWorkspaceView: View {
                         }
                     }
                 }
+                .frame(maxHeight: 96, alignment: .top)
             }
         }
     }
 
-    private func chapterSections(columns: Int) -> some View {
+    private var chapterSections: some View {
         LazyVStack(alignment: .leading, spacing: MGSpacing.md) {
             ForEach(vm.filteredVolumeSections) { section in
                 VStack(alignment: .leading, spacing: MGSpacing.xs) {
@@ -411,7 +409,7 @@ struct DownloadWorkspaceView: View {
                         .buttonStyle(MGActionButtonStyle(variant: .ghost))
                     }
 
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 126), spacing: MGSpacing.xs), count: columns), spacing: MGSpacing.xs) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: MGSpacing.xs)], spacing: 4) {
                         ForEach(section.chapters) { chapter in
                             chapterCell(chapter)
                         }
@@ -427,7 +425,7 @@ struct DownloadWorkspaceView: View {
             vm.selectChapter(chapter, modifiers: NSEvent.modifierFlags)
         } label: {
             HStack(spacing: 7) {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                Image(systemName: selected ? "checkmark.square.fill" : "square")
                     .foregroundStyle(selected ? MGTheme.accent : .secondary)
                 Text(chapter.displayName)
                     .font(MGFont.body)
@@ -435,14 +433,10 @@ struct DownloadWorkspaceView: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+            .frame(height: 34)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(selected ? MGTheme.accent.opacity(colorScheme == .dark ? 0.23 : 0.11) : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(selected ? MGTheme.accent.opacity(0.52) : MGTheme.divider(for: colorScheme).opacity(0.54), lineWidth: 0.8)
-            }
             .background(
                 GeometryReader { proxy in
                     Color.clear.preference(key: ChapterFrameKey.self, value: [chapter.id: proxy.frame(in: .named("chapter-canvas"))])
@@ -450,22 +444,25 @@ struct DownloadWorkspaceView: View {
             )
         }
         .buttonStyle(.plain)
+        .mgHoverBackground()
         .help(chapter.displayName)
     }
 
     private var selectedActionBar: some View {
         HStack(spacing: MGSpacing.xs) {
-            Label("当前可见已选 \(vm.selectedVisibleChapterCount) 话", systemImage: "checkmark.circle.fill")
+            Label(selectionSummary, systemImage: "checkmark.square.fill")
                 .font(MGFont.bodyStrong)
                 .foregroundStyle(MGTheme.accent)
             Spacer()
-            Button("清空") { vm.deselectAllVisible() }
+            Button("清除选择") { vm.deselectAllVisible() }
                 .buttonStyle(MGActionButtonStyle(variant: .secondary))
-            Button("加入队列", action: requestStartDownload)
+                .disabled(vm.selectedVisibleChapterCount == 0)
+            Button("加入队列 \(vm.selectedVisibleChapterCount)", action: requestStartDownload)
                 .buttonStyle(MGActionButtonStyle(variant: .primary))
+                .disabled(vm.selectedVisibleChapterCount == 0)
+                .help(vm.selectedVisibleChapterCount == 0 ? "请选择章节" : "将所选章节加入下载队列")
         }
-        .padding(MGSpacing.xs)
-        .mgSurface(elevated: true, radius: 10)
+        .frame(minHeight: 44)
     }
 
     private var emptyState: (title: String, detail: String, image: String)? {
@@ -554,9 +551,10 @@ struct DownloadWorkspaceView: View {
         return name.isEmpty ? vm.destinationFolder.path : name
     }
 
-    private var inspectorSubtitle: String {
-        if vm.isLoading { return vm.parseLiveText.isEmpty ? "正在解析…" : vm.parseLiveText }
-        return vm.statusText
+    private var selectionSummary: String {
+        let total = selectedCount
+        let visible = vm.selectedVisibleChapterCount
+        return total == visible ? "已选 \(total) 话" : "已选 \(total) 话，当前可见 \(visible) 话"
     }
 
     private var confirmationBinding: Binding<Bool> {

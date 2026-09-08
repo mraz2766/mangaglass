@@ -34,7 +34,6 @@ struct HistoryWorkspaceView: View {
                     detail: "成功解析漫画后，可从这里快速返回。"
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .mgSurface()
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -62,12 +61,20 @@ struct HistoryWorkspaceView: View {
                 .foregroundStyle(MGTheme.accent)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 4) {
-                Text(record.title)
-                    .font(MGFont.bodyStrong)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(record.title)
+                        .font(MGFont.bodyStrong)
+                        .lineLimit(1)
+                    if CopyMangaMirror.isRetired(record.input) {
+                        Text("站点已停用")
+                            .font(MGFont.caption)
+                            .foregroundStyle(MGTheme.danger)
+                    }
+                }
                 HStack(spacing: 6) {
                     Text(record.siteName)
                     Text(relativeTime(record.updatedAt))
+                        .help(absoluteTime(record.updatedAt))
                 }
                 .font(MGFont.caption)
                 .foregroundStyle(.secondary)
@@ -75,27 +82,36 @@ struct HistoryWorkspaceView: View {
                     .font(MGFont.mono)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
                     .textSelection(.enabled)
+                    .help(record.input)
             }
             Spacer(minLength: 0)
             Button("加载") {
                 vm.applyRecentRecord(record)
                 openDownload()
             }
-            .buttonStyle(MGActionButtonStyle(variant: .primary))
+            .buttonStyle(MGActionButtonStyle(variant: .secondary))
             Button {
                 vm.removeRecentRecord(record)
             } label: {
                 Image(systemName: "trash")
             }
             .buttonStyle(MGActionButtonStyle(variant: .ghost))
+            .frame(width: 28, height: 28)
             .help("删除历史记录")
         }
         .padding(MGSpacing.sm)
+        .frame(minHeight: 76)
+        .mgHoverBackground(radius: 0)
     }
 
     private func relativeTime(_ date: Date) -> String {
         RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+    }
+
+    private func absoluteTime(_ date: Date) -> String {
+        DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
     }
 }
 
@@ -106,15 +122,17 @@ struct SettingsWorkspaceView: View {
     @State private var showClearConfirmation = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: MGSpacing.lg) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("设置")
-                        .font(MGFont.title)
-                    Text("外观、访问凭据和本地下载目录。")
-                        .font(MGFont.caption)
-                        .foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: MGSpacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("设置")
+                    .font(MGFont.title)
+                Text("外观、访问凭据和本地下载目录。")
+                    .font(MGFont.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: MGSpacing.lg) {
 
                 settingsSection("外观", detail: "仅保留系统、浅色和深色三种显示模式。") {
                     Picker("显示模式", selection: $vm.themeMode) {
@@ -124,6 +142,7 @@ struct SettingsWorkspaceView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
+                    .frame(width: 240)
                 }
 
                 settingsSection("下载目录", detail: vm.destinationFolder.path) {
@@ -131,6 +150,8 @@ struct SettingsWorkspaceView: View {
                         Text(vm.destinationFolder.lastPathComponent.isEmpty ? vm.destinationFolder.path : vm.destinationFolder.lastPathComponent)
                             .font(MGFont.bodyStrong)
                             .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(vm.destinationFolder.path)
                         Spacer()
                         Button("选择目录") { vm.chooseDestination() }
                             .buttonStyle(MGActionButtonStyle(variant: .secondary))
@@ -155,17 +176,19 @@ struct SettingsWorkspaceView: View {
                             Image(systemName: revealCookie ? "eye.slash" : "eye")
                         }
                         .buttonStyle(MGActionButtonStyle(variant: .secondary))
+                        .frame(width: 28, height: 28)
                         .help(revealCookie ? "隐藏 Cookie" : "显示 Cookie")
                     }
                 }
 
                 settingsSection("站点入口", detail: "在默认浏览器中打开支持站点。") {
-                    HStack(spacing: MGSpacing.xs) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: MGSpacing.xs)], alignment: .leading, spacing: MGSpacing.xs) {
                         ForEach(CopyMangaMirror.allCases) { mirror in
                             Button(mirror.displayName) {
                                 openInBrowser(mirror.webBaseURL.absoluteString)
                             }
                             .buttonStyle(MGActionButtonStyle(variant: .secondary))
+                            .help(mirror.webBaseURL.host ?? mirror.displayName)
                         }
                         Button("漫画柜") { openInBrowser("https://www.manhuagui.com") }
                             .buttonStyle(MGActionButtonStyle(variant: .secondary))
@@ -181,8 +204,10 @@ struct SettingsWorkspaceView: View {
                             .buttonStyle(MGActionButtonStyle(variant: .secondary))
                     }
                 }
+                }
+                .frame(maxWidth: 720, alignment: .leading)
+                .padding(.bottom, MGSpacing.lg)
             }
-            .padding(.bottom, MGSpacing.lg)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .alert("清空缓存？", isPresented: $showClearConfirmation) {
@@ -204,10 +229,9 @@ struct SettingsWorkspaceView: View {
                     .textSelection(.enabled)
             }
             content()
+            Divider()
         }
-        .padding(MGSpacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .mgSurface()
     }
 
     private func openInBrowser(_ rawURL: String) {

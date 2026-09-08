@@ -13,7 +13,7 @@ struct WorkspaceSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: MGSpacing.md) {
             HStack(spacing: 9) {
-                BrandMarkView(size: 30)
+                BrandMarkView(size: 28)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("MangaGlass")
                         .font(MGFont.appTitle)
@@ -30,7 +30,7 @@ struct WorkspaceSidebar: View {
                     Button {
                         destination = item
                     } label: {
-                        HStack(spacing: 9) {
+                        HStack(spacing: 10) {
                             Image(systemName: item.systemImage)
                                 .frame(width: 16)
                             Text(item.title)
@@ -42,13 +42,14 @@ struct WorkspaceSidebar: View {
                             }
                         }
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
+                        .frame(height: 34)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
-                        .background(item == destination ? MGTheme.accent.opacity(colorScheme == .dark ? 0.23 : 0.11) : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(item == destination ? MGTheme.accent.opacity(colorScheme == .dark ? 0.20 : 0.10) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(item == destination ? MGTheme.accent : .primary.opacity(0.82))
+                    .fontWeight(item == destination ? .medium : .regular)
                     .accessibilityLabel("打开\(item.title)")
                 }
             }
@@ -76,17 +77,19 @@ struct WorkspaceSidebar: View {
                         ProgressView(value: vm.downloader.progress)
                             .progressViewStyle(.linear)
                     }
-                    Text("排队 \(counts.queued) · 进行中 \(counts.running) · 失败 \(counts.failed)")
-                        .font(MGFont.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    if counts.queued + counts.running + counts.failed > 0 {
+                        Text("排队 \(counts.queued) · 进行中 \(counts.running) · 失败 \(counts.failed)")
+                            .font(MGFont.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 .padding(MGSpacing.sm)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .mgInset()
             }
             .buttonStyle(.plain)
-            .padding(MGSpacing.xs)
+            .overlay(alignment: .top) { Divider() }
+            .padding(.horizontal, MGSpacing.xs)
         }
         .padding(.vertical, MGSpacing.xs)
         .frame(maxHeight: .infinity, alignment: .top)

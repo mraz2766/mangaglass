@@ -25,16 +25,17 @@ struct MangaSiteConfig: Hashable, Codable {
 
 enum CopyMangaMirror: String, CaseIterable, Identifiable {
     case mangacopy = "mangacopy.com"
-    case copy2025 = "2025copy.com"
     case copy2026 = "2026copy.com"
+
+    static let retiredHost = "2025copy.com"
+    static let retiredMessage = "2025 站点已停用，请使用主站或备用站链接。"
     
     var id: String { rawValue }
     
     var displayName: String {
         switch self {
-        case .mangacopy: return "主站 (mangacopy)"
-        case .copy2025: return "备用一 (2025)"
-        case .copy2026: return "备用二 (2026)"
+        case .mangacopy: return "主站"
+        case .copy2026: return "备用站"
         }
     }
 
@@ -81,6 +82,10 @@ enum CopyMangaMirror: String, CaseIterable, Identifiable {
             return nil
         }
         return allCases.first { normalizedHost.contains($0.rawValue) }
+    }
+
+    static func isRetired(_ text: String?) -> Bool {
+        text?.lowercased().contains(retiredHost) == true
     }
 
     static func fallbackSiteConfigs(startingFrom requestedHost: String?) -> [MangaSiteConfig] {

@@ -247,6 +247,10 @@ final class MainViewModel: ObservableObject {
 
     func loadComic() {
         guard !isLoading else { return }
+        guard !CopyMangaMirror.isRetired(inputURL) else {
+            presentRetiredSiteMessage()
+            return
+        }
         isLoading = true
         showParseDone = false
         parseDoneText = ""
@@ -447,6 +451,14 @@ final class MainViewModel: ObservableObject {
     }
 
     func startDownload() {
+        if let comic, isRetiredCopySite(comic.site) {
+            presentRetiredSiteMessage()
+            return
+        }
+        if downloader.taskItems.contains(where: { $0.state == .queued && isRetiredCopySite($0.comic.site) }) {
+            presentRetiredSiteMessage()
+            return
+        }
         let queueConcurrent = queueMaxConcurrent()
         if let comic = comic {
             let selected: [ComicChapter]
@@ -480,6 +492,11 @@ final class MainViewModel: ObservableObject {
 
     func resumeDownload() {
         guard let comic else { return }
+        guard !isRetiredCopySite(comic.site),
+              !downloader.taskItems.contains(where: { ($0.state == .queued || $0.state == .running) && isRetiredCopySite($0.comic.site) }) else {
+            presentRetiredSiteMessage()
+            return
+        }
         downloader.resume()
         if !downloader.isRunning {
             let concurrent = downloadConcurrent(for: comic.site)
@@ -503,6 +520,10 @@ final class MainViewModel: ObservableObject {
     }
 
     func retryItem(_ item: DownloadTaskItem) {
+        guard !isRetiredCopySite(item.comic.site) else {
+            presentRetiredSiteMessage()
+            return
+        }
         appendLog("重试单独章节：\(item.chapter.displayName)")
         downloader.taskItems.removeAll { $0.id == item.id }
         downloader.add(chapters: [item.chapter], comic: item.comic, destination: item.destination, cookie: item.cookie)
@@ -517,6 +538,10 @@ final class MainViewModel: ObservableObject {
         guard !failed.isEmpty else {
             statusText = "没有失败任务可重下。"
             appendLog("重试跳过：没有失败任务")
+            return
+        }
+        guard !failed.contains(where: { isRetiredCopySite($0.comic.site) }) else {
+            presentRetiredSiteMessage()
             return
         }
 
@@ -568,7 +593,21 @@ final class MainViewModel: ObservableObject {
 
     private func isCopyFamily(_ site: MangaSiteConfig) -> Bool {
         guard let host = site.webBase.host?.lowercased() else { return false }
-        return host.contains("mangacopy.com") || host.contains("2025copy.com") || host.contains("2026copy.com")
+        return host.contains("mangacopy.com") || host.contains("2026copy.com")
+    }
+
+    private func isRetiredCopySite(_ site: MangaSiteConfig) -> Bool {
+        CopyMangaMirror.isRetired(site.webBase.host)
+    }
+
+    private func presentRetiredSiteMessage() {
+        errorText = CopyMangaMirror.retiredMessage
+        statusText = "站点已停用"
+        showParseDone = false
+        parseDoneText = ""
+        parseLiveText = ""
+        lastMirrorSuggestion = nil
+        appendLog(CopyMangaMirror.retiredMessage)
     }
 
     func clearLogs() {
@@ -593,6 +632,10 @@ final class MainViewModel: ObservableObject {
 
     func resumeRestoredQueue() {
         shouldOfferRestoredQueuePrompt = false
+        guard !downloader.taskItems.contains(where: { $0.state == .queued && isRetiredCopySite($0.comic.site) }) else {
+            presentRetiredSiteMessage()
+            return
+        }
         let counts = downloader.countsSummary()
         guard counts.queued > 0 else {
             statusText = "恢复的队列中没有排队任务，可在下载管理中重试失败项。"
