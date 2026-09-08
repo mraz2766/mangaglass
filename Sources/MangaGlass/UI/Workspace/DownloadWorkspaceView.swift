@@ -15,6 +15,7 @@ struct DownloadWorkspaceView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var showVolumeFilters = true
+    @State private var expandVolumeFilters = false
     @State private var chapterFrames: [String: CGRect] = [:]
     @State private var dragStart: CGPoint?
     @State private var dragCurrent: CGPoint?
@@ -30,7 +31,7 @@ struct DownloadWorkspaceView: View {
         GeometryReader { proxy in
             let compact = proxy.size.width < 820
             let short = proxy.size.height < 640
-            VStack(alignment: .leading, spacing: MGSpacing.sm) {
+            VStack(alignment: .leading, spacing: MGSpacing.xs) {
                 pageHeader(showSubtitle: !short)
                 linkWorkspace
                 if compact {
@@ -205,9 +206,9 @@ struct DownloadWorkspaceView: View {
     }
 
     private func comicSummary(short: Bool) -> some View {
-        HStack(spacing: MGSpacing.sm) {
+        HStack(spacing: MGSpacing.xs) {
             coverView
-                .frame(width: short ? 40 : 56, height: short ? 54 : 76)
+                .frame(width: short ? 36 : 40, height: short ? 48 : 54)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
                 Text(vm.comic?.name ?? "等待解析")
@@ -224,6 +225,7 @@ struct DownloadWorkspaceView: View {
             }
             Spacer(minLength: 0)
         }
+        .frame(height: 56)
     }
 
     private func metadata(_ label: String, _ value: String) -> some View {
@@ -343,14 +345,14 @@ struct DownloadWorkspaceView: View {
     }
 
     private var volumeFilters: some View {
-        VStack(alignment: .leading, spacing: MGSpacing.xs) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Button {
                     withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
                         showVolumeFilters.toggle()
                     }
                 } label: {
-                    Label("分类", systemImage: showVolumeFilters ? "chevron.down" : "chevron.right")
+                    Label("显示分类", systemImage: showVolumeFilters ? "chevron.down" : "chevron.right")
                 }
                 .buttonStyle(MGActionButtonStyle(variant: .ghost))
                 Text("\(selectedVolumeCount)/\(vm.displayVolumes.count)")
@@ -358,34 +360,52 @@ struct DownloadWorkspaceView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if showVolumeFilters {
-                    Button("全部分类") { vm.selectAllVolumes() }
+                    Button("全部显示") { vm.selectAllVolumes() }
                         .buttonStyle(MGActionButtonStyle(variant: .ghost))
-                    Button("清除分类") { vm.deselectAllVolumes() }
+                    Button("全部隐藏") { vm.deselectAllVolumes() }
                         .buttonStyle(MGActionButtonStyle(variant: .ghost))
                 }
             }
 
             if showVolumeFilters {
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 6)], alignment: .leading, spacing: 6) {
-                        ForEach(vm.displayVolumes) { volume in
-                            let selected = vm.selectedVolumeIDs.contains(volume.id)
-                            let matching = volume.chapters.filter(matchesCurrentSearch).count
-                            Button {
-                                vm.toggleVolume(volume.id)
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                                    Text(volume.displayName)
-                                    Text("· \(matching)").foregroundStyle(.secondary)
-                                }
-                            }
-                            .buttonStyle(MGSelectionButtonStyle(selected: selected, horizontalPadding: 8, verticalPadding: 6))
-                            .disabled(!vm.chapterSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && matching == 0)
+                if expandVolumeFilters {
+                    ScrollView {
+                        volumeFilterGrid(Array(vm.displayVolumes))
+                    }
+                    .frame(maxHeight: 96, alignment: .top)
+                } else {
+                    volumeFilterGrid(Array(vm.displayVolumes.prefix(6)))
+                }
+
+                if vm.displayVolumes.count > 6 {
+                    Button(expandVolumeFilters ? "收起分类" : "展开分类") {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                            expandVolumeFilters.toggle()
                         }
                     }
+                    .buttonStyle(MGActionButtonStyle(variant: .ghost))
                 }
-                .frame(maxHeight: 96, alignment: .top)
+            }
+        }
+    }
+
+    private func volumeFilterGrid(_ volumes: [ComicVolume]) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 6)], alignment: .leading, spacing: 6) {
+            ForEach(volumes) { volume in
+                let visible = vm.selectedVolumeIDs.contains(volume.id)
+                let matching = volume.chapters.filter(matchesCurrentSearch).count
+                Button {
+                    vm.toggleVolume(volume.id)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: visible ? "eye.fill" : "eye.slash")
+                        Text(volume.displayName)
+                        Text("· \(matching)").foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(MGSelectionButtonStyle(selected: visible, horizontalPadding: 8, verticalPadding: 4))
+                .help(visible ? "隐藏该分类" : "显示该分类")
+                .disabled(!vm.chapterSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && matching == 0)
             }
         }
     }
@@ -395,21 +415,26 @@ struct DownloadWorkspaceView: View {
             ForEach(vm.filteredVolumeSections) { section in
                 VStack(alignment: .leading, spacing: MGSpacing.xs) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(section.volumeName)
-                                .font(MGFont.bodyStrong)
-                            Text("\(section.chapterCount) 话 · 已选 \(vm.selectedChapterCount(in: section.id))")
-                                .font(MGFont.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                        Text(section.volumeName)
+                            .font(MGFont.section)
+                        Text("已选 \(vm.selectedChapterCount(in: section.id)) / 共 \(section.chapterCount)")
+                            .font(MGFont.caption)
+                            .foregroundStyle(.secondary)
                         Spacer()
-                        Button(vm.areAllChaptersSelected(in: section.id) ? "清空本组" : "选择本组") {
+                        let allSelected = vm.areAllChaptersSelected(in: section.id)
+                        let partiallySelected = vm.isVolumeChapterSelectionPartial(volumeID: section.id)
+                        Button {
                             vm.toggleVolumeChapterSelection(volumeID: section.id)
+                        } label: {
+                            Label(
+                                allSelected ? "取消本组选择" : "全选本组",
+                                systemImage: allSelected ? "checkmark.square.fill" : (partiallySelected ? "minus.square.fill" : "square")
+                            )
                         }
-                        .buttonStyle(MGActionButtonStyle(variant: .ghost))
+                        .buttonStyle(MGActionButtonStyle(variant: .secondary))
                     }
 
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: MGSpacing.xs)], spacing: 4) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: MGSpacing.xs)], spacing: MGSpacing.xs) {
                         ForEach(section.chapters) { chapter in
                             chapterCell(chapter)
                         }
@@ -434,26 +459,46 @@ struct DownloadWorkspaceView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8)
-            .frame(height: 34)
+            .frame(height: 38)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? MGTheme.accent.opacity(colorScheme == .dark ? 0.23 : 0.11) : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(key: ChapterFrameKey.self, value: [chapter.id: proxy.frame(in: .named("chapter-canvas"))])
-                }
-            )
         }
-        .buttonStyle(.plain)
-        .mgHoverBackground()
+        .buttonStyle(ChapterCellButtonStyle(selected: selected))
+        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: ChapterFrameKey.self, value: [chapter.id: proxy.frame(in: .named("chapter-canvas"))])
+            }
+        )
+        .accessibilityValue(selected ? "已选择" : "未选择")
         .help(chapter.displayName)
     }
 
     private var selectedActionBar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: MGSpacing.xs) {
+                selectionStatus
+                Spacer()
+                selectionActions
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                selectionStatus
+                HStack {
+                    Spacer()
+                    selectionActions
+                }
+            }
+        }
+        .frame(minHeight: 44, maxHeight: 64)
+    }
+
+    private var selectionStatus: some View {
+        Label(selectionSummary, systemImage: "checkmark.square.fill")
+            .font(MGFont.bodyStrong)
+            .foregroundStyle(vm.selectedVisibleChapterCount == 0 ? .secondary : MGTheme.accent)
+    }
+
+    private var selectionActions: some View {
         HStack(spacing: MGSpacing.xs) {
-            Label(selectionSummary, systemImage: "checkmark.square.fill")
-                .font(MGFont.bodyStrong)
-                .foregroundStyle(MGTheme.accent)
-            Spacer()
             Button("清除选择") { vm.deselectAllVisible() }
                 .buttonStyle(MGActionButtonStyle(variant: .secondary))
                 .disabled(vm.selectedVisibleChapterCount == 0)
@@ -462,7 +507,6 @@ struct DownloadWorkspaceView: View {
                 .disabled(vm.selectedVisibleChapterCount == 0)
                 .help(vm.selectedVisibleChapterCount == 0 ? "请选择章节" : "将所选章节加入下载队列")
         }
-        .frame(minHeight: 44)
     }
 
     private var emptyState: (title: String, detail: String, image: String)? {
@@ -576,6 +620,56 @@ struct DownloadWorkspaceView: View {
     private func openInBrowser(_ rawURL: String) {
         guard let url = URL(string: rawURL) else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+private struct ChapterCellButtonStyle: ButtonStyle {
+    let selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        ChapterCellButtonBody(configuration: configuration, selected: selected)
+    }
+}
+
+private struct ChapterCellButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    let selected: Bool
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    private var background: Color {
+        if selected {
+            return MGTheme.accent.opacity(colorScheme == .dark ? 0.22 : 0.11)
+        }
+        if configuration.isPressed {
+            return colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.075)
+        }
+        if hovering {
+            return colorScheme == .dark ? Color.white.opacity(0.075) : Color.black.opacity(0.055)
+        }
+        return colorScheme == .dark ? Color.white.opacity(0.045) : Color.black.opacity(0.025)
+    }
+
+    private var border: Color {
+        if selected {
+            return MGTheme.accent.opacity(colorScheme == .dark ? 0.78 : 0.62)
+        }
+        return MGTheme.divider(for: colorScheme).opacity(hovering ? 1 : 0.72)
+    }
+
+    var body: some View {
+        configuration.label
+            .background(background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(border, lineWidth: selected ? 1 : 0.7)
+            }
+            .opacity(isEnabled ? 1 : 0.45)
+            .onHover { hovering = isEnabled && $0 }
+            .animation(.easeOut(duration: 0.1), value: hovering)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 
