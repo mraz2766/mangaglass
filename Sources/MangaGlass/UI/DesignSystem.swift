@@ -1,5 +1,43 @@
 import SwiftUI
 
+/// Compact, semantic status feedback inspired by Fluid Functionalism's motion tiers.
+struct MGActivityMark: View {
+    let isLoading: Bool
+    let hasResult: Bool
+    let hasError: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    private var title: String {
+        isLoading ? "正在解析" : (hasError ? "解析失败" : (hasResult ? "目录已就绪" : "等待漫画链接"))
+    }
+    private var tint: Color {
+        hasError ? MGTheme.danger : ((isLoading || hasResult) ? MGTheme.accent : .secondary)
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !isLoading || reduceMotion)) { context in
+            HStack(spacing: 3) {
+                ForEach(0..<3) { index in
+                    let wave = sin(context.date.timeIntervalSinceReferenceDate * 5 - Double(index) * 0.9)
+                    Circle().fill(tint)
+                        .frame(width: 5, height: 5)
+                        .opacity(isLoading && !reduceMotion ? 0.55 + wave * 0.35 : (hovering ? 1 : 0.7))
+                        .offset(y: reduceMotion ? 0 : (isLoading ? wave * 2 : (hovering && index == 1 ? -2 : 0)))
+                }
+            }
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+        }
+        .onHover { hovering = $0 }
+        .animation(reduceMotion ? nil : MGMotion.regular, value: hovering)
+        .animation(reduceMotion ? nil : MGMotion.fast, value: hasResult)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .help(title)
+    }
+}
+
 enum MGSelectionState {
     case none, partial, all
     var symbol: String {

@@ -105,6 +105,78 @@ final class SelectionTests: XCTestCase {
         XCTAssertTrue(vm.collapsedVolumeIDs.isEmpty)
     }
 
+    func testClearHomeResetsOnlyCurrentWorkspace() async {
+        let vm = model()
+        vm.inputURL = "https://www.mangacopy.com/comic/test-fixture"
+        vm.authCookie = "test-only-cookie"
+        vm.recentRecords = [RecentComicRecord(title: "保留历史", input: vm.inputURL, siteName: "主站")]
+        vm.selectAllVisible()
+        vm.enqueueSelectedChapters()
+        let destination = vm.destinationFolder
+        vm.chapterSearchQuery = "03"
+        vm.collapsedVolumeIDs = ["g0"]
+        vm.chapterSortDirection = .descending
+        vm.errorText = "测试错误"
+        vm.lastMirrorSuggestion = .copy4000
+        vm.lastFailedInput = "old"
+        vm.clearHome()
+        XCTAssertFalse(vm.hasHomeContent)
+        XCTAssertNil(vm.comic)
+        XCTAssertTrue(vm.selectedChapterIDs.isEmpty)
+        XCTAssertTrue(vm.selectedVolumeIDs.isEmpty)
+        XCTAssertTrue(vm.collapsedVolumeIDs.isEmpty)
+        XCTAssertEqual(vm.chapterSortDirection, .ascending)
+        XCTAssertTrue(vm.parseDoneText.isEmpty)
+        XCTAssertTrue(vm.parseLiveText.isEmpty)
+        XCTAssertFalse(vm.showParseDone)
+        XCTAssertNil(vm.lastMirrorSuggestion)
+        XCTAssertTrue(vm.lastFailedInput.isEmpty)
+        XCTAssertEqual(vm.downloader.taskItems.count, 34)
+        XCTAssertEqual(vm.recentRecords.count, 1)
+        XCTAssertEqual(vm.authCookie, "test-only-cookie")
+        XCTAssertEqual(vm.destinationFolder, destination)
+    }
+
+    func testClearCancelsPendingParseBeforeItStarts() async {
+        let vm = model()
+        vm.inputURL = "test-fixture"
+        vm.loadComic(fetch: { _, _, _ in
+            XCTFail("清除后不应启动旧请求")
+            return Self.fixture()
+        })
+        vm.clearHome()
+        await Task.yield()
+        XCTAssertFalse(vm.isLoading)
+        XCTAssertFalse(vm.hasHomeContent)
+        XCTAssertNil(vm.comic)
+    }
+
+    func testLateCanceledResultCannotOverwriteNewParse() async {
+        let vm = MainViewModel(persistsState: false)
+        var oldCompletion: CheckedContinuation<ComicInfo, Never>?
+        vm.inputURL = "test-fixture"
+        vm.loadComic(fetch: { _, _, _ in
+            await withCheckedContinuation { oldCompletion = $0 }
+        })
+        // Wait until the simulated request is actually in flight.
+        for _ in 0..<100 where oldCompletion == nil { await Task.yield() }
+        XCTAssertNotNil(oldCompletion)
+        vm.clearHome()
+        vm.inputURL = "new-fixture"
+        let original = Self.fixture()
+        let newer = ComicInfo(slug: "new-fixture", name: "新结果", coverURL: nil, volumes: original.volumes,
+                              site: original.site, apiPathPrefix: "", apiBaseURL: original.apiBaseURL)
+        vm.loadComic(fetch: { _, _, _ in newer })
+        for _ in 0..<100 where vm.isLoading { await Task.yield() }
+        XCTAssertEqual(vm.comic?.slug, "new-fixture")
+        oldCompletion?.resume(returning: original)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(vm.comic?.slug, "new-fixture")
+        XCTAssertEqual(vm.inputURL, "new-fixture")
+        XCTAssertTrue(vm.errorText.isEmpty)
+        XCTAssertFalse(vm.isLoading)
+    }
+
     func testRetiredComicCannotEnqueue() async {
         let vm = model()
         let original = Self.fixture()

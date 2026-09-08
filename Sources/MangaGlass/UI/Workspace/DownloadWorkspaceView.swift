@@ -56,13 +56,13 @@ struct DownloadWorkspaceView: View {
     private var homeToolbar: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 12) {
-                Text("首页").font(.system(size: 18, weight: .semibold))
+                homeStatus
                 linkInput.frame(minWidth: 240)
                 toolbarActions
             }
             VStack(spacing: 8) {
                 HStack {
-                    Text("首页").font(.system(size: 18, weight: .semibold))
+                    homeStatus
                     Spacer()
                     toolbarActions
                 }
@@ -74,10 +74,29 @@ struct DownloadWorkspaceView: View {
 
     private var linkInput: some View {
         HStack(spacing: 8) {
-            TextField("粘贴漫画链接或 path_word", text: $vm.inputURL)
-                .mgTextField().focused($linkFocused)
-                .onSubmit { vm.loadComic() }
-                .overlay { RoundedRectangle(cornerRadius: 6).stroke(linkFocused ? MGTheme.accent : .clear, lineWidth: 2) }
+            HStack(spacing: 6) {
+                TextField("粘贴漫画链接或 path_word", text: $vm.inputURL)
+                    .focused($linkFocused)
+                    .onSubmit { vm.loadComic() }
+                Button {
+                    vm.clearHome()
+                    categoryQuery = ""
+                    showCategories = false
+                    showCover = false
+                    dragStart = nil
+                    dragCurrent = nil
+                    chapterFrames = [:]
+                    linkFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
+                .disabled(!vm.hasHomeContent)
+                .help("清除链接、封面、卷与章节及解析状态")
+                .accessibilityLabel("清除首页搜索数据和状态")
+            }
+            .mgTextField()
+            .overlay { RoundedRectangle(cornerRadius: 6).stroke(linkFocused ? MGTheme.accent : .clear, lineWidth: 2) }
             Button { vm.loadComic() } label: {
                 ZStack {
                     Text("解析").opacity(vm.isLoading ? 0 : 1)
@@ -88,6 +107,10 @@ struct DownloadWorkspaceView: View {
             .disabled(vm.isLoading || vm.inputURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityLabel(vm.isLoading ? "正在解析" : "解析")
         }
+    }
+
+    private var homeStatus: some View {
+        MGActivityMark(isLoading: vm.isLoading, hasResult: vm.comic != nil, hasError: !vm.errorText.isEmpty)
     }
 
     private var toolbarActions: some View {

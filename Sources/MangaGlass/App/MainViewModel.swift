@@ -107,6 +107,8 @@ final class MainViewModel: ObservableObject {
     let api: CopyMangaAPI
     let downloader: DownloadCoordinator
     private var lastSelectedChapterID: String?
+    private var loadingTask: Task<Void, Never>?
+    private var parsingRequestID: UUID?
     private var loadingComicKey: String?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -123,14 +125,6 @@ final class MainViewModel: ObservableObject {
         }
         self.api.setLogger { [weak self] message in
             Task { @MainActor in self?.appendLog(message) }
-        }
-        self.api.setIntermediateComicHandler { [weak self] partial in
-            Task { @MainActor in
-                guard let self else { return }
-                guard self.isLoading else { return }
-                guard self.loadingComicKey == self.comicKey(slug: partial.slug, site: partial.site) else { return }
-                self.applyFetchedComic(partial, final: false, sourceText: "阶段结果")
-            }
         }
         self.downloader.setLogger { [weak self] message in
             Task { @MainActor in self?.appendLog(message) }
@@ -264,7 +258,33 @@ final class MainViewModel: ObservableObject {
         terminationConfirmation = nil
     }
 
-    func loadComic() {
+    var hasHomeContent: Bool {
+        !inputURL.isEmpty || comic != nil || isLoading || !errorText.isEmpty || !chapterSearchQuery.isEmpty
+    }
+
+    func clearHome() {
+        parsingRequestID = nil
+        loadingTask?.cancel()
+        loadingTask = nil
+        loadingComicKey = nil
+        inputURL = ""
+        comic = nil
+        selectedVolumeIDs.removeAll()
+        clearChapterSelection()
+        collapsedVolumeIDs.removeAll()
+        chapterSearchQuery = ""
+        chapterSortDirection = .ascending
+        isLoading = false
+        errorText = ""
+        showParseDone = false
+        parseDoneText = ""
+        parseLiveText = ""
+        lastMirrorSuggestion = nil
+        lastFailedInput = ""
+        statusText = "输入漫画链接后点击解析。"
+    }
+
+    func loadComic(fetch: ((String, MangaSiteConfig, String?) async throws -> ComicInfo)? = nil) {
         guard !isLoading else { return }
         guard !CopyMangaMirror.isRetired(inputURL) else {
             presentRetiredSiteMessage()
@@ -286,13 +306,31 @@ final class MainViewModel: ObservableObject {
         appendLog("开始加载：\(normalizedInput)")
 
         let cookie = normalizedCookie
-        Task {
+        let requestID = UUID()
+        parsingRequestID = requestID
+        api.setIntermediateComicHandler { [weak self] partial in
+            guard !Task.isCancelled else { return }
+            Task { @MainActor in
+                guard let self, self.parsingRequestID == requestID, self.isLoading,
+                      self.loadingComicKey == self.comicKey(slug: partial.slug, site: partial.site) else { return }
+                self.applyFetchedComic(partial, final: false, sourceText: "阶段结果")
+            }
+        }
+        loadingTask = Task {
+            guard parsingRequestID == requestID, !Task.isCancelled else { return }
             do {
                 let target = try api.resolveTarget(from: normalizedInput)
                 loadingComicKey = comicKey(slug: target.slug, site: target.site)
-                let fetched = try await api.fetchComic(slug: target.slug, site: target.site, cookie: cookie, preferCache: false)
+                let fetched: ComicInfo
+                if let fetch {
+                    fetched = try await fetch(target.slug, target.site, cookie)
+                } else {
+                    fetched = try await api.fetchComic(slug: target.slug, site: target.site, cookie: cookie, preferCache: false)
+                }
+                guard parsingRequestID == requestID, !Task.isCancelled else { return }
                 applyFetchedComic(fetched, final: true, sourceText: fetched.site.displayName)
             } catch {
+                guard parsingRequestID == requestID, !Task.isCancelled else { return }
                 let message = error.localizedDescription
                 errorText = message
                 statusText = "加载失败"
@@ -302,6 +340,8 @@ final class MainViewModel: ObservableObject {
                 appendLog("加载失败：\(message)")
             }
             loadingComicKey = nil
+            parsingRequestID = nil
+            loadingTask = nil
             isLoading = false
         }
     }

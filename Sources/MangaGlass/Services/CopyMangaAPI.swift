@@ -990,7 +990,7 @@ final class CopyMangaAPI: @unchecked Sendable {
         volumes: [ComicVolume],
         site: MangaSiteConfig
     ) {
-        guard !volumes.isEmpty else { return }
+        guard !Task.isCancelled, !volumes.isEmpty else { return }
         guard let handler = intermediateComicHandler else { return }
         let snapshot = normalizeComicInfoVolumes(
             ComicInfo(
@@ -3453,6 +3453,7 @@ final class CopyMangaAPI: @unchecked Sendable {
     private func retrying<T>(times: Int, operation: @escaping () async throws -> T) async throws -> T {
         var lastError: Error?
         for attempt in 1...times {
+            try Task.checkCancellation()
             do {
                 return try await operation()
             } catch let error as CopyMangaError {
