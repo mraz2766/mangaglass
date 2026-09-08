@@ -207,6 +207,7 @@ struct DownloadTaskItem: Identifiable, Codable, Sendable {
     var finishedAt: Date?
     var existingFilePolicy: ExistingFilePolicy?
     var usesGroupFolder: Bool?
+    var resolvedImageURLs: [URL]?
 
     init(
         id: UUID = UUID(),
@@ -218,7 +219,8 @@ struct DownloadTaskItem: Identifiable, Codable, Sendable {
         startedAt: Date? = nil,
         finishedAt: Date? = nil,
         existingFilePolicy: ExistingFilePolicy? = nil,
-        usesGroupFolder: Bool? = nil
+        usesGroupFolder: Bool? = nil,
+        resolvedImageURLs: [URL]? = nil
     ) {
         self.id = id
         self.comic = comic
@@ -230,6 +232,7 @@ struct DownloadTaskItem: Identifiable, Codable, Sendable {
         self.finishedAt = finishedAt
         self.existingFilePolicy = existingFilePolicy
         self.usesGroupFolder = usesGroupFolder
+        self.resolvedImageURLs = resolvedImageURLs
     }
 
     var queueIdentity: String {

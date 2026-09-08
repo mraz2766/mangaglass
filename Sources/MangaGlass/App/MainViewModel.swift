@@ -100,13 +100,22 @@ final class MainViewModel: ObservableObject {
         }
     }
     @Published var comic: ComicInfo? {
-        didSet { persistCodable(comic, key: StorageKey.lastComic) }
+        didSet {
+            persistCodable(comic, key: StorageKey.lastComic)
+            rebuildFilteredVolumeSections()
+        }
     }
-    @Published var selectedVolumeIDs: Set<String> = []
+    @Published var selectedVolumeIDs: Set<String> = [] {
+        didSet { rebuildFilteredVolumeSections() }
+    }
     @Published var selectedChapterIDs: Set<String> = []
     @Published var collapsedVolumeIDs: Set<String> = []
-    @Published var chapterSortDirection: SortDirection = .ascending
-    @Published var chapterSearchQuery = ""
+    @Published var chapterSortDirection: SortDirection = .ascending {
+        didSet { rebuildFilteredVolumeSections() }
+    }
+    @Published var chapterSearchQuery = "" {
+        didSet { rebuildFilteredVolumeSections() }
+    }
     @Published var destinationFolder: URL = {
         let path = UserDefaults.standard.string(forKey: StorageKey.lastDestinationPath) ?? "/Users/mraz/Documents/life/漫画/"
         return URL(fileURLWithPath: path, isDirectory: true)
@@ -134,6 +143,7 @@ final class MainViewModel: ObservableObject {
     private var parsingRequestID: UUID?
     private var loadingComicKey: String?
     private var cancellables: Set<AnyCancellable> = []
+    private var cachedFilteredVolumeSections: [FilteredVolumeSection] = []
 
     private let persistsState: Bool
     private let queueStore: DownloadQueueStore?
@@ -165,7 +175,11 @@ final class MainViewModel: ObservableObject {
     }
 
     var filteredVolumeSections: [FilteredVolumeSection] {
-        displayVolumes
+        cachedFilteredVolumeSections
+    }
+
+    private func rebuildFilteredVolumeSections() {
+        cachedFilteredVolumeSections = displayVolumes
             .filter { selectedVolumeIDs.contains($0.id) }
             .map { volume in
                 let chapters = volume.chapters
@@ -199,8 +213,12 @@ final class MainViewModel: ObservableObject {
         displayVolumes.flatMap(\.chapters).filter { selectedChapterIDs.contains($0.id) }
     }
 
+    var selectedChapterCount: Int {
+        selectedChapterIDs.count
+    }
+
     var hiddenSelectedChapterCount: Int {
-        max(0, selectedChapters.count - selectedVisibleChapterCount)
+        max(0, selectedChapterIDs.count - selectedVisibleChapterCount)
     }
 
     func clearChapterSelection() {
@@ -697,7 +715,8 @@ final class MainViewModel: ObservableObject {
             comic: item.comic,
             destination: item.destination,
             cookie: item.cookie,
-            usesGroupFolder: item.usesGroupFolder
+            usesGroupFolder: item.usesGroupFolder,
+            resolvedImageURLsByChapterID: item.resolvedImageURLs.map { [item.chapter.id: $0] } ?? [:]
         )
         if !downloader.isRunning {
              let concurrent = downloadConcurrent(for: item.comic.site)
@@ -732,6 +751,11 @@ final class MainViewModel: ObservableObject {
                     destination: first.destination,
                     cookie: first.cookie,
                     usesGroupFolder: first.usesGroupFolder,
+                    resolvedImageURLsByChapterID: Dictionary(
+                        uniqueKeysWithValues: items.compactMap { item in
+                            item.resolvedImageURLs.map { (item.chapter.id, $0) }
+                        }
+                    ),
                     replacingFinished: true
                 )
             }

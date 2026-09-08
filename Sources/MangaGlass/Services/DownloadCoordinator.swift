@@ -220,13 +220,7 @@ final class DownloadCoordinator: ObservableObject {
         throttleStepMS: 1000,
         relaxStepMS: 100
     )
-    private let copyChapterPacer = RequestPacer(
-        minDelayMS: 650,
-        maxDelayMS: 1050,
-        maxPenaltyMS: 10000,
-        throttleStepMS: 1400,
-        relaxStepMS: 120
-    )
+    private let copyHostBudget = HostRequestBudget()
     private var masterTask: Task<Void, Never>?
     private var logger: ((String) -> Void)?
     private var manhuaGuiPreferredHost: String?
@@ -270,6 +264,8 @@ final class DownloadCoordinator: ObservableObject {
         hostTimeoutCooldownSeconds: 45
     )
     private var copySuspiciousChapterFailures = 0
+    private var copyRecoveryProbeActive = false
+    private var copyRecoverySuccessfulChapters = 0
 
     init(api: CopyMangaAPI) {
         self.api = api
@@ -292,6 +288,7 @@ final class DownloadCoordinator: ObservableObject {
         cookie: String?,
         existingFilePolicy: ExistingFilePolicy = .keepExisting,
         usesGroupFolder: Bool? = nil,
+        resolvedImageURLsByChapterID: [String: [URL]] = [:],
         replacingFinished: Bool = false
     ) -> Int {
         if replacingFinished {
@@ -318,7 +315,8 @@ final class DownloadCoordinator: ObservableObject {
                 destination: destination,
                 cookie: cookie,
                 existingFilePolicy: existingFilePolicy,
-                usesGroupFolder: usesGroupFolder
+                usesGroupFolder: usesGroupFolder,
+                resolvedImageURLs: resolvedImageURLsByChapterID[chapter.id]
             )
             return existing.contains(item.queueIdentity) ? nil : item
         }
@@ -399,6 +397,8 @@ final class DownloadCoordinator: ObservableObject {
         isCancelling = false
         protectionState.clear()
         copySuspiciousChapterFailures = 0
+        copyRecoveryProbeActive = false
+        copyRecoverySuccessfulChapters = 0
         resetSpeedEstimateState()
     }
 
@@ -450,7 +450,8 @@ final class DownloadCoordinator: ObservableObject {
         currentRunID = UUID()
         message = "下载开始..."
         updateCurrentTaskTitle()
-        log("下载开始：并发 \(maxConcurrent)")
+        let effectiveMaxConcurrent = copyRecoveryProbeActive ? 1 : maxConcurrent
+        log("下载开始：并发 \(effectiveMaxConcurrent)")
         if pendingItems.contains(where: isManhuaGuiItem) {
             log("ManhuaGui 策略：章节并发 4，图片并发 2，请求间隔 240-460ms")
         }
@@ -472,7 +473,7 @@ final class DownloadCoordinator: ObservableObject {
             await withTaskGroup(of: UUID?.self) { group in
                 var inFlightItemIDs: Set<UUID> = []
 
-                for _ in 0..<maxConcurrent {
+                while inFlightItemIDs.count < effectiveMaxConcurrent {
                     guard !Task.isCancelled else { break }
                     if let item = await MainActor.run(body: {
                         self.nextQueuedItem(excluding: inFlightItemIDs)
@@ -484,6 +485,8 @@ final class DownloadCoordinator: ObservableObject {
                             await self.run(item: item, runID: runID)
                             return item.id
                         }
+                    } else {
+                        break
                     }
                 }
 
@@ -492,15 +495,22 @@ final class DownloadCoordinator: ObservableObject {
                         inFlightItemIDs.remove(finishedID)
                     }
                     if Task.isCancelled { continue }
-                    if let item = await MainActor.run(body: {
-                        self.nextQueuedItem(excluding: inFlightItemIDs)
-                    }) {
-                        inFlightItemIDs.insert(item.id)
-                        group.addTask { [weak self] in
-                            guard let self else { return nil }
-                            if Task.isCancelled { return item.id }
-                            await self.run(item: item, runID: runID)
-                            return item.id
+                    let desiredConcurrency = await MainActor.run {
+                        self.copyRecoveryProbeActive ? 1 : maxConcurrent
+                    }
+                    while inFlightItemIDs.count < desiredConcurrency {
+                        if let item = await MainActor.run(body: {
+                            self.nextQueuedItem(excluding: inFlightItemIDs)
+                        }) {
+                            inFlightItemIDs.insert(item.id)
+                            group.addTask { [weak self] in
+                                guard let self else { return nil }
+                                if Task.isCancelled { return item.id }
+                                await self.run(item: item, runID: runID)
+                                return item.id
+                            }
+                        } else {
+                            break
                         }
                     }
                 }
@@ -645,26 +655,38 @@ final class DownloadCoordinator: ObservableObject {
         }
         copySoftCircuit = nil
         copySuspiciousChapterFailures = 0
+        copyRecoveryProbeActive = true
+        copyRecoverySuccessfulChapters = 0
+        Task { await copyHostBudget.resetPenalty(key: Self.copyBudgetKey) }
         message = "拷贝漫画冷却结束，可以继续下载。"
         log("拷贝漫画软熔断冷却结束：host=\(circuit.host)")
         updateCurrentTaskTitle()
         return true
     }
 
-    private func noteCopyChapterSuccess(for item: DownloadTaskItem) async {
+    private func noteCopyChapterRequestSuccess(for item: DownloadTaskItem) {
         guard isCopyFamily(item.comic.site) else { return }
         copySuspiciousChapterFailures = 0
-        await copyChapterPacer.markSuccess()
+    }
+
+    private func noteCopyChapterCompleted(for item: DownloadTaskItem) {
+        guard copyRecoveryProbeActive, isCopyFamily(item.comic.site) else { return }
+        copyRecoverySuccessfulChapters += 1
+        if copyRecoverySuccessfulChapters >= 3 {
+            copyRecoveryProbeActive = false
+            log("拷贝漫画恢复探测通过：连续完成 3 话，后续启动恢复章节并发 2")
+        }
     }
 
     private func noteCopyChapterFailure(_ error: Error, for item: DownloadTaskItem) async {
         guard isCopyFamily(item.comic.site), let outcome = Self.copyFailureOutcome(error) else { return }
-        await copyChapterPacer.markThrottled()
         copySuspiciousChapterFailures += 1
         let threshold = outcome.immediate ? 1 : 3
         guard copySuspiciousChapterFailures >= threshold, copySoftCircuit == nil else { return }
 
         let host = item.comic.site.webBase.host?.lowercased() ?? "-"
+        copyRecoveryProbeActive = false
+        copyRecoverySuccessfulChapters = 0
         copySoftCircuit = CopySoftCircuit(
             reason: outcome.reason,
             host: host,
@@ -686,6 +708,14 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     static func copyFailureOutcome(_ error: Error) -> (reason: String, cooldown: TimeInterval, immediate: Bool)? {
+        if let integrity = error as? DownloadIntegrityError {
+            switch integrity {
+            case .nonImagePayload:
+                return ("连续收到非图片风控页面", 5 * 60, false)
+            case .emptyPayload, .unsupportedImage, .incompleteChapter:
+                return ("连续收到损坏或不完整页面", 5 * 60, false)
+            }
+        }
         guard let error = error as? CopyMangaError else { return nil }
         switch error {
         case .parseBlocked, .cooldown:
@@ -706,6 +736,8 @@ final class DownloadCoordinator: ObservableObject {
             return nil
         }
     }
+
+    private static let copyBudgetKey = "copy-family"
 
     private func triggerManhuaGuiSoftCircuitIfNeeded(statusCode: Int, host: String?, itemID: UUID) {
         guard let idx = taskItems.firstIndex(where: { $0.id == itemID }) else { return }
@@ -765,19 +797,8 @@ final class DownloadCoordinator: ObservableObject {
         log("开始章节：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName)")
 
         do {
-            if isCopyFamily(item.comic.site) {
-                try await copyChapterPacer.waitTurn()
-            }
             let imageFetchStart = Date()
-            let imageURLs = try await api.fetchImageURLs(
-                slug: item.comic.slug,
-                chapterUUID: item.chapter.uuid,
-                chapterName: item.chapter.displayName,
-                site: item.comic.site,
-                preferredPrefix: item.comic.apiPathPrefix,
-                preferredBaseURL: item.comic.apiBaseURL,
-                cookie: item.cookie
-            )
+            let (imageURLs, reusedResolvedURLs) = try await resolveImageURLs(for: item)
             try Task.checkCancellation()
             guard shouldContinue(runID: runID, itemID: item.id) else {
                 throw CancellationError()
@@ -790,8 +811,7 @@ final class DownloadCoordinator: ObservableObject {
                 self.scheduleProgressRefresh()
             }
             if isCopyFamily(item.comic.site) {
-                await noteCopyChapterSuccess(for: item)
-                log(String(format: "拷贝漫画章节解析：[%@] %@ 拿到 %d 张图，耗时 %.2fs", item.chapter.volumeName, item.chapter.displayName, imageURLs.count, imageFetchElapsed))
+                log(String(format: "拷贝漫画章节解析：[%@] %@ %@ %d 张图，耗时 %.2fs", item.chapter.volumeName, item.chapter.displayName, reusedResolvedURLs ? "复用" : "拿到", imageURLs.count, imageFetchElapsed))
             }
             try await downloadChapter(item: item, imageURLs: imageURLs, runID: runID)
             await MainActor.run {
@@ -800,6 +820,7 @@ final class DownloadCoordinator: ObservableObject {
                 self.lastCompletedOutputURL = self.chapterOutputFolder(for: item)
                 self.markChapterFinished(for: item.id, succeeded: true)
                 self.resetDownloadProtection(for: item.id)
+                self.noteCopyChapterCompleted(for: item)
                 self.scheduleProgressRefresh(force: true)
             }
             log("章节完成：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName)，共 \(imageURLs.count) 张")
@@ -816,12 +837,67 @@ final class DownloadCoordinator: ObservableObject {
             await MainActor.run {
                 guard self.currentRunID == runID else { return }
                 self.setState(.failed(error.localizedDescription), for: item.id)
+                if let index = self.taskItems.firstIndex(where: { $0.id == item.id }) {
+                    self.taskItems[index].resolvedImageURLs = nil
+                }
                 self.markChapterFinished(for: item.id, succeeded: false)
                 self.resetDownloadProtection(for: item.id)
                 self.scheduleProgressRefresh(force: true)
             }
             await noteCopyChapterFailure(error, for: item)
             log("章节失败：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName) - \(error.localizedDescription)")
+        }
+    }
+
+    private func resolveImageURLs(for item: DownloadTaskItem) async throws -> ([URL], Bool) {
+        if let cached = item.resolvedImageURLs, !cached.isEmpty {
+            return (cached, true)
+        }
+
+        let chapterFolder = chapterOutputFolder(for: item)
+        if let persisted = await Self.persistedImageURLs(in: chapterFolder), !persisted.isEmpty {
+            if let index = taskItems.firstIndex(where: { $0.id == item.id }) {
+                taskItems[index].resolvedImageURLs = persisted
+            }
+            return (persisted, true)
+        }
+
+        let isCopy = isCopyFamily(item.comic.site)
+        if isCopy {
+            try await copyHostBudget.acquire(
+                key: Self.copyBudgetKey,
+                kind: .chapter,
+                maxConcurrent: copyRecoveryProbeActive ? 1 : 4
+            )
+        }
+
+        do {
+            let urls = try await api.fetchImageURLs(
+                slug: item.comic.slug,
+                chapterUUID: item.chapter.uuid,
+                chapterName: item.chapter.displayName,
+                site: item.comic.site,
+                preferredPrefix: item.comic.apiPathPrefix,
+                preferredBaseURL: item.comic.apiBaseURL,
+                cookie: item.cookie
+            )
+            if isCopy {
+                await copyHostBudget.release(key: Self.copyBudgetKey, outcome: .success)
+                noteCopyChapterRequestSuccess(for: item)
+            }
+            if let index = taskItems.firstIndex(where: { $0.id == item.id }) {
+                taskItems[index].resolvedImageURLs = urls
+            }
+            return (urls, false)
+        } catch {
+            if isCopy {
+                let throttled = Self.copyFailureOutcome(error) != nil
+                await copyHostBudget.release(
+                    key: Self.copyBudgetKey,
+                    outcome: throttled ? .throttled : .failure
+                )
+            }
+            throw error
         }
     }
 
@@ -915,14 +991,16 @@ final class DownloadCoordinator: ObservableObject {
         if isCopyFamily(item.comic.site) {
             log("拷贝漫画进入图片下载：[\(item.chapter.volumeName)] \(item.chapter.displayName)，\(imageURLs.count) 张，并发 \(maxImageConcurrent)")
         }
-        try await withThrowingTaskGroup(of: Void.self) { group in
+        var verifiedPages: [VerifiedDownloadPage] = []
+        do {
+            try await withThrowingTaskGroup(of: VerifiedDownloadPage.self) { group in
             var iterator = imageURLs.enumerated().makeIterator()
             var completedCount = 0
 
             for _ in 0..<maxImageConcurrent {
                 if let (index, imageURL) = iterator.next() {
                     group.addTask { [weak self] in
-                        guard let self else { return }
+                        guard let self else { throw CancellationError() }
                         try Task.checkCancellation()
                         await self.pauseGate.waitIfPaused()
                         try Task.checkCancellation()
@@ -932,10 +1010,11 @@ final class DownloadCoordinator: ObservableObject {
                         guard shouldContinue else {
                             throw CancellationError()
                         }
-                        try await self.downloadImage(
+                        return try await self.downloadImage(
                             url: imageURL,
                             to: chapterFolder,
                             fileName: self.fileName(comic: item.comic.name, volume: groupName, chapter: item.chapter.displayName, index: index + 1),
+                            pageIndex: index + 1,
                             refererURL: self.api.imageRefererURL(slug: item.comic.slug, chapterUUID: item.chapter.uuid, site: item.comic.site),
                             site: item.comic.site,
                             cookie: item.cookie,
@@ -946,12 +1025,23 @@ final class DownloadCoordinator: ObservableObject {
                 }
             }
 
-            while let _ = try await group.next() {
+            while let page = try await group.next() {
                 try Task.checkCancellation()
                 guard shouldContinue(runID: runID, itemID: item.id) else {
                     throw CancellationError()
                 }
                 completedCount += 1
+                verifiedPages.append(page)
+                if completedCount % 10 == 0 {
+                    try await Self.writeChapterManifest(
+                        item: item,
+                        expectedPages: imageURLs.count,
+                        imageURLs: imageURLs,
+                        pages: verifiedPages,
+                        complete: false,
+                        folder: chapterFolder
+                    )
+                }
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     guard self.currentRunID == runID, !self.explicitlyCanceledItemIDs.contains(item.id) else { return }
@@ -964,7 +1054,7 @@ final class DownloadCoordinator: ObservableObject {
 
                 if let (index, imageURL) = iterator.next() {
                     group.addTask { [weak self] in
-                        guard let self else { return }
+                        guard let self else { throw CancellationError() }
                         try Task.checkCancellation()
                         await self.pauseGate.waitIfPaused()
                         try Task.checkCancellation()
@@ -974,10 +1064,11 @@ final class DownloadCoordinator: ObservableObject {
                         guard shouldContinue else {
                             throw CancellationError()
                         }
-                        try await self.downloadImage(
+                        return try await self.downloadImage(
                             url: imageURL,
                             to: chapterFolder,
                             fileName: self.fileName(comic: item.comic.name, volume: groupName, chapter: item.chapter.displayName, index: index + 1),
+                            pageIndex: index + 1,
                             refererURL: self.api.imageRefererURL(slug: item.comic.slug, chapterUUID: item.chapter.uuid, site: item.comic.site),
                             site: item.comic.site,
                             cookie: item.cookie,
@@ -987,7 +1078,56 @@ final class DownloadCoordinator: ObservableObject {
                     }
                 }
             }
+            }
+            let indexes = Set(verifiedPages.map(\.index))
+            guard indexes.count == imageURLs.count else {
+                throw DownloadIntegrityError.incompleteChapter(expected: imageURLs.count, verified: indexes.count)
+            }
+            try await Self.writeChapterManifest(
+                item: item,
+                expectedPages: imageURLs.count,
+                imageURLs: imageURLs,
+                pages: verifiedPages,
+                complete: true,
+                folder: chapterFolder
+            )
+        } catch {
+            try? await Self.writeChapterManifest(
+                item: item,
+                expectedPages: imageURLs.count,
+                imageURLs: imageURLs,
+                pages: verifiedPages,
+                complete: false,
+                folder: chapterFolder
+            )
+            throw error
         }
+    }
+
+    nonisolated private static func writeChapterManifest(
+        item: DownloadTaskItem,
+        expectedPages: Int,
+        imageURLs: [URL],
+        pages: [VerifiedDownloadPage],
+        complete: Bool,
+        folder: URL
+    ) async throws {
+        try await Task.detached(priority: .utility) {
+            try DownloadIntegrity.writeManifest(
+                chapterID: item.chapter.id,
+                expectedPages: expectedPages,
+                imageURLs: imageURLs,
+                pages: pages,
+                complete: complete,
+                to: folder
+            )
+        }.value
+    }
+
+    nonisolated private static func persistedImageURLs(in folder: URL) async -> [URL]? {
+        await Task.detached(priority: .utility) {
+            DownloadIntegrity.loadManifest(from: folder)?.imageURLs
+        }.value
     }
 
     private func chapterOutputFolder(for item: DownloadTaskItem) -> URL {
@@ -1016,15 +1156,18 @@ final class DownloadCoordinator: ObservableObject {
         url: URL,
         to folder: URL,
         fileName: String,
+        pageIndex: Int,
         refererURL: URL?,
         site: MangaSiteConfig,
         cookie: String?,
         runID: UUID,
         itemID: UUID
-    ) async throws {
-        let dst = folder.appendingPathComponent(fileName)
-        if fileManager.fileExists(atPath: dst.path) {
-            return
+    ) async throws -> VerifiedDownloadPage {
+        let baseName = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
+        if let existing = await Task.detached(priority: .utility, operation: {
+            DownloadIntegrity.existingPage(in: folder, baseName: baseName, index: pageIndex)
+        }).value {
+            return existing
         }
 
         let candidates = candidateImageURLs(for: url, site: site)
@@ -1043,15 +1186,24 @@ final class DownloadCoordinator: ObservableObject {
                 throw DownloadCircuitBreakError(message: "图片 host 风控冷却中，已暂停该章节请求。")
             }
             do {
-                try await retrying(times: 3) {
+                let page = try await retrying(times: 3) {
                     try Task.checkCancellation()
-                    guard self.shouldContinue(runID: runID, itemID: itemID) else {
-                        throw CancellationError()
-                    }
+                    guard self.shouldContinue(runID: runID, itemID: itemID) else { throw CancellationError() }
+                    let isCopy = self.isCopyFamily(site)
                     let pacer = self.pacer(for: site)
-                    try await pacer.waitTurn()
-                    try Task.checkCancellation()
-                    guard self.shouldContinue(runID: runID, itemID: itemID) else {
+                    if isCopy {
+                        try await self.copyHostBudget.acquire(
+                            key: Self.copyBudgetKey,
+                            kind: .image,
+                            maxConcurrent: self.copyRecoveryProbeActive ? 1 : 4
+                        )
+                    } else {
+                        try await pacer.waitTurn()
+                    }
+                    guard !Task.isCancelled, self.shouldContinue(runID: runID, itemID: itemID) else {
+                        if isCopy {
+                            await self.copyHostBudget.release(key: Self.copyBudgetKey, outcome: .failure)
+                        }
                         throw CancellationError()
                     }
                     var req = URLRequest(url: candidate)
@@ -1060,15 +1212,35 @@ final class DownloadCoordinator: ObservableObject {
                     if let cookie, !cookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         req.setValue(cookie, forHTTPHeaderField: "Cookie")
                     }
-                    let (data, response) = try await self.session.data(for: req)
-                    try Task.checkCancellation()
-                    guard self.shouldContinue(runID: runID, itemID: itemID) else {
+                    let data: Data
+                    let response: URLResponse
+                    do {
+                        (data, response) = try await self.session.data(for: req)
+                    } catch {
+                        if isCopy {
+                            await self.copyHostBudget.release(key: Self.copyBudgetKey, outcome: .failure)
+                        }
+                        throw error
+                    }
+                    guard !Task.isCancelled, self.shouldContinue(runID: runID, itemID: itemID) else {
+                        if isCopy {
+                            await self.copyHostBudget.release(key: Self.copyBudgetKey, outcome: .failure)
+                        }
                         throw CancellationError()
                     }
                     guard let http = response as? HTTPURLResponse else {
+                        if isCopy {
+                            await self.copyHostBudget.release(key: Self.copyBudgetKey, outcome: .failure)
+                        }
                         throw URLError(.badServerResponse)
                     }
                     guard (200...299).contains(http.statusCode) else {
+                        if isCopy {
+                            await self.copyHostBudget.release(
+                                key: Self.copyBudgetKey,
+                                outcome: [403, 429, 503].contains(http.statusCode) ? .throttled : .failure
+                            )
+                        }
                         if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
                             let hasSignature = candidate.query?.contains("e=") == true && candidate.query?.contains("m=") == true
                             self.log("ManhuaGui 图片请求失败：host=\(candidate.host ?? "-") status=\(http.statusCode) signed=\(hasSignature ? "是" : "否")")
@@ -1080,7 +1252,7 @@ final class DownloadCoordinator: ObservableObject {
                                     host: candidate.host,
                                     itemID: itemID
                                 )
-                            } else {
+                            } else if !isCopy {
                                 await pacer.markThrottled()
                             }
                             if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
@@ -1100,12 +1272,37 @@ final class DownloadCoordinator: ObservableObject {
                         }
                         throw DownloadRequestError.httpStatus(http.statusCode, retryAfter: self.retryAfter(from: http))
                     }
-                    await pacer.markSuccess()
+                    let format: DownloadImageFormat
+                    do {
+                        format = try DownloadIntegrity.detectFormat(
+                            data: data,
+                            mimeType: http.value(forHTTPHeaderField: "Content-Type")
+                        )
+                    } catch {
+                        if isCopy {
+                            await self.copyHostBudget.release(key: Self.copyBudgetKey, outcome: .throttled)
+                        }
+                        throw error
+                    }
+                    if isCopy {
+                        await self.copyHostBudget.release(key: Self.copyBudgetKey, outcome: .success)
+                    } else {
+                        await pacer.markSuccess()
+                    }
                     self.noteImageSuccess(itemID: itemID, host: candidate.host?.lowercased())
-                    try data.write(to: dst, options: .atomic)
+                    let outputURL = folder.appendingPathComponent("\(baseName).\(format.fileExtension)")
+                    try await Task.detached(priority: .utility) {
+                        try data.write(to: outputURL, options: .atomic)
+                    }.value
                     self.rememberPreferredHost(from: candidate, site: site)
+                    return VerifiedDownloadPage(
+                        index: pageIndex,
+                        fileName: outputURL.lastPathComponent,
+                        byteCount: data.count,
+                        format: format
+                    )
                 }
-                return
+                return page
             } catch let error as DownloadRequestError where error.statusCode == 404 && index + 1 < candidates.count {
                 lastError = error
                 log("图片 404，切换备用域名重试：\(candidate.host ?? "-") -> \(candidates[index + 1].host ?? "-")")
@@ -1157,13 +1354,12 @@ final class DownloadCoordinator: ObservableObject {
         return comps.joined(separator: "_").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func retrying(times: Int, operation: @escaping () async throws -> Void) async throws {
+    private func retrying<T>(times: Int, operation: @escaping () async throws -> T) async throws -> T {
         var lastError: Error?
         var backoffMS = 450
         for attempt in 1...times {
             do {
-                try await operation()
-                return
+                return try await operation()
             } catch is CancellationError {
                 throw CancellationError()
             } catch let error as DownloadRequestError {

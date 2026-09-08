@@ -9,7 +9,6 @@ private final class QueueStructureObserver: ObservableObject {
         forward(downloader.$taskItems)
         forward(downloader.$isRunning)
         forward(downloader.$isPaused)
-        forward(downloader.$message)
         forward(downloader.$manhuaGuiSoftCircuit)
         forward(downloader.$copySoftCircuit)
     }
@@ -229,7 +228,6 @@ struct QueueWorkspaceView: View {
         .padding(.vertical, 10)
         .frame(minHeight: 64)
         .mgHoverBackground(radius: 0)
-        .animation(reduceMotion ? nil : MGMotion.regular, value: expandedTaskID)
     }
 
     @ViewBuilder
@@ -255,7 +253,9 @@ struct QueueWorkspaceView: View {
         }
         if failureReason(item.state) != nil || downloader.durationText(for: item) != nil {
             Button {
-                expandedTaskID = expandedTaskID == item.id ? nil : item.id
+                withAnimation(reduceMotion ? nil : MGMotion.regular) {
+                    expandedTaskID = expandedTaskID == item.id ? nil : item.id
+                }
             } label: {
                 Image(systemName: expandedTaskID == item.id ? "chevron.up" : "chevron.down")
             }

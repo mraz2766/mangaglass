@@ -115,6 +115,12 @@ final class DownloadConflictTests: XCTestCase {
         XCTAssertFalse(html404.immediate)
         XCTAssertEqual(html404.cooldown, 5 * 60)
 
+        let disguisedHTML = try XCTUnwrap(
+            DownloadCoordinator.copyFailureOutcome(DownloadIntegrityError.nonImagePayload("text/html"))
+        )
+        XCTAssertFalse(disguisedHTML.immediate)
+        XCTAssertEqual(disguisedHTML.cooldown, 5 * 60)
+
         XCTAssertNil(DownloadCoordinator.copyFailureOutcome(CopyMangaError.invalidURL))
     }
 }

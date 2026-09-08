@@ -328,7 +328,13 @@ struct DownloadWorkspaceView: View {
     }
 
     private func sectionHeader(_ section: MainViewModel.FilteredVolumeSection) -> some View {
-        HStack(spacing: 6) {
+        let selectedCount = section.chapters.reduce(into: 0) { count, chapter in
+            if vm.selectedChapterIDs.contains(chapter.id) { count += 1 }
+        }
+        let selectionState: MGSelectionState = selectedCount == section.chapterCount && section.chapterCount > 0
+            ? .all
+            : (selectedCount > 0 ? .partial : .none)
+        return HStack(spacing: 6) {
             Button {
                 if vm.collapsedVolumeIDs.contains(section.id) {
                     vm.collapsedVolumeIDs.remove(section.id)
@@ -342,7 +348,7 @@ struct DownloadWorkspaceView: View {
                         .rotationEffect(.degrees(vm.collapsedVolumeIDs.contains(section.id) ? 0 : 90))
                         .animation(reduceMotion ? nil : MGMotion.fast, value: vm.collapsedVolumeIDs.contains(section.id))
                     Text(section.volumeName).font(MGFont.section).lineLimit(1)
-                    Text("已选 \(vm.selectedChapterCount(in: section.id)) / \(section.chapterCount)")
+                    Text("已选 \(selectedCount) / \(section.chapterCount)")
                         .font(MGFont.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
                     Spacer(minLength: 0)
                 }
@@ -353,8 +359,7 @@ struct DownloadWorkspaceView: View {
                 .mgHoverBackground(radius: 5)
                 .accessibilityLabel("\(vm.collapsedVolumeIDs.contains(section.id) ? "展开" : "折叠")\(section.volumeName)")
             MGGroupSelectionButton(title: section.volumeName,
-                                   state: vm.areAllChaptersSelected(in: section.id) ? .all :
-                                    (vm.isVolumeChapterSelectionPartial(volumeID: section.id) ? .partial : .none)) {
+                                   state: selectionState) {
                 vm.toggleVolumeChapterSelection(volumeID: section.id)
             }
         }.padding(.horizontal, 2).frame(height: 32).background(MGTheme.background(for: colorScheme))
@@ -388,14 +393,14 @@ struct DownloadWorkspaceView: View {
     }
 
     private var selectionSummary: some View {
-        Text("已选 \(vm.selectedChapters.count) 话" + (vm.hiddenSelectedChapterCount > 0 ? " · 隐藏 \(vm.hiddenSelectedChapterCount) 话" : ""))
-            .font(MGFont.bodyStrong).foregroundStyle(vm.selectedChapters.isEmpty ? .secondary : MGTheme.accent)
+        Text("已选 \(vm.selectedChapterCount) 话" + (vm.hiddenSelectedChapterCount > 0 ? " · 隐藏 \(vm.hiddenSelectedChapterCount) 话" : ""))
+            .font(MGFont.bodyStrong).foregroundStyle(vm.selectedChapterCount == 0 ? .secondary : MGTheme.accent)
     }
 
     private var enqueueButton: some View {
         Button(action: enqueueSelection) {
             ZStack {
-                Text("加入队列 \(vm.selectedChapters.count)")
+                Text("加入队列 \(vm.selectedChapterCount)")
                     .opacity(enqueueFeedback == nil && !isCheckingExistingFiles ? 1 : 0)
                 if isCheckingExistingFiles {
                     HStack(spacing: 6) {
@@ -414,7 +419,7 @@ struct DownloadWorkspaceView: View {
             .frame(minWidth: 112)
         }
             .buttonStyle(MGActionButtonStyle(variant: .primary))
-            .disabled(enqueueFeedback == nil && !isCheckingExistingFiles && (vm.selectedChapters.isEmpty || vm.isLoading || !vm.errorText.isEmpty))
+            .disabled(enqueueFeedback == nil && !isCheckingExistingFiles && (vm.selectedChapterCount == 0 || vm.isLoading || !vm.errorText.isEmpty))
             .allowsHitTesting(enqueueFeedback == nil && !isCheckingExistingFiles)
             .overlay {
                 RoundedRectangle(cornerRadius: 7)
@@ -424,12 +429,12 @@ struct DownloadWorkspaceView: View {
                     .allowsHitTesting(false)
             }
             .accessibilityLabel(enqueueAccessibilityTitle)
-            .help(vm.selectedChapters.isEmpty ? "请选择章节" : "加入全部已选章节，包含隐藏的选择")
+            .help(vm.selectedChapterCount == 0 ? "请选择章节" : "加入全部已选章节，包含隐藏的选择")
     }
 
     private var enqueueAccessibilityTitle: String {
         if isCheckingExistingFiles { return "正在检查已有下载文件" }
-        guard let enqueueFeedback else { return "加入队列 \(vm.selectedChapters.count) 话" }
+        guard let enqueueFeedback else { return "加入队列 \(vm.selectedChapterCount) 话" }
         return feedbackTitle(for: enqueueFeedback)
     }
 
