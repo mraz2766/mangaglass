@@ -51,8 +51,11 @@ struct QueueWorkspaceView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MGSpacing.sm) {
-            header
-            controls
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) { header; Spacer(minLength: 0); controls }
+                VStack(alignment: .leading, spacing: 8) { header; controls }
+            }
+            filters
             if let circuit = vm.downloader.manhuaGuiSoftCircuit {
                 softCircuitNotice(circuit)
             }
@@ -81,14 +84,7 @@ struct QueueWorkspaceView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("队列")
-                    .font(MGFont.title)
-                Text(headerSubtitle)
-                    .font(MGFont.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
+            Text("队列").font(.system(size: 18, weight: .semibold))
             Text("进行中 \(counts.running) · 失败 \(counts.failed) · 完成 \(counts.done)")
                 .font(MGFont.caption)
                 .foregroundStyle(.secondary)
@@ -97,24 +93,15 @@ struct QueueWorkspaceView: View {
             } label: {
                 Image(systemName: "doc.text")
             }
-            .buttonStyle(MGActionButtonStyle(variant: .ghost))
+            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
             .help("活动日志")
         }
     }
 
     private var controls: some View {
         HStack(spacing: MGSpacing.xs) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(QueueFilter.allCases) { item in
-                        Button("\(item.rawValue) \(count(for: item))") { filter = item }
-                            .buttonStyle(MGSelectionButtonStyle(selected: filter == item, horizontalPadding: 8, verticalPadding: 6))
-                    }
-                }
-            }
-
             if counts.queued > 0 && !vm.downloader.isRunning {
-                Button("开始 \(counts.queued)") { vm.startDownload() }
+                Button("开始 \(counts.queued)") { vm.startQueuedDownloads() }
                     .buttonStyle(MGActionButtonStyle(variant: .primary))
             }
             if vm.downloader.isRunning {
@@ -142,6 +129,20 @@ struct QueueWorkspaceView: View {
             .menuStyle(.borderlessButton)
         }
         .padding(.vertical, MGSpacing.xs)
+    }
+
+    private var filters: some View {
+        HStack(spacing: 6) {
+            ForEach(QueueFilter.allCases) { item in
+                Button { filter = item } label: {
+                    Text("\(item.rawValue) \(count(for: item))")
+                        .font(MGFont.caption).padding(.horizontal, 8).frame(height: 28)
+                }
+                .buttonStyle(MGChoiceButtonStyle(selected: filter == item, bordered: false))
+                .accessibilityValue(filter == item ? "已选中" : "未选中")
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private var taskList: some View {
@@ -194,7 +195,7 @@ struct QueueWorkspaceView: View {
         .padding(.vertical, 10)
         .frame(minHeight: 64)
         .mgHoverBackground(radius: 0)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: expandedTaskID)
+        .animation(reduceMotion ? nil : MGMotion.regular, value: expandedTaskID)
     }
 
     @ViewBuilder
@@ -205,7 +206,7 @@ struct QueueWorkspaceView: View {
             } label: {
                 Image(systemName: "xmark.circle")
             }
-            .buttonStyle(MGActionButtonStyle(variant: .ghost))
+            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
             .frame(width: 28, height: 28)
             .help("取消任务")
         } else if case .failed = item.state {
@@ -214,7 +215,7 @@ struct QueueWorkspaceView: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(MGActionButtonStyle(variant: .ghost))
+            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
             .frame(width: 28, height: 28)
             .help("重试任务")
         }
@@ -224,7 +225,7 @@ struct QueueWorkspaceView: View {
             } label: {
                 Image(systemName: expandedTaskID == item.id ? "chevron.up" : "chevron.down")
             }
-            .buttonStyle(MGActionButtonStyle(variant: .ghost))
+            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
             .frame(width: 28, height: 28)
             .help("任务详情")
         }
@@ -255,29 +256,34 @@ struct QueueWorkspaceView: View {
     }
 
     private var progressFooter: some View {
-        let summary = vm.downloader.progressSummary()
-        return HStack(spacing: MGSpacing.xs) {
-            Text(vm.downloader.message)
-                .font(MGFont.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer()
-            Text("已下载 \(summary.completedPages)/\(summary.totalPages) 页 · 完成 \(summary.completedTasks)/\(summary.totalTasks) 话")
-                .font(MGFont.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            ProgressView(value: vm.downloader.progress)
-                .progressViewStyle(.linear)
-                .frame(width: 160)
-            if !vm.downloader.speedText.isEmpty {
-                Text(vm.downloader.speedText)
-                    .font(MGFont.mono)
-                    .foregroundStyle(MGTheme.accent)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                Text(vm.downloader.message).font(MGFont.caption).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 8)
+                progressMetrics
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(vm.downloader.message).font(MGFont.caption).foregroundStyle(.secondary).lineLimit(1)
+                progressMetrics
             }
         }
-        .padding(.horizontal, MGSpacing.sm)
-        .frame(minHeight: 44)
+        .padding(.horizontal, 12)
+        .frame(minHeight: 44, maxHeight: 64)
         .overlay(alignment: .top) { Divider() }
+    }
+
+    private var progressMetrics: some View {
+        let summary = vm.downloader.progressSummary()
+        return HStack(spacing: 8) {
+            Text("已下载 \(summary.completedPages)/\(summary.totalPages) 页 · 完成 \(summary.completedTasks)/\(summary.totalTasks) 话")
+                .font(MGFont.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+            ProgressView(value: vm.downloader.progress)
+                .progressViewStyle(.linear).frame(minWidth: 60, maxWidth: .infinity)
+            if !vm.downloader.speedText.isEmpty {
+                Text(vm.downloader.speedText).font(MGFont.caption).monospacedDigit()
+                    .foregroundStyle(MGTheme.accent).fixedSize()
+            }
+        }
     }
 
     private func softCircuitNotice(_ circuit: DownloadCoordinator.ManhuaGuiSoftCircuit) -> some View {

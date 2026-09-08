@@ -10,7 +10,7 @@ enum WorkspaceDestination: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .download: return "下载"
+        case .download: return "首页"
         case .queue: return "队列"
         case .history: return "历史"
         case .settings: return "设置"
@@ -19,7 +19,7 @@ enum WorkspaceDestination: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .download: return "arrow.down.circle"
+        case .download: return "house"
         case .queue: return "tray.full"
         case .history: return "clock.arrow.circlepath"
         case .settings: return "gearshape"
@@ -38,7 +38,7 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             WorkspaceSidebar(vm: vm, destination: $destination)
-                .frame(width: 204)
+                .frame(width: 64)
 
             Rectangle()
                 .fill(MGTheme.divider(for: colorScheme))
@@ -52,7 +52,7 @@ struct ContentView: View {
                     ForEach(WorkspaceDestination.allCases) { workspaceDestination in
                         if workspaceDestination == destination {
                             workspace(for: workspaceDestination)
-                                .padding(proxy.size.width < 760 ? MGSpacing.md : MGSpacing.content)
+                                .padding(MGSpacing.md)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .transition(workspaceTransition)
                         }
@@ -62,7 +62,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 720, minHeight: 540)
         .preferredColorScheme(vm.preferredColorScheme)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: destination)
+        .animation(reduceMotion ? nil : MGMotion.panel, value: destination)
         .onAppear(perform: presentRestoredQueuePromptIfNeeded)
         .sheet(isPresented: $showLogs) {
             ActivityLogSheet(vm: vm)

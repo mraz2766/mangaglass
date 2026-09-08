@@ -16,7 +16,7 @@ struct HistoryWorkspaceView: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("历史")
-                        .font(MGFont.title)
+                        .font(.system(size: 18, weight: .semibold))
                     Text("最近解析过的漫画会保留在本机。")
                         .font(MGFont.caption)
                         .foregroundStyle(.secondary)
@@ -97,7 +97,7 @@ struct HistoryWorkspaceView: View {
             } label: {
                 Image(systemName: "trash")
             }
-            .buttonStyle(MGActionButtonStyle(variant: .ghost))
+            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
             .frame(width: 28, height: 28)
             .help("删除历史记录")
         }
@@ -118,6 +118,7 @@ struct HistoryWorkspaceView: View {
 struct SettingsWorkspaceView: View {
     @ObservedObject var vm: MainViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @State private var formWidth: CGFloat = 720
     @State private var revealCookie = false
     @State private var showClearConfirmation = false
 
@@ -125,7 +126,7 @@ struct SettingsWorkspaceView: View {
         VStack(alignment: .leading, spacing: MGSpacing.sm) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("设置")
-                    .font(MGFont.title)
+                    .font(.system(size: 18, weight: .semibold))
                 Text("外观、访问凭据和本地下载目录。")
                     .font(MGFont.caption)
                     .foregroundStyle(.secondary)
@@ -175,7 +176,7 @@ struct SettingsWorkspaceView: View {
                         } label: {
                             Image(systemName: revealCookie ? "eye.slash" : "eye")
                         }
-                        .buttonStyle(MGActionButtonStyle(variant: .secondary))
+                        .buttonStyle(MGActionButtonStyle(variant: .secondary, iconOnly: true))
                         .frame(width: 28, height: 28)
                         .help(revealCookie ? "隐藏 Cookie" : "显示 Cookie")
                     }
@@ -207,7 +208,12 @@ struct SettingsWorkspaceView: View {
                 }
                 .frame(maxWidth: 720, alignment: .leading)
                 .padding(.bottom, MGSpacing.lg)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(GeometryReader { proxy in
+                Color.clear.onAppear { formWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { formWidth = $0 }
+            })
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .alert("清空缓存？", isPresented: $showClearConfirmation) {
@@ -219,16 +225,22 @@ struct SettingsWorkspaceView: View {
     }
 
     private func settingsSection<Content: View>(_ title: String, detail: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: MGSpacing.sm) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(MGFont.section)
-                Text(detail)
-                    .font(MGFont.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 16) {
+            let layout = formWidth >= 600
+                ? AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+                : AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+            layout {
+                Text(title).font(MGFont.section)
+                    .frame(width: formWidth >= 600 ? 104 : nil, alignment: .leading)
+                    .padding(.top, 5)
+                VStack(alignment: .leading, spacing: 10) {
+                    content()
+                    Text(detail).font(MGFont.caption).foregroundStyle(.secondary)
+                        .lineLimit(title == "下载目录" ? 1 : nil)
+                        .truncationMode(.middle).help(detail).textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            content()
             Divider()
         }
         .frame(maxWidth: .infinity, alignment: .leading)

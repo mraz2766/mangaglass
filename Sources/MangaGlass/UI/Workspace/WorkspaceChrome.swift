@@ -4,102 +4,55 @@ import SwiftUI
 struct WorkspaceSidebar: View {
     @ObservedObject var vm: MainViewModel
     @Binding var destination: WorkspaceDestination
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var counts: (queued: Int, running: Int, failed: Int, done: Int) {
-        vm.downloader.countsSummary()
-    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MGSpacing.md) {
-            HStack(spacing: 9) {
-                BrandMarkView(size: 28)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("MangaGlass")
-                        .font(MGFont.appTitle)
-                    Text("本地下载工作台")
-                        .font(MGFont.caption)
-                        .foregroundStyle(.secondary)
-                }
+        VStack(spacing: 12) {
+            BrandMarkView(size: 28)
+                .padding(.vertical, 12)
+                .help("MangaGlass")
+            ForEach(WorkspaceDestination.allCases.filter { $0 != .settings }) { item in
+                navigationButton(item)
             }
-            .padding(.horizontal, MGSpacing.sm)
-            .padding(.top, MGSpacing.sm)
-
-            VStack(spacing: 3) {
-                ForEach(WorkspaceDestination.allCases) { item in
-                    Button {
-                        destination = item
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: item.systemImage)
-                                .frame(width: 16)
-                            Text(item.title)
-                            Spacer(minLength: 0)
-                            if item == .queue, counts.queued + counts.running > 0 {
-                                Text("\(counts.queued + counts.running)")
-                                    .font(MGFont.captionStrong)
-                                    .foregroundStyle(item == destination ? MGTheme.accent : .secondary)
-                            }
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(height: 34)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .background(item == destination ? MGTheme.accent.opacity(colorScheme == .dark ? 0.20 : 0.10) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(item == destination ? MGTheme.accent : .primary.opacity(0.82))
-                    .fontWeight(item == destination ? .medium : .regular)
-                    .accessibilityLabel("打开\(item.title)")
-                }
-            }
-            .font(MGFont.bodyStrong)
-            .padding(.horizontal, MGSpacing.xs)
-
-            Spacer(minLength: 0)
-
-            Button {
-                destination = .queue
-            } label: {
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Label(queueStateTitle, systemImage: vm.downloader.isRunning ? "arrow.down.circle.fill" : "tray")
-                            .font(MGFont.captionStrong)
-                            .foregroundStyle(vm.downloader.isRunning ? MGTheme.accent : .secondary)
-                        Spacer()
-                        if !vm.downloader.speedText.isEmpty {
-                            Text(vm.downloader.speedText)
-                                .font(MGFont.mono)
-                                .foregroundStyle(MGTheme.accent)
-                        }
-                    }
-                    if vm.downloader.isRunning || counts.queued > 0 {
-                        ProgressView(value: vm.downloader.progress)
-                            .progressViewStyle(.linear)
-                    }
-                    if counts.queued + counts.running + counts.failed > 0 {
-                        Text("排队 \(counts.queued) · 进行中 \(counts.running) · 失败 \(counts.failed)")
-                            .font(MGFont.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+            Spacer(minLength: 8)
+            navigationButton(.settings)
+            Button { destination = .queue } label: {
+                VStack(spacing: 3) {
+                    Image(systemName: vm.downloader.isRunning ? "arrow.down.circle.fill" : "tray")
+                    if vm.downloader.isRunning {
+                        ProgressView(value: vm.downloader.progress).frame(width: 28)
+                    } else if vm.downloader.countsSummary().queued > 0 {
+                        Text("\(vm.downloader.countsSummary().queued)").font(.system(size: 10)).monospacedDigit()
                     }
                 }
-                .padding(MGSpacing.sm)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .overlay(alignment: .top) { Divider() }
-            .padding(.horizontal, MGSpacing.xs)
+            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
+            .help(vm.downloader.isRunning ? "正在下载 · \(vm.downloader.speedText)" :
+                    (vm.downloader.countsSummary().queued > 0 ? "等待下载 \(vm.downloader.countsSummary().queued) 话" : "队列空闲"))
+            .accessibilityLabel("打开队列状态")
         }
-        .padding(.vertical, MGSpacing.xs)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .padding(.vertical, 8)
+        .frame(width: 64)
+        .frame(maxHeight: .infinity)
         .background(.ultraThinMaterial)
     }
 
-    private var queueStateTitle: String {
-        if vm.downloader.isRunning { return "正在下载" }
-        if counts.queued > 0 { return "等待开始" }
-        return "队列空闲"
+    private func navigationButton(_ item: WorkspaceDestination) -> some View {
+        Button { destination = item } label: {
+            VStack(spacing: 2) {
+                Image(systemName: item.systemImage).font(.system(size: 17, weight: .medium))
+                if destination == item {
+                    Text(item.title).font(.system(size: 10, weight: .medium))
+                }
+            }
+            .frame(width: 40, height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(MGChoiceButtonStyle(selected: destination == item, bordered: false))
+        .help(item.title)
+        .accessibilityLabel("打开\(item.title)")
+        .accessibilityValue(destination == item ? "当前页面" : "")
     }
 }
 
@@ -112,12 +65,13 @@ struct BrandMarkView: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
         } else {
             Image(systemName: "books.vertical.fill")
                 .font(.system(size: size * 0.55, weight: .semibold))
                 .foregroundStyle(MGTheme.accent)
                 .frame(width: size, height: size)
-                .background(MGTheme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
+                .background(MGTheme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
         }
     }
 
@@ -145,6 +99,7 @@ struct ActivityLogSheet: View {
                 Spacer()
                 Button("关闭") { dismiss() }
                     .buttonStyle(MGActionButtonStyle(variant: .secondary))
+                    .keyboardShortcut(.cancelAction)
             }
 
             HStack {

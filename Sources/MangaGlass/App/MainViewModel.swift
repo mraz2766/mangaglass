@@ -81,13 +81,14 @@ final class MainViewModel: ObservableObject {
     }
     @Published var selectedVolumeIDs: Set<String> = []
     @Published var selectedChapterIDs: Set<String> = []
+    @Published var collapsedVolumeIDs: Set<String> = []
     @Published var chapterSortDirection: SortDirection = .ascending
     @Published var chapterSearchQuery = ""
     @Published var destinationFolder: URL = {
         let path = UserDefaults.standard.string(forKey: StorageKey.lastDestinationPath) ?? "/Users/mraz/Documents/life/漫画/"
         return URL(fileURLWithPath: path, isDirectory: true)
     }() {
-        didSet { UserDefaults.standard.set(destinationFolder.path, forKey: StorageKey.lastDestinationPath) }
+        didSet { persistString(destinationFolder.path, key: StorageKey.lastDestinationPath) }
     }
     @Published var statusText = "输入漫画链接后点击加载。"
     @Published var isLoading = false
@@ -109,12 +110,17 @@ final class MainViewModel: ObservableObject {
     private var loadingComicKey: String?
     private var cancellables: Set<AnyCancellable> = []
 
-    init() {
+    private let persistsState: Bool
+
+    init(persistsState: Bool = true) {
+        self.persistsState = persistsState
         let api = CopyMangaAPI()
         self.api = api
         self.downloader = DownloadCoordinator(api: api)
-        restorePersistedState()
-        updateAppAppearance()
+        if persistsState {
+            restorePersistedState()
+            updateAppAppearance()
+        }
         self.api.setLogger { [weak self] message in
             Task { @MainActor in self?.appendLog(message) }
         }
@@ -162,11 +168,24 @@ final class MainViewModel: ObservableObject {
     }
 
     var visibleChapters: [ComicChapter] {
-        filteredVolumeSections.flatMap(\.chapters)
+        filteredVolumeSections.filter { !collapsedVolumeIDs.contains($0.id) }.flatMap(\.chapters)
     }
 
     var visibleChapterCount: Int {
         visibleChapters.count
+    }
+
+    var selectedChapters: [ComicChapter] {
+        displayVolumes.flatMap(\.chapters).filter { selectedChapterIDs.contains($0.id) }
+    }
+
+    var hiddenSelectedChapterCount: Int {
+        max(0, selectedChapters.count - selectedVisibleChapterCount)
+    }
+
+    func clearChapterSelection() {
+        selectedChapterIDs.removeAll()
+        lastSelectedChapterID = nil
     }
 
     var selectedVisibleChapterCount: Int {
@@ -292,12 +311,18 @@ final class MainViewModel: ObservableObject {
         return "\(host)::\(slug.lowercased())"
     }
 
-    private func applyFetchedComic(_ fetched: ComicInfo, final: Bool, sourceText: String) {
+    func applyFetchedComic(_ fetched: ComicInfo, final: Bool, sourceText: String) {
+        let isNewComic = comic?.slug != fetched.slug || comic?.site != fetched.site
+        let previousVolumeIDs = Set(displayVolumes.map(\.id))
         comic = fetched
-        selectedVolumeIDs = Set(fetched.volumes.map(\.id))
-        selectedChapterIDs = []
-        chapterSearchQuery = ""
-        lastSelectedChapterID = nil
+        if isNewComic {
+            selectedVolumeIDs = Set(fetched.volumes.map(\.id))
+            clearChapterSelection()
+            collapsedVolumeIDs.removeAll()
+            chapterSearchQuery = ""
+        } else {
+            selectedVolumeIDs.formUnion(Set(fetched.volumes.map(\.id)).subtracting(previousVolumeIDs))
+        }
         statusText = final
             ? "加载成功：\(fetched.name)（\(fetched.site.displayName)）"
             : "已显示\(sourceText)：\(fetched.name)，正在补全..."
@@ -389,14 +414,6 @@ final class MainViewModel: ObservableObject {
             selectedVolumeIDs.insert(volumeID)
         }
 
-        // Search must not discard a selection; only hiding an entire volume does.
-        let selectedVolumeChapterIDs = Set(
-            displayVolumes
-                .filter { selectedVolumeIDs.contains($0.id) }
-                .flatMap(\.chapters)
-                .map(\.id)
-        )
-        selectedChapterIDs = selectedChapterIDs.intersection(selectedVolumeChapterIDs)
     }
 
     func selectAllVolumes() {
@@ -405,7 +422,6 @@ final class MainViewModel: ObservableObject {
 
     func deselectAllVolumes() {
         selectedVolumeIDs = []
-        selectedChapterIDs = []
     }
 
     func selectVolumeChapters(volumeID: String) {
@@ -450,29 +466,32 @@ final class MainViewModel: ObservableObject {
         return selected > 0 && selected < matchingCount
     }
 
-    func startDownload() {
-        if let comic, isRetiredCopySite(comic.site) {
+    func enqueueSelectedChapters() {
+        guard let comic, !selectedChapters.isEmpty else { return }
+        if isRetiredCopySite(comic.site) {
             presentRetiredSiteMessage()
             return
         }
+        downloader.add(chapters: selectedChapters, comic: comic, destination: destinationFolder, cookie: normalizedCookie)
+        appendLog("加入队列：\(comic.name) - \(selectedChapters.count) 话")
+    }
+
+    func startDownload() {
+        guard let comic, !selectedChapters.isEmpty else { return }
+        guard !isRetiredCopySite(comic.site) else {
+            presentRetiredSiteMessage()
+            return
+        }
+        enqueueSelectedChapters()
+        startQueuedDownloads()
+    }
+
+    func startQueuedDownloads() {
         if downloader.taskItems.contains(where: { $0.state == .queued && isRetiredCopySite($0.comic.site) }) {
             presentRetiredSiteMessage()
             return
         }
         let queueConcurrent = queueMaxConcurrent()
-        if let comic = comic {
-            let selected: [ComicChapter]
-            if !selectedChapterIDs.isEmpty {
-                selected = visibleChapters.filter { selectedChapterIDs.contains($0.id) }
-            } else {
-                selected = visibleChapters
-            }
-            if !selected.isEmpty {
-                let concurrent = downloadConcurrent(for: comic.site)
-                appendLog("加入队列：\(comic.name) - \(selected.count) 话，并发 \(concurrent)")
-                downloader.add(chapters: selected, comic: comic, destination: destinationFolder, cookie: normalizedCookie)
-            }
-        }
         
         let pendingItems = downloader.taskItems.filter { $0.state == .queued }
         if pendingItems.isEmpty {
@@ -760,6 +779,10 @@ final class MainViewModel: ObservableObject {
     }
 
     private func bindPersistence() {
+        downloader.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
         downloader.$taskItems
             .sink { [weak self] items in
                 self?.persistCodable(items, key: StorageKey.downloadQueue)
@@ -795,10 +818,12 @@ final class MainViewModel: ObservableObject {
     }
 
     private func persistString(_ value: String, key: String) {
+        guard persistsState else { return }
         UserDefaults.standard.set(value, forKey: key)
     }
 
     private func persistCodable<T: Codable>(_ value: T?, key: String) {
+        guard persistsState else { return }
         let defaults = UserDefaults.standard
         guard let value else {
             defaults.removeObject(forKey: key)

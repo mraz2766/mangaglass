@@ -1,5 +1,63 @@
 import SwiftUI
 
+enum MGSelectionState {
+    case none, partial, all
+    var symbol: String {
+        switch self {
+        case .none: return "square"
+        case .partial: return "minus.square.fill"
+        case .all: return "checkmark.square.fill"
+        }
+    }
+    var description: String {
+        switch self {
+        case .none: return "未选中"
+        case .partial: return "部分选中"
+        case .all: return "全部选中"
+        }
+    }
+}
+
+struct MGGroupSelectionButton: View {
+    let title: String
+    let state: MGSelectionState
+    let action: () -> Void
+    private var actionTitle: String { state == .all ? "取消本组选择" : "全选本组" }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: state.symbol)
+                .foregroundStyle(state == .none ? Color.secondary : MGTheme.accent)
+                .frame(width: 28, height: 28)
+        }
+        .buttonStyle(MGActionButtonStyle(variant: .secondary, iconOnly: true))
+        .help(actionTitle)
+        .accessibilityLabel("\(title)：\(actionTitle)")
+        .accessibilityValue(state.description)
+    }
+}
+
+struct MGChapterSelectionCell: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: selected ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(selected ? MGTheme.accent : .secondary)
+                Text(title).font(MGFont.body).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8).frame(height: 38)
+            .frame(maxWidth: .infinity).contentShape(Rectangle())
+        }
+        .buttonStyle(MGChoiceButtonStyle(selected: selected))
+        .help(title).accessibilityLabel(title).accessibilityValue(selected ? "已选择" : "未选择")
+    }
+}
+
 enum MGActionVariant {
     case primary
     case secondary
@@ -63,50 +121,123 @@ enum MGSpacing {
     static let content: CGFloat = 20
 }
 
+enum MGMotion {
+    static let fast = Animation.easeOut(duration: 0.08)
+    static let regular = Animation.easeInOut(duration: 0.16)
+    static let panel = Animation.easeInOut(duration: 0.24)
+}
+
 struct MGActionButtonStyle: ButtonStyle {
     let variant: MGActionVariant
-    @Environment(\.colorScheme) private var colorScheme
+    var iconOnly = false
 
     func makeBody(configuration: Configuration) -> some View {
+        MGActionBody(configuration: configuration, variant: variant, iconOnly: iconOnly)
+    }
+}
+
+private struct MGActionBody: View {
+    let configuration: ButtonStyle.Configuration
+    let variant: MGActionVariant
+    let iconOnly: Bool
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.isFocused) private var focused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    var body: some View {
         configuration.label
             .font(MGFont.bodyStrong)
-            .foregroundStyle(foreground)
-            .padding(.horizontal, 12)
-            .frame(minHeight: variant == .primary ? 32 : 28)
-            .background(background(pressed: configuration.isPressed), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .foregroundStyle(!enabled ? Color.secondary : (variant == .primary || variant == .destructive ? .white : .primary))
+            .padding(.horizontal, iconOnly ? 0 : 10)
+            .frame(minWidth: iconOnly ? 28 : nil, minHeight: variant == .primary ? 32 : 28)
+            .background(fill, in: RoundedRectangle(cornerRadius: 6))
             .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(border, lineWidth: variant == .ghost ? 0 : 0.6)
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(focused ? MGTheme.accent : (variant == .secondary ? MGTheme.divider(for: scheme) : .clear), lineWidth: focused ? 2 : 0.7)
             }
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
+            .animation(reduceMotion ? nil : MGMotion.fast, value: configuration.isPressed)
     }
 
-    private var foreground: Color {
-        switch variant {
-        case .primary, .destructive: return .white
-        case .secondary, .ghost: return .primary.opacity(0.86)
+    private var fill: Color {
+        guard enabled else { return Color.primary.opacity(0.035) }
+        if variant == .primary || variant == .destructive {
+            let color = variant == .primary ? MGTheme.accent : MGTheme.danger
+            return color.opacity(configuration.isPressed ? 0.75 : (hovering ? 0.88 : 1))
         }
+        return Color.primary.opacity(configuration.isPressed ? 0.09 : (hovering ? 0.055 : (variant == .secondary ? 0.025 : 0)))
+    }
+}
+
+struct MGChoiceButtonStyle: ButtonStyle {
+    let selected: Bool
+    var bordered = true
+
+    func makeBody(configuration: Configuration) -> some View {
+        MGChoiceBody(configuration: configuration, selected: selected, bordered: bordered)
+    }
+}
+
+private struct MGChoiceBody: View {
+    let configuration: ButtonStyle.Configuration
+    let selected: Bool
+    let bordered: Bool
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.isFocused) private var focused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    var body: some View {
+        configuration.label
+            .foregroundStyle(selected ? MGTheme.accent : .primary)
+            .background(fill, in: RoundedRectangle(cornerRadius: 6))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6).stroke(
+                    focused ? MGTheme.accent : (selected && bordered ? MGTheme.accent.opacity(0.6) :
+                        (bordered ? MGTheme.divider(for: scheme).opacity(0.75) : .clear)),
+                    lineWidth: focused ? 2 : (selected ? 1 : 0.7))
+            }
+            .contentShape(Rectangle())
+            .opacity(enabled ? 1 : 0.45)
+            .onHover { hovering = $0 }
+            .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
+            .animation(reduceMotion ? nil : MGMotion.fast, value: selected)
+            .animation(reduceMotion ? nil : MGMotion.fast, value: configuration.isPressed)
     }
 
-    private func background(pressed: Bool) -> Color {
-        switch variant {
-        case .primary:
-            return (pressed ? MGTheme.accentStrong : MGTheme.accent)
-        case .destructive:
-            return pressed ? MGTheme.danger.opacity(0.82) : MGTheme.danger
-        case .secondary:
-            return MGTheme.inset(for: colorScheme).opacity(pressed ? 1.55 : 1)
-        case .ghost:
-            return Color.clear
-        }
+    private var fill: Color {
+        let active = enabled && (hovering || configuration.isPressed)
+        if selected { return MGTheme.accent.opacity((scheme == .dark ? 0.20 : 0.10) + (active ? 0.07 : 0)) }
+        return Color.primary.opacity(active ? 0.065 : (bordered ? 0.025 : 0))
     }
+}
 
-    private var border: Color {
-        switch variant {
-        case .primary, .destructive: return Color.white.opacity(0.22)
-        case .secondary: return MGTheme.divider(for: colorScheme)
-        case .ghost: return .clear
+struct MGSearchField: View {
+    let title: String
+    @Binding var text: String
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField(title, text: $text).textFieldStyle(.plain).focused($focused)
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .help("清除搜索")
+                    .accessibilityLabel("清除搜索")
+            }
         }
+        .font(MGFont.body)
+        .padding(.horizontal, 8)
+        .frame(height: 30)
+        .mgInset(radius: 6)
+        .overlay { RoundedRectangle(cornerRadius: 6).stroke(focused ? MGTheme.accent : .clear, lineWidth: 2) }
     }
 }
 
@@ -236,6 +367,8 @@ private struct MGTextFieldModifier: ViewModifier {
 
 private struct MGHoverBackgroundModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isFocused) private var focused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
     let radius: CGFloat
 
@@ -244,6 +377,6 @@ private struct MGHoverBackgroundModifier: ViewModifier {
             .background(hovering ? (colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.04)) : .clear,
                         in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .onHover { hovering = $0 }
-            .animation(.easeOut(duration: 0.1), value: hovering)
+            .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
     }
 }
