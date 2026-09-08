@@ -21,6 +21,12 @@ struct MangaSiteConfig: Hashable, Codable, Sendable {
             URL(string: "https://www.manhuagui.com")!
         ]
     )
+
+    static let baoziManga = MangaSiteConfig(
+        displayName: "包子漫画",
+        webBase: URL(string: "https://www.baozimh.com")!,
+        apiBaseURLs: [URL(string: "https://www.baozimh.com")!]
+    )
 }
 
 enum CopyMangaMirror: String, CaseIterable, Identifiable {
@@ -188,6 +194,20 @@ enum ExistingFilePolicy: String, Codable, Sendable {
     case overwrite
 }
 
+enum CopyImageQuality: String, Codable, CaseIterable, Identifiable, Sendable {
+    case high
+    case standard
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .high: return "高清 c1500x"
+        case .standard: return "标准"
+        }
+    }
+}
+
 struct DownloadTaskItem: Identifiable, Codable, Sendable {
     enum State: Equatable, Codable, Sendable {
         case queued
@@ -208,6 +228,7 @@ struct DownloadTaskItem: Identifiable, Codable, Sendable {
     var existingFilePolicy: ExistingFilePolicy?
     var usesGroupFolder: Bool?
     var resolvedImageURLs: [URL]?
+    var copyImageQuality: CopyImageQuality?
 
     init(
         id: UUID = UUID(),
@@ -220,7 +241,8 @@ struct DownloadTaskItem: Identifiable, Codable, Sendable {
         finishedAt: Date? = nil,
         existingFilePolicy: ExistingFilePolicy? = nil,
         usesGroupFolder: Bool? = nil,
-        resolvedImageURLs: [URL]? = nil
+        resolvedImageURLs: [URL]? = nil,
+        copyImageQuality: CopyImageQuality? = nil
     ) {
         self.id = id
         self.comic = comic
@@ -233,6 +255,7 @@ struct DownloadTaskItem: Identifiable, Codable, Sendable {
         self.existingFilePolicy = existingFilePolicy
         self.usesGroupFolder = usesGroupFolder
         self.resolvedImageURLs = resolvedImageURLs
+        self.copyImageQuality = copyImageQuality
     }
 
     var queueIdentity: String {

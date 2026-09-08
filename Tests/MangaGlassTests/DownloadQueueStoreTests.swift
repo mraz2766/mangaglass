@@ -20,7 +20,8 @@ final class DownloadQueueStoreTests: XCTestCase {
                 cookie: "test-cookie",
                 existingFilePolicy: $0.id == "0" ? .overwrite : .keepExisting,
                 usesGroupFolder: true,
-                resolvedImageURLs: [URL(string: "https://img.example.com/\($0.id).jpg")!]
+                resolvedImageURLs: [URL(string: "https://img.example.com/\($0.id).jpg")!],
+                copyImageQuality: .standard
             )
         }
 
@@ -33,6 +34,7 @@ final class DownloadQueueStoreTests: XCTestCase {
         XCTAssertEqual(restored.first?.existingFilePolicy, .overwrite)
         XCTAssertEqual(restored.first?.usesGroupFolder, true)
         XCTAssertNil(restored.first?.resolvedImageURLs)
+        XCTAssertEqual(restored.first?.copyImageQuality, .standard)
 
         let coordinator = DownloadCoordinator(api: CopyMangaAPI())
         coordinator.restoreQueue(restored)

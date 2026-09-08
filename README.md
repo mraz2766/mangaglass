@@ -21,6 +21,8 @@ This project is a desktop app. It is not a general-purpose crawler framework and
   - `copy4000.com` (Domestic site)
 - Manhuagui
   - `manhuagui.com`
+- Baozi Manga
+  - `baozimh.com`
 - MYCOMIC
   - `mycomic.com`
 
@@ -96,6 +98,7 @@ Common examples:
 
 ```text
 https://www.manhuagui.com/comic/19430/
+https://www.baozimh.com/comic/yaoshenji-taxuedongman
 https://www.2026copy.com/comic/haizeiwang
 https://mycomic.com/comics/1759
 https://mycomic.com/chapters/790421
@@ -124,6 +127,14 @@ Typical cases where cookies help:
 
 - the page opens in a browser, but the app cannot parse the content
 - the chapter opens in a browser, but the app returns `403`, `404`, or empty content when downloading
+
+### CopyManga download tuning
+
+- Chapter concurrency is fixed at 3.
+- Global image concurrency is configurable from 4 to 8 and defaults to 4.
+- Image requests retain 80–180 ms staggering and adaptive slowdown.
+- Image quality defaults to the `c1500x` high-resolution URL and falls back to the standard URL when needed.
+- Chapters are written to `.下载中-<chapter>` and published to the final folder only after integrity validation succeeds.
 
 ### Proxy
 

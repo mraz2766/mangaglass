@@ -259,11 +259,26 @@ struct MGSearchField: View {
     let title: String
     @Binding var text: String
     @FocusState private var focused: Bool
+    @State private var undoStack: [String] = []
+    @State private var previousText = ""
+    @State private var isApplyingUndo = false
 
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField(title, text: $text).textFieldStyle(.plain).focused($focused)
+            TextField(title, text: $text)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .onAppear { previousText = text }
+                .onChange(of: text) { newValue in
+                    if isApplyingUndo {
+                        isApplyingUndo = false
+                    } else if previousText != newValue {
+                        undoStack.append(previousText)
+                        if undoStack.count > 50 { undoStack.removeFirst(undoStack.count - 50) }
+                    }
+                    previousText = newValue
+                }
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain)
@@ -276,6 +291,19 @@ struct MGSearchField: View {
         .frame(height: 30)
         .mgInset(radius: 6)
         .overlay { RoundedRectangle(cornerRadius: 6).stroke(focused ? MGTheme.accent : .clear, lineWidth: 2) }
+        .background {
+            Button(action: undoSearch) { Color.clear.frame(width: 1, height: 1) }
+                .keyboardShortcut("z", modifiers: .control)
+                .disabled(!focused || undoStack.isEmpty)
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func undoSearch() {
+        guard focused, let previous = undoStack.popLast() else { return }
+        isApplyingUndo = true
+        text = previous
     }
 }
 

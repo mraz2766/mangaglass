@@ -193,6 +193,29 @@ struct SettingsWorkspaceView: View {
                     }
                 }
 
+                settingsSection("下载性能", detail: "Copy 章节并发固定为 3；图片请求继续使用 80–180ms 错峰和动态降速。") {
+                    adaptiveSettingRow("Copy 图片并发") {
+                        Picker("Copy 图片并发", selection: $vm.copyImageConcurrency) {
+                            ForEach(4...8, id: \.self) { value in
+                                Text("\(value)").tag(value)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 240)
+                    }
+                    adaptiveSettingRow("Copy 图片质量") {
+                        Picker("Copy 图片质量", selection: $vm.copyImageQuality) {
+                            ForEach(CopyImageQuality.allCases) { quality in
+                                Text(quality.title).tag(quality)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 240)
+                    }
+                }
+
                 settingsSection("站点入口", detail: "在默认浏览器中打开支持站点。") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: MGSpacing.xs)], alignment: .leading, spacing: MGSpacing.xs) {
                         ForEach(CopyMangaMirror.allCases) { mirror in
@@ -203,6 +226,8 @@ struct SettingsWorkspaceView: View {
                             .help(mirror.webBaseURL.host ?? mirror.displayName)
                         }
                         Button("漫画柜") { openInBrowser("https://www.manhuagui.com") }
+                            .buttonStyle(MGActionButtonStyle(variant: .secondary))
+                        Button("包子漫画") { openInBrowser("https://www.baozimh.com") }
                             .buttonStyle(MGActionButtonStyle(variant: .secondary))
                     }
                 }
@@ -255,6 +280,21 @@ struct SettingsWorkspaceView: View {
             Divider()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func adaptiveSettingRow<Control: View>(
+        _ title: String,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        let layout = formWidth >= 600
+            ? AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+        return layout {
+            Text(title)
+                .font(MGFont.body)
+                .frame(width: formWidth >= 600 ? 112 : nil, alignment: .leading)
+            control()
+        }
     }
 
     private func openInBrowser(_ rawURL: String) {

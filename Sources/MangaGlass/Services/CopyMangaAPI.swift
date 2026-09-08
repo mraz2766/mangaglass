@@ -129,6 +129,8 @@ final class CopyMangaAPI: @unchecked Sendable {
             let host = url.host?.lowercased()
             let isSupportedHost =
                 (host?.contains("manhuagui.com") == true) ||
+                (host?.contains("baozimh.com") == true) ||
+                (host?.contains("twmanga.com") == true) ||
                 (CopyMangaMirror.mirror(for: host) != nil)
             guard isSupportedHost else { throw CopyMangaError.invalidComicPath }
             let site = siteConfig(for: url.host)
@@ -168,6 +170,9 @@ final class CopyMangaAPI: @unchecked Sendable {
         guard let host = host?.lowercased() else { return CopyMangaMirror.mangacopy.siteConfig() }
         if host.contains("manhuagui.com") {
             return .manhuaGui
+        }
+        if host.contains("baozimh.com") || host.contains("twmanga.com") {
+            return .baoziManga
         }
 
         if let mirror = CopyMangaMirror.mirror(for: host) {
@@ -471,6 +476,11 @@ final class CopyMangaAPI: @unchecked Sendable {
         return false
     }
 
+    private func isBaoziManga(_ site: MangaSiteConfig) -> Bool {
+        let host = site.webBase.host?.lowercased() ?? ""
+        return host.contains("baozimh.com") || host.contains("twmanga.com")
+    }
+
     private var copyParserAdapter: SiteParserAdapter {
         SiteParserAdapter(
             supports: { [weak self] site in self?.isCopyFamily(site) == true },
@@ -533,12 +543,147 @@ final class CopyMangaAPI: @unchecked Sendable {
         )
     }
 
+    private var baoziParserAdapter: SiteParserAdapter {
+        SiteParserAdapter(
+            supports: { [weak self] site in self?.isBaoziManga(site) == true },
+            resolveTarget: { url, parts in
+                if let comicID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "comic_id" })?.value,
+                   !comicID.isEmpty {
+                    return comicID
+                }
+                if let chapterIndex = parts.firstIndex(of: "chapter"), parts.count > chapterIndex + 1 {
+                    return parts[chapterIndex + 1]
+                }
+                if let comicIndex = parts.firstIndex(of: "comic"), parts.count > comicIndex + 1 {
+                    return parts[comicIndex + 1]
+                }
+                return nil
+            },
+            fetchComic: { [weak self] slug, site, cookie in
+                guard let self else { throw CopyMangaError.unexpectedPayload }
+                self.log("使用网页解析分支：包子漫画")
+                let url = site.webBase.appendingPathComponent("comic/\(slug)")
+                let html = try await self.getHTML(url: url, cookie: cookie, site: site, retryTimes: 2)
+                return try self.parseBaoziComicHTML(html, slug: slug, site: site)
+            },
+            fetchImageURLs: { [weak self] slug, chapterUUID, chapterName, site, cookie in
+                guard let self else { throw CopyMangaError.unexpectedPayload }
+                guard let url = self.baoziChapterURL(chapterUUID: chapterUUID, slug: slug, site: site) else {
+                    throw CopyMangaError.invalidURL
+                }
+                self.log("章节图片解析：包子漫画 \(chapterName)")
+                let html = try await self.getHTML(url: url, cookie: cookie, site: site, retryTimes: 2)
+                let urls = self.parseBaoziImageURLs(html, site: site)
+                guard !urls.isEmpty else { throw CopyMangaError.noImageInChapter(chapterName) }
+                return urls
+            },
+            imageRefererURL: { [weak self] slug, chapterUUID, site in
+                self?.baoziChapterURL(chapterUUID: chapterUUID, slug: slug, site: site) ?? site.webBase
+            }
+        )
+    }
+
     private var siteParserAdapters: [SiteParserAdapter] {
-        [copyParserAdapter, manhuaGuiParserAdapter]
+        [copyParserAdapter, manhuaGuiParserAdapter, baoziParserAdapter]
     }
 
     private func parserAdapter(for site: MangaSiteConfig) -> SiteParserAdapter? {
         siteParserAdapters.first { $0.supports(site) }
+    }
+
+    func parseBaoziComicHTML(_ html: String, slug: String, site: MangaSiteConfig = .baoziManga) throws -> ComicInfo {
+        let title = firstMatch(
+            in: html,
+            pattern: #"(?is)<meta[^>]+(?:name|property)\s*=\s*["']og:novel:book_name["'][^>]+content\s*=\s*["'](.*?)["']"#
+        ).map(decodeHTMLEntities)
+            ?? firstMatch(
+                in: html,
+                pattern: #"(?is)<meta[^>]+(?:name|property)\s*=\s*["']og:title["'][^>]+content\s*=\s*["'](.*?)["']"#
+            ).map { cleanHTMLText($0.replacingOccurrences(of: "漫畫 - 包子漫畫", with: "")) }
+            ?? slug
+        let cover = firstMatch(
+            in: html,
+            pattern: #"(?is)<meta[^>]+(?:name|property)\s*=\s*["']og:image["'][^>]+content\s*=\s*["'](.*?)["']"#
+        ).flatMap { normalizedURL(decodeHTMLEntities($0), site: site) }
+
+        let anchorPattern = #"(?is)<a[^>]+href\s*=\s*["']([^"']*/user/page_direct\?[^"']+)["'][^>]*>(.*?)</a>"#
+        var grouped: [Int: [ComicChapter]] = [:]
+        var seen: Set<String> = []
+        for match in matches(in: html, pattern: anchorPattern) {
+            guard let rawHref = substring(in: html, nsRange: match.range(at: 1)),
+                  let body = substring(in: html, nsRange: match.range(at: 2)) else { continue }
+            let href = decodeHTMLEntities(rawHref)
+            guard let url = URL(string: href, relativeTo: site.webBase)?.absoluteURL,
+                  let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  let sectionText = components.queryItems?.first(where: { $0.name == "section_slot" })?.value,
+                  let chapterText = components.queryItems?.first(where: { $0.name == "chapter_slot" })?.value,
+                  let section = Int(sectionText), let chapterSlot = Int(chapterText) else { continue }
+            let chapterName = cleanHTMLText(body)
+            guard !chapterName.isEmpty else { continue }
+            let id = "baozi:\(section):\(chapterSlot)"
+            guard seen.insert(id).inserted else { continue }
+            let volumeID = "baozi-section-\(section)"
+            let volumeName = section == 0 ? "话" : "分区 \(section + 1)"
+            grouped[section, default: []].append(
+                ComicChapter(
+                    id: id,
+                    uuid: href,
+                    displayName: chapterName,
+                    order: Double(chapterSlot),
+                    volumeID: volumeID,
+                    volumeName: volumeName
+                )
+            )
+        }
+
+        let volumes = grouped.keys.sorted().map { section in
+            let volumeID = "baozi-section-\(section)"
+            let volumeName = section == 0 ? "话" : "分区 \(section + 1)"
+            return ComicVolume(
+                id: volumeID,
+                displayName: volumeName,
+                pathWord: String(section),
+                chapters: (grouped[section] ?? []).sorted { $0.order < $1.order }
+            )
+        }
+        guard !volumes.isEmpty else {
+            throw CopyMangaError.htmlParse("包子漫画页面未找到章节目录。")
+        }
+        return ComicInfo(
+            slug: slug,
+            name: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            coverURL: cover,
+            volumes: volumes,
+            site: site,
+            apiPathPrefix: "",
+            apiBaseURL: site.webBase
+        )
+    }
+
+    func parseBaoziImageURLs(_ html: String, site: MangaSiteConfig = .baoziManga) -> [URL] {
+        var seen: Set<String> = []
+        var urls: [URL] = []
+        let tags = matches(
+            in: html,
+            pattern: #"(?is)<(?:amp-img|img)\b[^>]*class\s*=\s*["'][^"']*comic-contain__item[^"']*["'][^>]*>"#
+        )
+        for tagMatch in tags {
+            guard let tag = substring(in: html, nsRange: tagMatch.range) else { continue }
+            let raw = firstMatch(in: tag, pattern: #"(?is)\bdata-src\s*=\s*["']([^"']+)["']"#)
+                ?? firstMatch(in: tag, pattern: #"(?is)\bsrc\s*=\s*["']([^"']+)["']"#)
+            guard let raw,
+                  let url = normalizedURL(decodeHTMLEntities(raw), site: site),
+                  seen.insert(url.absoluteString).inserted else { continue }
+            urls.append(url)
+        }
+        return urls
+    }
+
+    private func baoziChapterURL(chapterUUID: String, slug: String, site: MangaSiteConfig) -> URL? {
+        if let url = URL(string: chapterUUID), url.scheme != nil { return url }
+        if let url = URL(string: chapterUUID, relativeTo: site.webBase)?.absoluteURL { return url }
+        return site.webBase.appendingPathComponent("comic/\(slug)")
     }
 
     private func normalizeSiteError(_ error: Error, site: MangaSiteConfig, phase: String) -> CopyMangaError {

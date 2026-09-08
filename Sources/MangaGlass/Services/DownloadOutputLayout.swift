@@ -28,6 +28,64 @@ enum DownloadOutputLayout {
         return parent.appendingPathComponent(sanitize(chapter.displayName), isDirectory: true)
     }
 
+    static func stagingChapterFolder(for chapterFolder: URL) -> URL {
+        chapterFolder.deletingLastPathComponent().appendingPathComponent(
+            ".下载中-\(chapterFolder.lastPathComponent)",
+            isDirectory: true
+        )
+    }
+
+    static func recoverableChapterFolder(for chapterFolder: URL, manager: FileManager = .default) -> URL {
+        let staging = stagingChapterFolder(for: chapterFolder)
+        return manager.fileExists(atPath: staging.path) ? staging : chapterFolder
+    }
+
+    static func prepareStagingFolder(
+        for chapterFolder: URL,
+        overwrite: Bool,
+        manager: FileManager = .default
+    ) throws -> URL {
+        let staging = stagingChapterFolder(for: chapterFolder)
+        if overwrite {
+            if manager.fileExists(atPath: staging.path) { try manager.removeItem(at: staging) }
+        } else if !manager.fileExists(atPath: staging.path), manager.fileExists(atPath: chapterFolder.path) {
+            try manager.copyItem(at: chapterFolder, to: staging)
+        }
+        if !manager.fileExists(atPath: staging.path) {
+            try manager.createDirectory(at: staging, withIntermediateDirectories: true)
+        }
+        return staging
+    }
+
+    static func publishStagingFolder(
+        _ staging: URL,
+        as chapterFolder: URL,
+        manager: FileManager = .default
+    ) throws {
+        guard manager.fileExists(atPath: staging.path) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let manifest = DownloadIntegrity.loadManifest(from: staging)
+        guard let manifest,
+              manifest.isComplete,
+              manifest.pages.count == manifest.expectedPages else {
+            throw DownloadIntegrityError.incompleteChapter(
+                expected: manifest?.expectedPages ?? 1,
+                verified: manifest?.pages.count ?? 0
+            )
+        }
+        if manager.fileExists(atPath: chapterFolder.path) {
+            _ = try manager.replaceItemAt(
+                chapterFolder,
+                withItemAt: staging,
+                backupItemName: nil,
+                options: []
+            )
+        } else {
+            try manager.moveItem(at: staging, to: chapterFolder)
+        }
+    }
+
     static func inspectExistingFiles(
         comic: ComicInfo,
         chapters: [ComicChapter],
@@ -45,8 +103,9 @@ enum DownloadOutputLayout {
                 destination: destination,
                 usesGroupFolder: usesGroupFolder
             )
+            let recoverableFolder = recoverableChapterFolder(for: folder, manager: manager)
             guard let enumerator = manager.enumerator(
-                at: folder,
+                at: recoverableFolder,
                 includingPropertiesForKeys: [.isRegularFileKey],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) else { continue }

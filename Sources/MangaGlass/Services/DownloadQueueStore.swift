@@ -14,6 +14,7 @@ struct DownloadQueueSnapshot: Codable, Sendable {
         let finishedAt: Date?
         let existingFilePolicy: ExistingFilePolicy?
         let usesGroupFolder: Bool?
+        let copyImageQuality: CopyImageQuality?
     }
 
     let version: Int
@@ -51,7 +52,8 @@ struct DownloadQueueSnapshot: Codable, Sendable {
                 startedAt: task.startedAt,
                 finishedAt: task.finishedAt,
                 existingFilePolicy: task.existingFilePolicy,
-                usesGroupFolder: task.usesGroupFolder
+                usesGroupFolder: task.usesGroupFolder,
+                copyImageQuality: task.copyImageQuality
             ))
         }
 
@@ -76,7 +78,8 @@ struct DownloadQueueSnapshot: Codable, Sendable {
                 startedAt: item.startedAt,
                 finishedAt: item.finishedAt,
                 existingFilePolicy: item.existingFilePolicy,
-                usesGroupFolder: item.usesGroupFolder
+                usesGroupFolder: item.usesGroupFolder,
+                copyImageQuality: item.copyImageQuality
             ))
         }
         return restored

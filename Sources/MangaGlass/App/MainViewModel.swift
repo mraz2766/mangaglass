@@ -44,6 +44,8 @@ enum EnqueueResult: Equatable {
 private enum StorageKey {
     static let inputURL = "inputURL"
     static let authCookie = "authCookie"
+    static let copyImageConcurrency = "copyImageConcurrency"
+    static let copyImageQuality = "copyImageQuality"
     static let lastDestinationPath = "lastDestinationPath"
     static let recentRecords = "recentRecords"
     static let lastComic = "lastComic"
@@ -75,6 +77,7 @@ final class MainViewModel: ObservableObject {
         let cookie: String?
         let usesGroupFolder: Bool
         let existingOutput: ExistingOutputSummary
+        let copyImageQuality: CopyImageQuality
 
         var conflictMessage: String {
             "所选章节中有 \(existingOutput.chapterCount) 话包含已下载文件，共 \(existingOutput.fileCount) 个。可以覆盖这些章节重新下载，或保留已有文件并只补全缺失页面。"
@@ -86,6 +89,20 @@ final class MainViewModel: ObservableObject {
     }
     @Published var authCookie = "" {
         didSet { persistString(authCookie, key: StorageKey.authCookie) }
+    }
+    @Published var copyImageConcurrency = 4 {
+        didSet {
+            let clamped = min(8, max(4, copyImageConcurrency))
+            if clamped != copyImageConcurrency {
+                copyImageConcurrency = clamped
+                return
+            }
+            if persistsState { UserDefaults.standard.set(clamped, forKey: StorageKey.copyImageConcurrency) }
+            downloader.configure(copyImageConcurrency: clamped)
+        }
+    }
+    @Published var copyImageQuality: CopyImageQuality = .high {
+        didSet { persistString(copyImageQuality.rawValue, key: StorageKey.copyImageQuality) }
     }
     @Published var windowCloseBehavior: WindowCloseBehavior = .ask {
         didSet { persistString(windowCloseBehavior.rawValue, key: WindowCloseBehavior.storageKey) }
@@ -559,7 +576,8 @@ final class MainViewModel: ObservableObject {
             chapters: selectedChapters,
             comic: comic,
             destination: destinationFolder,
-            cookie: normalizedCookie
+            cookie: normalizedCookie,
+            copyImageQuality: copyImageQuality
         )
         guard addedCount > 0 else {
             statusText = "所选章节已在队列中。"
@@ -604,7 +622,8 @@ final class MainViewModel: ObservableObject {
             destination: destination,
             cookie: cookie,
             usesGroupFolder: usesGroupFolder,
-            existingOutput: summary
+            existingOutput: summary,
+            copyImageQuality: copyImageQuality
         )
     }
 
@@ -624,6 +643,7 @@ final class MainViewModel: ObservableObject {
             cookie: prepared.cookie,
             existingFilePolicy: existingFilePolicy,
             usesGroupFolder: prepared.usesGroupFolder,
+            copyImageQuality: prepared.copyImageQuality,
             replacingFinished: true
         )
         guard addedCount > 0 else {
@@ -716,7 +736,8 @@ final class MainViewModel: ObservableObject {
             destination: item.destination,
             cookie: item.cookie,
             usesGroupFolder: item.usesGroupFolder,
-            resolvedImageURLsByChapterID: item.resolvedImageURLs.map { [item.chapter.id: $0] } ?? [:]
+            resolvedImageURLsByChapterID: item.resolvedImageURLs.map { [item.chapter.id: $0] } ?? [:],
+            copyImageQuality: item.copyImageQuality ?? .high
         )
         if !downloader.isRunning {
              let concurrent = downloadConcurrent(for: item.comic.site)
@@ -739,7 +760,7 @@ final class MainViewModel: ObservableObject {
         appendLog("重试失败任务：\(failed.count) 话")
         
         let chaptersByComicAndDestination = Dictionary(grouping: failed) { item in
-            "\(item.comic.slug)-\(item.destination.path)"
+            "\(item.comic.slug)-\(item.destination.path)-\((item.copyImageQuality ?? .high).rawValue)"
         }
         
         for (_, items) in chaptersByComicAndDestination {
@@ -756,6 +777,7 @@ final class MainViewModel: ObservableObject {
                             item.resolvedImageURLs.map { (item.chapter.id, $0) }
                         }
                     ),
+                    copyImageQuality: first.copyImageQuality ?? .high,
                     replacingFinished: true
                 )
             }
@@ -768,24 +790,24 @@ final class MainViewModel: ObservableObject {
         let hasManhuaGui = downloader.taskItems.contains {
             $0.comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true
         }
-        if hasManhuaGui {
-            return 4
-        }
         let hasCopy = downloader.taskItems.contains {
             isCopyFamily($0.comic.site)
         }
         if hasCopy {
-            return 2
+            return 3
+        }
+        if hasManhuaGui {
+            return 4
         }
         return 5
     }
 
-    private func downloadConcurrent(for site: MangaSiteConfig) -> Int {
+    func downloadConcurrent(for site: MangaSiteConfig) -> Int {
         if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
             return 4
         }
         if isCopyFamily(site) {
-            return 2
+            return 3
         }
         return 5
     }
@@ -987,6 +1009,10 @@ final class MainViewModel: ObservableObject {
         let defaults = UserDefaults.standard
         inputURL = defaults.string(forKey: StorageKey.inputURL) ?? ""
         authCookie = defaults.string(forKey: StorageKey.authCookie) ?? ""
+        let storedImageConcurrency = defaults.integer(forKey: StorageKey.copyImageConcurrency)
+        copyImageConcurrency = storedImageConcurrency == 0 ? 4 : min(8, max(4, storedImageConcurrency))
+        copyImageQuality = defaults.string(forKey: StorageKey.copyImageQuality)
+            .flatMap(CopyImageQuality.init(rawValue:)) ?? .high
         recentRecords = loadCodable([RecentComicRecord].self, key: StorageKey.recentRecords) ?? []
         comic = loadCodable(ComicInfo.self, key: StorageKey.lastComic)
         if let comic {
@@ -1073,7 +1099,18 @@ final class MainViewModel: ObservableObject {
 
     private func chapterMatchesSearch(_ chapter: ComicChapter) -> Bool {
         let query = chapterSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        return query.isEmpty || chapter.displayName.localizedCaseInsensitiveContains(query)
+        guard !query.isEmpty else { return true }
+        let normalizedTitle = chapter.displayName.folding(
+            options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+            locale: Locale.current
+        )
+        let terms = query.split(whereSeparator: { $0.isWhitespace }).map {
+            String($0).folding(
+                options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                locale: Locale.current
+            )
+        }
+        return terms.allSatisfy { normalizedTitle.localizedCaseInsensitiveContains($0) }
     }
 
     private func appendLog(_ message: String) {

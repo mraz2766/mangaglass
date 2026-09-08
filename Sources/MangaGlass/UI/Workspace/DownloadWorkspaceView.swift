@@ -29,6 +29,9 @@ struct DownloadWorkspaceView: View {
     @State private var enqueuePreparationTask: Task<Void, Never>?
     @State private var isCheckingExistingFiles = false
     @State private var preparedDownload: MainViewModel.PreparedDownload?
+    @State private var linkUndoStack: [String] = []
+    @State private var previousLinkText = ""
+    @State private var isApplyingLinkUndo = false
     @FocusState private var linkFocused: Bool
 
     var body: some View {
@@ -106,6 +109,18 @@ struct DownloadWorkspaceView: View {
                 TextField("粘贴漫画链接或 path_word", text: $vm.inputURL)
                     .focused($linkFocused)
                     .onSubmit { vm.loadComic() }
+                    .onAppear { previousLinkText = vm.inputURL }
+                    .onChange(of: vm.inputURL) { newValue in
+                        if isApplyingLinkUndo {
+                            isApplyingLinkUndo = false
+                        } else if previousLinkText != newValue {
+                            linkUndoStack.append(previousLinkText)
+                            if linkUndoStack.count > 50 {
+                                linkUndoStack.removeFirst(linkUndoStack.count - 50)
+                            }
+                        }
+                        previousLinkText = newValue
+                    }
                 Button {
                     vm.clearHome()
                     categoryQuery = ""
@@ -125,6 +140,13 @@ struct DownloadWorkspaceView: View {
             }
             .mgTextField()
             .overlay { RoundedRectangle(cornerRadius: 6).stroke(linkFocused ? MGTheme.accent : .clear, lineWidth: 2) }
+            .background {
+                Button(action: undoLinkInput) { Color.clear.frame(width: 1, height: 1) }
+                    .keyboardShortcut("z", modifiers: .control)
+                    .disabled(!linkFocused || linkUndoStack.isEmpty)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
             Button { vm.loadComic() } label: {
                 ZStack {
                     Text("解析").opacity(vm.isLoading ? 0 : 1)
@@ -135,6 +157,12 @@ struct DownloadWorkspaceView: View {
             .disabled(vm.isLoading || vm.inputURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityLabel(vm.isLoading ? "正在解析" : "解析")
         }
+    }
+
+    private func undoLinkInput() {
+        guard linkFocused, let previous = linkUndoStack.popLast() else { return }
+        isApplyingLinkUndo = true
+        vm.inputURL = previous
     }
 
     private var homeStatus: some View {
@@ -150,6 +178,7 @@ struct DownloadWorkspaceView: View {
                     }
                 }
                 Button("漫画柜") { NSWorkspace.shared.open(MangaSiteConfig.manhuaGui.webBase) }
+                Button("包子漫画") { NSWorkspace.shared.open(MangaSiteConfig.baoziManga.webBase) }
             } label: { Label("站点", systemImage: "globe") }
                 .fixedSize()
             Button { showLogs = true } label: { Image(systemName: "doc.text").frame(width: 28, height: 28) }

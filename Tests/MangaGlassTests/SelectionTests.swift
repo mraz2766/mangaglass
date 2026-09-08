@@ -66,6 +66,12 @@ final class SelectionTests: XCTestCase {
         XCTAssertTrue(vm.selectedChapterIDs.contains("0"))
     }
 
+    func testChapterSearchSupportsMultipleTermsAndWidthFolding() {
+        let vm = model()
+        vm.chapterSearchQuery = "０６ 章节标题"
+        XCTAssertEqual(vm.visibleChapters.map(\.id), ["5"])
+    }
+
     func testGroupSelectionHonorsSearchAndPartialState() async {
         let vm = model()
         vm.selectedChapterIDs = ["0"]

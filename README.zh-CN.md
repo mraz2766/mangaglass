@@ -21,6 +21,8 @@ MangaGlass 是一个面向 macOS 的本地漫画解析与下载工具，基于 S
   - `copy4000.com`（国内站）
 - 漫画柜
   - `manhuagui.com`
+- 包子漫画
+  - `baozimh.com`
 - MYCOMIC
   - `mycomic.com`
 
@@ -96,6 +98,7 @@ swift run MangaGlass
 
 ```text
 https://www.manhuagui.com/comic/19430/
+https://www.baozimh.com/comic/yaoshenji-taxuedongman
 https://www.2026copy.com/comic/haizeiwang
 https://mycomic.com/comics/1759
 https://mycomic.com/chapters/790421
@@ -124,6 +127,14 @@ https://mycomic.com/chapters/790421
 
 - 详情页能打开，但应用解析不到内容
 - 章节页能打开，但下载时返回 `403`、`404` 或空内容
+
+### Copy 下载性能
+
+- 章节并发固定为 3。
+- 全局图片并发可在设置中选择 4–8，默认 4。
+- 图片请求保留 80–180ms 错峰和动态降速。
+- 图片质量默认使用 `c1500x` 高清地址；高清地址不可用时自动回退标准地址。
+- 章节先写入 `.下载中-章节名`，完整性检查通过后才发布为正式目录。
 
 ### 代理
 

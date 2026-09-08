@@ -266,6 +266,7 @@ final class DownloadCoordinator: ObservableObject {
     private var copySuspiciousChapterFailures = 0
     private var copyRecoveryProbeActive = false
     private var copyRecoverySuccessfulChapters = 0
+    private var copyImageConcurrency = 4
 
     init(api: CopyMangaAPI) {
         self.api = api
@@ -280,6 +281,10 @@ final class DownloadCoordinator: ObservableObject {
         self.logger = logger
     }
 
+    func configure(copyImageConcurrency: Int) {
+        self.copyImageConcurrency = min(8, max(4, copyImageConcurrency))
+    }
+
     @discardableResult
     func add(
         chapters: [ComicChapter],
@@ -289,6 +294,7 @@ final class DownloadCoordinator: ObservableObject {
         existingFilePolicy: ExistingFilePolicy = .keepExisting,
         usesGroupFolder: Bool? = nil,
         resolvedImageURLsByChapterID: [String: [URL]] = [:],
+        copyImageQuality: CopyImageQuality = .high,
         replacingFinished: Bool = false
     ) -> Int {
         if replacingFinished {
@@ -316,7 +322,8 @@ final class DownloadCoordinator: ObservableObject {
                 cookie: cookie,
                 existingFilePolicy: existingFilePolicy,
                 usesGroupFolder: usesGroupFolder,
-                resolvedImageURLs: resolvedImageURLsByChapterID[chapter.id]
+                resolvedImageURLs: resolvedImageURLsByChapterID[chapter.id],
+                copyImageQuality: copyImageQuality
             )
             return existing.contains(item.queueIdentity) ? nil : item
         }
@@ -456,7 +463,7 @@ final class DownloadCoordinator: ObservableObject {
             log("ManhuaGui 策略：章节并发 4，图片并发 2，请求间隔 240-460ms")
         }
         if pendingItems.contains(where: { isCopyFamily($0.comic.site) }) {
-            log("拷贝漫画保护：章节并发 2，章节解析全局间隔 650-1050ms，连续异常自动暂停")
+            log("拷贝漫画保护：章节并发 3，全局图片并发 \(copyImageConcurrency)，图片错峰 80-180ms，连续异常自动暂停")
         }
         applySleepAssertion(active: true)
         
@@ -674,7 +681,7 @@ final class DownloadCoordinator: ObservableObject {
         copyRecoverySuccessfulChapters += 1
         if copyRecoverySuccessfulChapters >= 3 {
             copyRecoveryProbeActive = false
-            log("拷贝漫画恢复探测通过：连续完成 3 话，后续启动恢复章节并发 2")
+            log("拷贝漫画恢复探测通过：连续完成 3 话，后续恢复章节并发 3")
         }
     }
 
@@ -855,7 +862,8 @@ final class DownloadCoordinator: ObservableObject {
         }
 
         let chapterFolder = chapterOutputFolder(for: item)
-        if let persisted = await Self.persistedImageURLs(in: chapterFolder), !persisted.isEmpty {
+        let recoverableFolder = await Self.recoverableChapterFolder(for: chapterFolder)
+        if let persisted = await Self.persistedImageURLs(in: recoverableFolder), !persisted.isEmpty {
             if let index = taskItems.firstIndex(where: { $0.id == item.id }) {
                 taskItems[index].resolvedImageURLs = persisted
             }
@@ -867,7 +875,7 @@ final class DownloadCoordinator: ObservableObject {
             try await copyHostBudget.acquire(
                 key: Self.copyBudgetKey,
                 kind: .chapter,
-                maxConcurrent: copyRecoveryProbeActive ? 1 : 4
+                maxConcurrent: copyRecoveryProbeActive ? 1 : 3
             )
         }
 
@@ -969,20 +977,21 @@ final class DownloadCoordinator: ObservableObject {
     private func downloadChapter(item: DownloadTaskItem, imageURLs: [URL], runID: UUID) async throws {
         let comicFolder = resolvedComicFolder(for: item)
         let groupName = canonicalGroupName(item.chapter.volumeName)
-        let chapterFolder = chapterOutputFolder(for: item)
-        let volumeFolder = chapterFolder.deletingLastPathComponent()
+        let finalChapterFolder = chapterOutputFolder(for: item)
+        let volumeFolder = finalChapterFolder.deletingLastPathComponent()
 
+        try createDirIfNeeded(comicFolder)
+        try createDirIfNeeded(volumeFolder)
+        let chapterFolder = try await Self.prepareStagingFolder(
+            for: finalChapterFolder,
+            overwrite: item.existingFilePolicy == .overwrite
+        )
         if item.existingFilePolicy == .overwrite {
-            try await Self.removeExistingChapterFolder(chapterFolder)
             if let index = taskItems.firstIndex(where: { $0.id == item.id }) {
                 taskItems[index].existingFilePolicy = .keepExisting
             }
             log("覆盖已有章节目录：[\(item.chapter.volumeName)] \(item.chapter.displayName)")
         }
-
-        try createDirIfNeeded(comicFolder)
-        try createDirIfNeeded(volumeFolder)
-        try createDirIfNeeded(chapterFolder)
 
         // Intra-chapter concurrency speeds up image downloading drastically
         // while the request pacer prevents API burst spikes and mitigates bans.
@@ -1017,6 +1026,7 @@ final class DownloadCoordinator: ObservableObject {
                             pageIndex: index + 1,
                             refererURL: self.api.imageRefererURL(slug: item.comic.slug, chapterUUID: item.chapter.uuid, site: item.comic.site),
                             site: item.comic.site,
+                            copyImageQuality: item.copyImageQuality ?? .high,
                             cookie: item.cookie,
                             runID: runID,
                             itemID: item.id
@@ -1071,6 +1081,7 @@ final class DownloadCoordinator: ObservableObject {
                             pageIndex: index + 1,
                             refererURL: self.api.imageRefererURL(slug: item.comic.slug, chapterUUID: item.chapter.uuid, site: item.comic.site),
                             site: item.comic.site,
+                            copyImageQuality: item.copyImageQuality ?? .high,
                             cookie: item.cookie,
                             runID: runID,
                             itemID: item.id
@@ -1091,6 +1102,7 @@ final class DownloadCoordinator: ObservableObject {
                 complete: true,
                 folder: chapterFolder
             )
+            try await Self.publishStagingFolder(chapterFolder, as: finalChapterFolder)
         } catch {
             try? await Self.writeChapterManifest(
                 item: item,
@@ -1130,6 +1142,24 @@ final class DownloadCoordinator: ObservableObject {
         }.value
     }
 
+    nonisolated private static func recoverableChapterFolder(for folder: URL) async -> URL {
+        await Task.detached(priority: .utility) {
+            DownloadOutputLayout.recoverableChapterFolder(for: folder)
+        }.value
+    }
+
+    nonisolated private static func prepareStagingFolder(for folder: URL, overwrite: Bool) async throws -> URL {
+        try await Task.detached(priority: .utility) {
+            try DownloadOutputLayout.prepareStagingFolder(for: folder, overwrite: overwrite)
+        }.value
+    }
+
+    nonisolated private static func publishStagingFolder(_ staging: URL, as folder: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            try DownloadOutputLayout.publishStagingFolder(staging, as: folder)
+        }.value
+    }
+
     private func chapterOutputFolder(for item: DownloadTaskItem) -> URL {
         let selectedKinds = Set(taskItems.filter {
             $0.comic.slug == item.comic.slug && $0.destination.standardizedFileURL == item.destination.standardizedFileURL
@@ -1146,12 +1176,6 @@ final class DownloadCoordinator: ObservableObject {
         DownloadOutputLayout.comicFolder(comic: item.comic, destination: item.destination)
     }
 
-    nonisolated private static func removeExistingChapterFolder(_ folder: URL) async throws {
-        try await Task.detached(priority: .utility) {
-            try DownloadOutputLayout.removeChapterFolder(at: folder)
-        }.value
-    }
-
     private func downloadImage(
         url: URL,
         to folder: URL,
@@ -1159,6 +1183,7 @@ final class DownloadCoordinator: ObservableObject {
         pageIndex: Int,
         refererURL: URL?,
         site: MangaSiteConfig,
+        copyImageQuality: CopyImageQuality,
         cookie: String?,
         runID: UUID,
         itemID: UUID
@@ -1170,7 +1195,15 @@ final class DownloadCoordinator: ObservableObject {
             return existing
         }
 
-        let candidates = candidateImageURLs(for: url, site: site)
+        let resolutionCandidates = Self.copyResolutionCandidates(
+            for: url,
+            quality: copyImageQuality,
+            isCopy: isCopyFamily(site)
+        )
+        var candidateKeys: Set<String> = []
+        let candidates = resolutionCandidates
+            .flatMap { candidateImageURLs(for: $0, site: site) }
+            .filter { candidateKeys.insert($0.absoluteString).inserted }
         var lastError: Error?
         if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
             let hosts = candidates.compactMap(\.host).joined(separator: " -> ")
@@ -1195,7 +1228,7 @@ final class DownloadCoordinator: ObservableObject {
                         try await self.copyHostBudget.acquire(
                             key: Self.copyBudgetKey,
                             kind: .image,
-                            maxConcurrent: self.copyRecoveryProbeActive ? 1 : 4
+                            maxConcurrent: self.copyRecoveryProbeActive ? 1 : self.copyImageConcurrency
                         )
                     } else {
                         try await pacer.waitTurn()
@@ -1306,6 +1339,10 @@ final class DownloadCoordinator: ObservableObject {
             } catch let error as DownloadRequestError where error.statusCode == 404 && index + 1 < candidates.count {
                 lastError = error
                 log("图片 404，切换备用域名重试：\(candidate.host ?? "-") -> \(candidates[index + 1].host ?? "-")")
+                continue
+            } catch let error as URLError where Self.shouldTryNextBaoziImageHost(after: error) && index + 1 < candidates.count {
+                lastError = error
+                log("包子漫画图片连接异常，切换备用域名：\(candidate.host ?? "-") -> \(candidates[index + 1].host ?? "-")")
                 continue
             } catch let error as DownloadCircuitBreakError {
                 throw error
@@ -1903,7 +1940,27 @@ final class DownloadCoordinator: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
 
+    nonisolated static func copyResolutionCandidates(
+        for original: URL,
+        quality: CopyImageQuality,
+        isCopy: Bool = true
+    ) -> [URL] {
+        guard isCopy, quality == .high else { return [original] }
+        let raw = original.absoluteString
+        guard raw.localizedCaseInsensitiveContains("c800x") else { return [original] }
+        let highRaw = raw.replacingOccurrences(
+            of: "c800x",
+            with: "c1500x",
+            options: .caseInsensitive
+        )
+        guard let high = URL(string: highRaw), high != original else { return [original] }
+        return [high, original]
+    }
+
     private func candidateImageURLs(for original: URL, site: MangaSiteConfig) -> [URL] {
+        if site == .baoziManga {
+            return Self.baoziImageCandidates(for: original)
+        }
         guard site.webBase.host?.lowercased().contains("manhuagui.com") == true else {
             return [original]
         }
@@ -1933,6 +1990,42 @@ final class DownloadCoordinator: ObservableObject {
             }
         }
         return urls
+    }
+
+    nonisolated static func baoziImageCandidates(for original: URL) -> [URL] {
+        guard let originalHost = original.host?.lowercased(),
+              originalHost.contains("bzcdn.net") || originalHost.contains("baozimh.com") else {
+            return [original]
+        }
+
+        var candidates = [original]
+        var seen: Set<String> = [original.absoluteString]
+        for host in ["static-tw.baozimh.com", "s1.baozimh.com"] where host != originalHost {
+            guard var components = URLComponents(url: original, resolvingAgainstBaseURL: false) else { continue }
+            components.host = host
+            guard let candidate = components.url, seen.insert(candidate.absoluteString).inserted else { continue }
+            candidates.append(candidate)
+        }
+        return candidates
+    }
+
+    nonisolated static func shouldTryNextBaoziImageHost(after error: URLError) -> Bool {
+        switch error.code {
+        case .secureConnectionFailed,
+             .serverCertificateHasBadDate,
+             .serverCertificateUntrusted,
+             .serverCertificateHasUnknownRoot,
+             .clientCertificateRejected,
+             .clientCertificateRequired,
+             .cannotConnectToHost,
+             .cannotFindHost,
+             .dnsLookupFailed,
+             .networkConnectionLost,
+             .timedOut:
+            return true
+        default:
+            return false
+        }
     }
 
     private func replacingHost(of url: URL, with host: String) -> URL? {
