@@ -4,6 +4,25 @@ import XCTest
 
 @MainActor
 final class WindowCloseBehaviorTests: XCTestCase {
+    func testMainWindowKeepsTrafficLightsOutsideWorkspaceContent() {
+        _ = NSApplication.shared
+        let delegate = AppDelegate()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 540),
+            styleMask: [.titled, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titlebarAppearsTransparent = true
+
+        delegate.configureIfNeeded(window)
+
+        XCTAssertFalse(window.styleMask.contains(.fullSizeContentView))
+        XCTAssertFalse(window.titlebarAppearsTransparent)
+        XCTAssertEqual(window.titleVisibility, .hidden)
+        XCTAssertEqual(window.title, "")
+    }
+
     func testDefaultAndStoredPreferences() {
         let name = "MangaGlassCloseTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!

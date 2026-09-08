@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         requestTerminationConfirmation() ? .terminateNow : .terminateCancel
     }
 
-    private func configureIfNeeded(_ window: NSWindow) {
+    func configureIfNeeded(_ window: NSWindow) {
         guard window.sheetParent == nil, !(window is NSPanel) else { return }
         mainWindow = window
         window.delegate = self
@@ -59,10 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.styleMask.insert(.closable)
         window.styleMask.insert(.miniaturizable)
         window.styleMask.insert(.resizable)
-        window.styleMask.insert(.fullSizeContentView)
+        window.styleMask.remove(.fullSizeContentView)
         window.title = ""
         window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
+        window.titlebarAppearsTransparent = false
         window.toolbarStyle = .automatic
         window.minSize = NSSize(width: 720, height: 540)
     }
