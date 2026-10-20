@@ -173,6 +173,8 @@ scripts/
 └── draw_logo.swift  Vector source of the logo; regenerates every icon size
 ```
 
+The version lives only in the root `VERSION` file; both build scripts read it, and `build_dmg.sh` always runs a fresh build before packaging.
+
 Larger changes start with an execution plan in `docs/execplans/`, using the template in `.agent/PLANS.md`.
 
 ## Disclaimer

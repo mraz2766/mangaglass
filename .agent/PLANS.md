@@ -22,7 +22,7 @@
 - 大幅度修改递增次版本：`0.1.0`，例如 `1.2.0` -> `1.3.0`。
 - 大幅度修改包括：新增主要功能、显著 UI/交互改版、架构或状态管理重构、下载/网络/并发策略的大范围调整。
 - ExecPlan 必须在“约束”或“决策记录”中写明本次属于普通修改还是大幅度修改，以及目标版本号。
-- 实施时必须同步更新构建脚本中的应用版本，保持 `CFBundleShortVersionString` 与 `CFBundleVersion` 一致，除非 ExecPlan 明确记录不同决策。
+- 版本号只在仓库根目录的 `VERSION` 文件中修改；`scripts/build_app.sh` 与 `scripts/build_dmg.sh` 都从它读取，并同时写入 `CFBundleShortVersionString` 与 `CFBundleVersion`。
 
 ## 推荐结构
 

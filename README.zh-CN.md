@@ -171,6 +171,8 @@ scripts/
 └── draw_logo.swift  Logo 矢量源，可重新生成全部图标尺寸
 ```
 
+版本号只在根目录的 `VERSION` 文件里维护，两个构建脚本都从它读取；`build_dmg.sh` 每次都会先完整构建再打包。
+
 较复杂的改动先在 `docs/execplans/` 写执行计划，模板见 `.agent/PLANS.md`。
 
 ## 声明

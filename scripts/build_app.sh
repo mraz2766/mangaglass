@@ -3,7 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="MangaGlass"
-APP_VERSION="1.12.1"
+VERSION_FILE="$ROOT_DIR/VERSION"
+if [[ ! -s "$VERSION_FILE" ]]; then
+    echo "Error: version file not found at $VERSION_FILE" >&2
+    exit 1
+fi
+# Single source of truth for CFBundleShortVersionString / CFBundleVersion.
+APP_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
 TMP_BASE="${TMPDIR:-/tmp}"
 TMP_BASE="${TMP_BASE%/}"
 BUILD_ROOT="${MANGAGLASS_BUILD_ROOT:-$TMP_BASE/${APP_NAME}-swiftpm-build}"
@@ -79,7 +85,7 @@ fi
 
 mkdir -p "$DIST_DIR" "$MODULE_CACHE_DIR"
 
-echo "Building $APP_NAME release binary..."
+echo "Building $APP_NAME $APP_VERSION release binary..."
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" \
 SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE_DIR" \
     swift build -c release --package-path "$ROOT_DIR" --build-path "$BUILD_ROOT"
