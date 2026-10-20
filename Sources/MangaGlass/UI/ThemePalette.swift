@@ -20,7 +20,7 @@ enum AppThemeStyle: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .classic: return "系统蓝与原生材质，最初的外观。"
+        case .classic: return "白色与系统蓝，窗口带磨砂玻璃质感。"
         case .ink: return "暖白纸面、墨色选中、朱红主操作；深色下为墨底纸字。"
         case .graphite: return "分层石墨灰，紫色只用于选中与主操作；浅色下为银灰。"
         }
@@ -48,6 +48,12 @@ struct MGPalette {
     let emphasisFill: Color
     let emphasisText: Color
     let numberForwardChapters: Bool
+    /// Frosted window material behind the canvas, with a hairline highlight on panels.
+    var glass = false
+    var cellStroke: Color = .clear
+    /// Solid fill for the floating selection capsule; `nil` uses a material.
+    var capsuleFill: Color? = nil
+    var capsuleText: Color = Color(nsColor: .labelColor)
 
     static func forStyle(_ style: AppThemeStyle) -> MGPalette {
         switch style {
@@ -57,28 +63,30 @@ struct MGPalette {
         }
     }
 
+    /// White + system blue over a frosted window (desktop shows through the canvas).
     private static let classic: MGPalette = {
         let blue = NSColor.systemBlue
-        let accentWash = dynamic { blue.withAlphaComponent($0 ? 0.20 : 0.10) }
         return MGPalette(
-            canvas: Color(nsColor: .windowBackgroundColor),
-            sidebar: nil,
+            canvas: dynamic { $0 ? NSColor.black.withAlphaComponent(0.18) : NSColor.white.withAlphaComponent(0.42) },
+            sidebar: dynamic { $0 ? NSColor.black.withAlphaComponent(0.12) : NSColor.white.withAlphaComponent(0.22) },
             text: Color(nsColor: .labelColor),
-            divider: Color(nsColor: .separatorColor),
+            divider: dynamic { $0 ? NSColor.white.withAlphaComponent(0.10) : NSColor.black.withAlphaComponent(0.08) },
             accent: Color(nsColor: blue),
-            cell: dynamic { $0 ? NSColor.white.withAlphaComponent(0.06) : NSColor.black.withAlphaComponent(0.035) },
-            cellHover: dynamic { $0 ? NSColor.white.withAlphaComponent(0.10) : NSColor.black.withAlphaComponent(0.06) },
-            cellPressed: dynamic { $0 ? NSColor.white.withAlphaComponent(0.13) : NSColor.black.withAlphaComponent(0.085) },
-            field: dynamic { $0 ? NSColor.white.withAlphaComponent(0.06) : NSColor.black.withAlphaComponent(0.035) },
-            fieldStroke: .clear,
-            selectedFill: accentWash,
-            selectedText: Color(nsColor: blue),
-            selectedStroke: Color(nsColor: blue.withAlphaComponent(0.68)),
-            softSelectedFill: accentWash,
+            cell: dynamic { $0 ? NSColor.white.withAlphaComponent(0.07) : NSColor.white.withAlphaComponent(0.72) },
+            cellHover: dynamic { $0 ? NSColor.white.withAlphaComponent(0.12) : NSColor.white.withAlphaComponent(0.92) },
+            cellPressed: dynamic { $0 ? NSColor.white.withAlphaComponent(0.16) : NSColor.white },
+            field: dynamic { $0 ? NSColor.white.withAlphaComponent(0.08) : NSColor.white.withAlphaComponent(0.80) },
+            fieldStroke: dynamic { $0 ? NSColor.white.withAlphaComponent(0.12) : NSColor.white },
+            selectedFill: Color(nsColor: blue),
+            selectedText: .white,
+            selectedStroke: .clear,
+            softSelectedFill: dynamic { blue.withAlphaComponent($0 ? 0.28 : 0.14) },
             softSelectedText: Color(nsColor: blue),
             emphasisFill: Color(nsColor: blue),
             emphasisText: .white,
-            numberForwardChapters: false
+            numberForwardChapters: true,
+            glass: true,
+            cellStroke: dynamic { $0 ? NSColor.white.withAlphaComponent(0.10) : NSColor.white.withAlphaComponent(0.9) }
         )
     }()
 
@@ -100,7 +108,9 @@ struct MGPalette {
         softSelectedText: hex(0x2C2C2A, 0xEDEBE4),
         emphasisFill: hex(0x2C2C2A, 0xEDEBE4),
         emphasisText: hex(0xF7F5F0, 0x1C1B19),
-        numberForwardChapters: true
+        numberForwardChapters: true,
+        capsuleFill: hex(0x2C2C2A, 0xEDEBE4),
+        capsuleText: hex(0xF7F5F0, 0x1C1B19)
     )
 
     private static let graphite = MGPalette(
@@ -121,7 +131,8 @@ struct MGPalette {
         softSelectedText: hex(0x534AB7, 0xAFA9EC),
         emphasisFill: hex(0xE2E2E8, 0x2C2C30),
         emphasisText: hex(0x1C1C1E, 0xEDEDED),
-        numberForwardChapters: true
+        numberForwardChapters: true,
+        capsuleText: hex(0x1C1C1E, 0xEDEDED)
     )
 
     private static func hex(_ light: UInt32, _ dark: UInt32) -> Color {

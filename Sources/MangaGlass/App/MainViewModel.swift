@@ -445,7 +445,7 @@ final class MainViewModel: ObservableObject {
         }
         appendLog("加载成功：\(fetched.name)，分类 \(stats.groups)，章节 \(stats.chapters)")
         if final {
-            rememberRecentComic(title: fetched.name, input: inputURL, siteName: fetched.site.displayName)
+            rememberRecentComic(title: fetched.name, input: inputURL, siteName: fetched.site.displayName, coverURL: fetched.coverURL)
         }
     }
 
@@ -1071,10 +1071,10 @@ final class MainViewModel: ObservableObject {
         return try? JSONDecoder().decode(type, from: data)
     }
 
-    private func rememberRecentComic(title: String, input: String, siteName: String) {
+    private func rememberRecentComic(title: String, input: String, siteName: String, coverURL: URL? = nil) {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let next = RecentComicRecord(title: title, input: trimmed, siteName: siteName)
+        let next = RecentComicRecord(title: title, input: trimmed, siteName: siteName, coverURL: coverURL)
         recentRecords.removeAll { $0.input == trimmed }
         recentRecords.insert(next, at: 0)
         if recentRecords.count > 8 {

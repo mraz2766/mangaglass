@@ -12,98 +12,91 @@ struct HistoryWorkspaceView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MGSpacing.sm) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("历史")
-                        .font(.system(size: 18, weight: .semibold))
-                    Text("最近解析过的漫画会保留在本机。")
-                        .font(MGFont.caption)
-                        .foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("书架").font(.system(size: 22, weight: .semibold))
+                Text("\(records.count) 部").font(MGFont.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("清空历史", role: .destructive) { showClearConfirmation = true }
-                    .buttonStyle(MGActionButtonStyle(variant: .secondary))
+                Button("清空书架", role: .destructive) { showClearConfirmation = true }
+                    .buttonStyle(MGActionButtonStyle(variant: .ghost))
                     .disabled(records.isEmpty)
             }
 
             if records.isEmpty {
                 MGEmptyState(
-                    title: "还没有历史记录",
-                    systemImage: "clock.arrow.circlepath",
-                    detail: "成功解析漫画后，可从这里快速返回。"
+                    title: "书架还是空的",
+                    systemImage: "books.vertical",
+                    detail: "在首页解析过的漫画会摆在这里，点一下就能回到它。"
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(records) { record in
-                            historyRow(record)
-                            Divider()
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 128, maximum: 168), spacing: 20, alignment: .top)],
+                              alignment: .leading, spacing: 24) {
+                        ForEach(Array(records.enumerated()), id: \.element.id) { index, record in
+                            shelfItem(record)
+                                .mgStaggerAppear(index: index * 2)
+                                .transition(.scale(scale: 0.9).combined(with: .opacity))
                         }
                     }
+                    .padding(.top, 4)
+                    .padding(.bottom, 16)
                 }
-                .mgSurface()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .alert("清空历史记录？", isPresented: $showClearConfirmation) {
+        .animation(.spring(response: 0.32, dampingFraction: 0.85), value: records.map(\.id))
+        .onAppear { MGRevealClock.mark() }
+        .alert("清空书架？", isPresented: $showClearConfirmation) {
             Button("清空", role: .destructive) { vm.clearRecentRecords() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("将删除 \(records.count) 条最近打开记录，不会影响已经下载到本地的文件。")
+            Text("将移除 \(records.count) 部最近打开的漫画，不会影响已经下载到本地的文件。")
         }
     }
 
-    private func historyRow(_ record: RecentComicRecord) -> some View {
-        HStack(spacing: MGSpacing.sm) {
-            Image(systemName: "book.closed")
-                .foregroundStyle(MGTheme.accent)
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(record.title)
-                        .font(MGFont.bodyStrong)
-                        .lineLimit(1)
+    private func shelfItem(_ record: RecentComicRecord) -> some View {
+        Button {
+            vm.applyRecentRecord(record)
+            openDownload()
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                MGBookCover(url: record.coverURL, title: record.title)
+                    .aspectRatio(0.72, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .mgHoverLift()
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(record.title).font(MGFont.bodyStrong).lineLimit(2)
+                    HStack(spacing: 4) {
+                        Text(record.siteName)
+                        Text("·")
+                        Text(relativeTime(record.updatedAt)).help(absoluteTime(record.updatedAt))
+                    }
+                    .font(MGFont.caption)
+                    .foregroundStyle(.secondary)
                     if CopyMangaMirror.isRetired(record.input) {
-                        Text("站点已停用")
-                            .font(MGFont.caption)
-                            .foregroundStyle(MGTheme.danger)
+                        Text("站点已停用").font(MGFont.caption).foregroundStyle(MGTheme.danger)
                     }
                 }
-                HStack(spacing: 6) {
-                    Text(record.siteName)
-                    Text(relativeTime(record.updatedAt))
-                        .help(absoluteTime(record.updatedAt))
-                }
-                .font(MGFont.caption)
-                .foregroundStyle(.secondary)
-                Text(record.input)
-                    .font(MGFont.mono)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .help(record.input)
             }
-            Spacer(minLength: 0)
-            Button("加载") {
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(record.input)
+        .contextMenu {
+            Button("打开") {
                 vm.applyRecentRecord(record)
                 openDownload()
             }
-            .buttonStyle(MGActionButtonStyle(variant: .secondary))
-            Button {
-                vm.removeRecentRecord(record)
-            } label: {
-                Image(systemName: "trash")
+            Button("复制链接") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(record.input, forType: .string)
             }
-            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
-            .frame(width: 28, height: 28)
-            .help("删除历史记录")
+            Divider()
+            Button("从书架移除", role: .destructive) { vm.removeRecentRecord(record) }
         }
-        .padding(MGSpacing.sm)
-        .frame(minHeight: 76)
-        .mgHoverBackground(radius: 0)
+        .accessibilityLabel("\(record.title)，\(record.siteName)")
+        .accessibilityHint("打开这部漫画")
     }
 
     private static let relativeFormatter = RelativeDateTimeFormatter()
@@ -140,14 +133,13 @@ struct SettingsWorkspaceView: View {
                 VStack(alignment: .leading, spacing: MGSpacing.lg) {
 
                 settingsSection("主题", detail: vm.themeStyle.detail) {
-                    Picker("主题", selection: $vm.themeStyle) {
+                    HStack(spacing: 12) {
                         ForEach(AppThemeStyle.allCases) { style in
-                            Text(style.title).tag(style)
+                            ThemeCard(style: style, selected: vm.themeStyle == style) {
+                                vm.themeStyle = style
+                            }
                         }
                     }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .fixedSize()
                 }
 
                 settingsSection("外观", detail: "每个主题都有浅色与深色两套配色，按这里的模式切换。") {
@@ -323,5 +315,60 @@ struct SettingsWorkspaceView: View {
     private func openInBrowser(_ rawURL: String) {
         guard let url = URL(string: rawURL) else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+/// Theme option drawn as a tiny window: sidebar, two chapter cells (one selected) and the accent button.
+private struct ThemeCard: View {
+    let style: AppThemeStyle
+    let selected: Bool
+    let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    var body: some View {
+        let palette = MGPalette.forStyle(style)
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 0) {
+                    (palette.sidebar ?? palette.canvas).frame(width: 18)
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 3).fill(palette.selectedFill).frame(height: 14)
+                            RoundedRectangle(cornerRadius: 3).fill(palette.cell).frame(height: 14)
+                        }
+                        HStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 3).fill(palette.cell).frame(height: 14)
+                            RoundedRectangle(cornerRadius: 3).fill(palette.cell).frame(height: 14)
+                        }
+                        Spacer(minLength: 0)
+                        HStack {
+                            Spacer()
+                            Capsule().fill(palette.accent).frame(width: 34, height: 10)
+                        }
+                    }
+                    .padding(8)
+                    .background(palette.canvas)
+                }
+                .frame(width: 124, height: 78)
+                .background(palette.glass ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(Color.clear))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(selected ? MGTheme.accent : MGTheme.palette.divider, lineWidth: selected ? 2 : 0.5)
+                }
+                .scaleEffect(hovering && !reduceMotion ? 1.03 : 1)
+                Text(style.title)
+                    .font(selected ? MGFont.bodyStrong : MGFont.body)
+                    .foregroundStyle(selected ? MGTheme.accent : Color.primary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.75), value: hovering)
+        .animation(reduceMotion ? nil : MGMotion.regular, value: selected)
+        .accessibilityLabel("主题：\(style.title)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

@@ -85,6 +85,7 @@ struct MGChapterSelectionCell: View {
             HStack(spacing: 7) {
                 Image(systemName: selected ? "checkmark.square.fill" : "square")
                     .foregroundStyle(selected ? MGTheme.palette.selectedText : .secondary)
+                    .scaleEffect(selected ? 1 : 0.88)
                 if MGTheme.palette.numberForwardChapters, let parts = MGChapterTitleParts(title) {
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
                         Text(parts.number).font(.system(size: 15, weight: .semibold)).monospacedDigit()
@@ -210,9 +211,10 @@ struct MGActionButtonStyle: ButtonStyle {
     let variant: MGActionVariant
     var iconOnly = false
     var drawsBorder = true
+    var capsule = false
 
     func makeBody(configuration: Configuration) -> some View {
-        MGActionBody(configuration: configuration, variant: variant, iconOnly: iconOnly, drawsBorder: drawsBorder)
+        MGActionBody(configuration: configuration, variant: variant, iconOnly: iconOnly, drawsBorder: drawsBorder, capsule: capsule)
     }
 }
 
@@ -221,6 +223,7 @@ private struct MGActionBody: View {
     let variant: MGActionVariant
     let iconOnly: Bool
     let drawsBorder: Bool
+    let capsule: Bool
     @Environment(\.isEnabled) private var enabled
     @Environment(\.colorScheme) private var scheme
     @Environment(\.isFocused) private var focused
@@ -231,17 +234,18 @@ private struct MGActionBody: View {
         configuration.label
             .font(MGFont.bodyStrong)
             .foregroundStyle(!enabled ? Color.secondary : (variant == .primary || variant == .destructive ? .white : (variant == .emphasis ? MGTheme.palette.emphasisText : .primary)))
-            .padding(.horizontal, iconOnly ? 0 : 10)
+            .padding(.horizontal, iconOnly ? 0 : (capsule ? 16 : 10))
             .frame(minWidth: iconOnly ? 28 : nil, minHeight: variant == .primary || variant == .emphasis ? 32 : 28)
-            .background(fill, in: RoundedRectangle(cornerRadius: 6))
+            .background(fill, in: RoundedRectangle(cornerRadius: capsule ? 18 : 6, style: .continuous))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: capsule ? 18 : 6, style: .continuous)
                     .stroke(focused ? MGTheme.accent : (variant == .secondary && drawsBorder ? MGTheme.divider(for: scheme) : .clear), lineWidth: focused ? 2 : 0.7)
             }
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
-            .animation(reduceMotion ? nil : MGMotion.fast, value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.65), value: configuration.isPressed)
     }
 
     private var fill: Color {
@@ -287,20 +291,17 @@ private struct MGChoiceBody: View {
             }
             .contentShape(Rectangle())
             .opacity(enabled ? 1 : 0.45)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.95 : 1)
             .onHover { hovering = $0 }
             .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
-            .animation(reduceMotion ? nil : MGMotion.fast, value: selected)
-            .animation(reduceMotion ? nil : MGMotion.fast, value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.72), value: selected)
+            .animation(reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.6), value: configuration.isPressed)
     }
 
     private var fill: Color {
         let palette = MGTheme.palette
         guard enabled else { return quietSurface ? palette.cell : Color.primary.opacity(bordered ? 0.025 : 0) }
         if selected {
-            if MGTheme.style == .classic {
-                let interactionBoost = configuration.isPressed ? 0.10 : (hovering ? 0.07 : 0)
-                return MGTheme.accent.opacity((scheme == .dark ? 0.20 : 0.10) + interactionBoost)
-            }
             return quietSurface ? palette.selectedFill : palette.softSelectedFill
         }
         if quietSurface {
@@ -392,6 +393,41 @@ struct MGSelectionButtonStyle: ButtonStyle {
             .padding(.vertical, verticalPadding)
             .frame(minHeight: 28)
             .background(selected ? tint.opacity(colorScheme == .dark ? 0.20 : 0.10) : (configuration.isPressed ? MGTheme.divider(for: colorScheme).opacity(0.45) : Color.clear), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
+
+/// Rounded filter chip with a trailing count.
+struct MGChip: View {
+    let title: String
+    let count: Int
+    let selected: Bool
+    let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    var body: some View {
+        let palette = MGTheme.palette
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title).lineLimit(1)
+                Text("\(count)").monospacedDigit().opacity(0.6)
+            }
+            .font(MGFont.captionStrong)
+            .foregroundStyle(selected ? palette.selectedText : Color.primary.opacity(0.85))
+            .padding(.horizontal, 11)
+            .frame(height: 26)
+            .background(selected ? palette.selectedFill : (hovering ? palette.cellHover : palette.cell), in: Capsule())
+            .overlay {
+                Capsule().stroke(selected ? .clear : (palette.glass ? palette.cellStroke : palette.divider), lineWidth: 0.5)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.75), value: selected)
+        .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
+        .accessibilityLabel("\(title) \(count) 话")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

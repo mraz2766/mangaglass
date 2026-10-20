@@ -4,65 +4,147 @@ import SwiftUI
 struct WorkspaceSidebar: View {
     @ObservedObject var downloader: DownloadCoordinator
     @Binding var destination: WorkspaceDestination
+    var bump = 0
+    @Namespace private var indicator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let queuedCount = downloader.countsSummary().queued
-        VStack(spacing: 12) {
+        let counts = downloader.countsSummary()
+        VStack(spacing: 10) {
             BrandMarkView(size: 28)
                 .padding(.vertical, 12)
                 .help("MangaGlass")
             ForEach(WorkspaceDestination.allCases.filter { $0 != .settings }) { item in
-                navigationButton(item)
+                navigationButton(item, badge: item == .queue ? counts.queued + counts.running : 0)
             }
             Spacer(minLength: 8)
-            navigationButton(.settings)
-            // Idle with nothing queued: the status button would only repeat the 队列 icon.
-            if downloader.isRunning || queuedCount > 0 {
-                Button { destination = .queue } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: downloader.isRunning ? "arrow.down.circle.fill" : "tray")
-                        if downloader.isRunning {
-                            ProgressView(value: downloader.progress).frame(width: 28)
-                        } else if queuedCount > 0 {
-                            Text("\(queuedCount)").font(.system(size: 10)).monospacedDigit()
-                        }
-                    }
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
-                .help(downloader.isRunning ? "正在下载 · \(downloader.speedText)" :
-                        (queuedCount > 0 ? "等待下载 \(queuedCount) 话" : "队列空闲"))
-                .accessibilityLabel("打开队列状态")
+            if downloader.isRunning {
+                runningIndicator
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
+            navigationButton(.settings, badge: 0)
         }
         .padding(.vertical, 8)
         .frame(width: 64)
         .frame(maxHeight: .infinity)
         .background {
-            if let sidebar = MGTheme.palette.sidebar {
-                sidebar.ignoresSafeArea()
-            } else {
-                Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
-            }
+            (MGTheme.palette.sidebar ?? MGTheme.palette.canvas).ignoresSafeArea()
         }
+        .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.82), value: destination)
+        .animation(reduceMotion ? nil : MGMotion.regular, value: downloader.isRunning)
     }
 
-    private func navigationButton(_ item: WorkspaceDestination) -> some View {
-        Button { destination = item } label: {
-            VStack(spacing: 2) {
-                Image(systemName: item.systemImage).font(.system(size: 17, weight: .medium))
-                if destination == item {
-                    Text(item.title).font(.system(size: 10, weight: .medium))
-                }
+    /// Small ring that fills with overall progress while downloading.
+    private var runningIndicator: some View {
+        Button { destination = .queue } label: {
+            ZStack {
+                Circle().stroke(MGTheme.palette.divider, lineWidth: 3)
+                Circle()
+                    .trim(from: 0, to: max(0.02, downloader.progress))
+                    .stroke(MGTheme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: downloader.progress)
+                Image(systemName: downloader.isPaused ? "pause.fill" : "arrow.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(MGTheme.accent)
             }
+            .frame(width: 24, height: 24)
             .frame(width: 40, height: 40)
             .contentShape(Rectangle())
         }
-        .buttonStyle(MGChoiceButtonStyle(selected: destination == item, bordered: false))
+        .buttonStyle(.plain)
+        .help(downloader.isPaused ? "已暂停" : "正在下载 · \(downloader.speedText)")
+        .accessibilityLabel("下载进度 \(Int(downloader.progress * 100))%")
+    }
+
+    private func navigationButton(_ item: WorkspaceDestination, badge: Int) -> some View {
+        let selected = destination == item
+        return Button { destination = item } label: {
+            VStack(spacing: 2) {
+                Image(systemName: item.systemImage)
+                    .font(.system(size: 17, weight: .medium))
+                    .overlay(alignment: .topTrailing) {
+                        if badge > 0 {
+                            SidebarBadge(count: badge, bump: bump)
+                                .offset(x: 10, y: -8)
+                        }
+                    }
+                if selected {
+                    Text(item.title).font(.system(size: 10, weight: .medium))
+                        .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .top)))
+                }
+            }
+            .foregroundStyle(selected ? MGTheme.palette.softSelectedText : Color.secondary)
+            .frame(width: 44, height: 44)
+            .background {
+                if selected {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(MGTheme.palette.softSelectedFill)
+                        .matchedGeometryEffect(id: "nav-selection", in: indicator)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(SidebarPressStyle())
+        .background {
+            if item == .queue {
+                GeometryReader { proxy in
+                    Color.clear.preference(key: MGQueueTargetKey.self, value: proxy.frame(in: .named(MGRootSpace)))
+                }
+            }
+        }
         .help(item.title)
         .accessibilityLabel("打开\(item.title)")
-        .accessibilityValue(destination == item ? "当前页面" : "")
+        .accessibilityValue(selected ? "当前页面" : (badge > 0 ? "\(badge) 项" : ""))
+    }
+}
+
+private struct SidebarPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        SidebarPressBody(configuration: configuration)
+    }
+}
+
+private struct SidebarPressBody: View {
+    let configuration: ButtonStyle.Configuration
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    var body: some View {
+        configuration.label
+            .background(hovering ? MGTheme.palette.cellHover.opacity(0.6) : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.92 : 1)
+            .onHover { hovering = $0 }
+            .animation(reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.7), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
+    }
+}
+
+/// Count capsule on the 下载 icon; pops whenever chapters land in the queue.
+private struct SidebarBadge: View {
+    let count: Int
+    let bump: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var popped = false
+
+    var body: some View {
+        Text(count > 99 ? "99+" : "\(count)")
+            .font(.system(size: 9, weight: .bold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 4)
+            .frame(minWidth: 15, minHeight: 15)
+            .background(MGTheme.accent, in: Capsule())
+            .scaleEffect(popped ? 1.35 : 1)
+            .contentTransition(.numericText())
+            .onChange(of: bump) { _ in
+                guard !reduceMotion else { return }
+                withAnimation(.spring(response: 0.18, dampingFraction: 0.5)) { popped = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { popped = false }
+                }
+            }
+            .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: count)
     }
 }
 

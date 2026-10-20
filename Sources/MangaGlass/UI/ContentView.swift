@@ -11,8 +11,8 @@ enum WorkspaceDestination: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .download: return "首页"
-        case .queue: return "队列"
-        case .history: return "历史"
+        case .queue: return "下载"
+        case .history: return "书架"
         case .settings: return "设置"
         }
     }
@@ -20,10 +20,30 @@ enum WorkspaceDestination: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .download: return "house"
-        case .queue: return "tray.full"
-        case .history: return "clock.arrow.circlepath"
+        case .queue: return "arrow.down.circle"
+        case .history: return "books.vertical"
         case .settings: return "gearshape"
         }
+    }
+}
+
+/// Owns in-flight "+N" capsules and the badge bump; a class so the environment closure is Sendable.
+@MainActor
+final class MGFlightCenter: ObservableObject {
+    @Published var flights: [MGFlight] = []
+    @Published var bump = 0
+
+    func launch(count: Int, from point: CGPoint, animated: Bool) {
+        if animated {
+            flights.append(MGFlight(count: count, start: point))
+        } else {
+            bump += 1
+        }
+    }
+
+    func land(_ flight: MGFlight) {
+        flights.removeAll { $0.id == flight.id }
+        bump += 1
     }
 }
 
@@ -34,10 +54,41 @@ struct ContentView: View {
     @State private var destination: WorkspaceDestination = .download
     @State private var showLogs = false
     @State private var didCheckRestoredQueue = false
+    @StateObject private var flightCenter = MGFlightCenter()
+    @State private var queueTarget: CGRect = .zero
 
     var body: some View {
+        ZStack {
+            if MGTheme.palette.glass {
+                MGWindowGlass().ignoresSafeArea()
+            }
+            shell
+            ForEach(flightCenter.flights) { flight in
+                MGFlightView(flight: flight, target: CGPoint(x: queueTarget.midX, y: queueTarget.midY)) {
+                    flightCenter.land(flight)
+                }
+            }
+        }
+        .coordinateSpace(name: MGRootSpace)
+        .onPreferenceChange(MGQueueTargetKey.self) { queueTarget = $0 }
+        .environment(\.mgFlyToQueue, { [flightCenter, reduceMotion] count, point in
+            flightCenter.launch(count: count, from: point, animated: !reduceMotion)
+        })
+        .frame(minWidth: 720, minHeight: 540)
+        .foregroundStyle(MGTheme.palette.text)
+        .tint(MGTheme.accent)
+        .preferredColorScheme(vm.preferredColorScheme)
+        .animation(reduceMotion ? nil : MGMotion.panel, value: destination)
+        .onAppear(perform: presentRestoredQueuePromptIfNeeded)
+        .sheet(isPresented: $showLogs) {
+            ActivityLogSheet(vm: vm)
+        }
+        .modifier(ContentAlerts(vm: vm, destination: $destination, restoredQueueBinding: restoredQueueBinding, terminationBinding: terminationBinding))
+    }
+
+    private var shell: some View {
         HStack(spacing: 0) {
-            WorkspaceSidebar(downloader: vm.downloader, destination: $destination)
+            WorkspaceSidebar(downloader: vm.downloader, destination: $destination, bump: flightCenter.bump)
                 .frame(width: 64)
                 .id(vm.themeStyle)
 
@@ -62,31 +113,6 @@ struct ContentView: View {
                 }
                 .id(vm.themeStyle)
             }
-        }
-        .frame(minWidth: 720, minHeight: 540)
-        .foregroundStyle(MGTheme.palette.text)
-        .tint(MGTheme.accent)
-        .preferredColorScheme(vm.preferredColorScheme)
-        .animation(reduceMotion ? nil : MGMotion.panel, value: destination)
-        .onAppear(perform: presentRestoredQueuePromptIfNeeded)
-        .sheet(isPresented: $showLogs) {
-            ActivityLogSheet(vm: vm)
-        }
-        .alert("发现上次未完成的队列", isPresented: restoredQueueBinding) {
-            Button("继续下载") { vm.resumeRestoredQueue() }
-            Button("打开队列") {
-                vm.dismissRestoredQueuePrompt()
-                destination = .queue
-            }
-            Button("稍后处理", role: .cancel) { vm.dismissRestoredQueuePrompt() }
-        } message: {
-            Text(vm.restoredQueuePromptSummary)
-        }
-        .alert("退出 MangaGlass？", isPresented: terminationBinding) {
-            Button("取消", role: .cancel) { vm.cancelTermination() }
-            Button("退出", role: .destructive) { vm.confirmTermination() }
-        } message: {
-            Text(vm.terminationConfirmation?.message ?? "")
         }
     }
 
@@ -143,5 +169,32 @@ struct ContentView: View {
     private func presentRestoredQueuePromptIfNeeded() {
         guard !didCheckRestoredQueue else { return }
         didCheckRestoredQueue = true
+    }
+}
+
+private struct ContentAlerts: ViewModifier {
+    @ObservedObject var vm: MainViewModel
+    @Binding var destination: WorkspaceDestination
+    let restoredQueueBinding: Binding<Bool>
+    let terminationBinding: Binding<Bool>
+
+    func body(content: Content) -> some View {
+        content
+        .alert("发现上次未完成的队列", isPresented: restoredQueueBinding) {
+            Button("继续下载") { vm.resumeRestoredQueue() }
+            Button("打开队列") {
+                vm.dismissRestoredQueuePrompt()
+                destination = .queue
+            }
+            Button("稍后处理", role: .cancel) { vm.dismissRestoredQueuePrompt() }
+        } message: {
+            Text(vm.restoredQueuePromptSummary)
+        }
+            .alert("退出 MangaGlass？", isPresented: terminationBinding) {
+            Button("取消", role: .cancel) { vm.cancelTermination() }
+            Button("退出", role: .destructive) { vm.confirmTermination() }
+        } message: {
+            Text(vm.terminationConfirmation?.message ?? "")
+        }
     }
 }

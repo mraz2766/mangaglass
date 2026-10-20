@@ -273,12 +273,15 @@ struct RecentComicRecord: Identifiable, Codable, Hashable {
     let input: String
     let siteName: String
     let updatedAt: Date
+    /// Shown on the bookshelf; absent in records saved before 1.12.
+    var coverURL: URL?
 
-    init(id: UUID = UUID(), title: String, input: String, siteName: String, updatedAt: Date = Date()) {
+    init(id: UUID = UUID(), title: String, input: String, siteName: String, updatedAt: Date = Date(), coverURL: URL? = nil) {
         self.id = id
         self.title = title
         self.input = input
         self.siteName = siteName
         self.updatedAt = updatedAt
+        self.coverURL = coverURL
     }
 }

@@ -63,7 +63,47 @@ struct CachedCoverImage<Content: View>: View {
                 phase = .loading
                 let image = await CoverImageCache.shared.image(for: url)
                 guard !Task.isCancelled else { return }
-                phase = image.map(Phase.success) ?? .failure
+                withAnimation(.easeOut(duration: 0.3)) {
+                    phase = image.map(Phase.success) ?? .failure
+                }
             }
+    }
+}
+
+/// Book-shaped cover: the real image when available, otherwise a tinted tile with the first character.
+struct MGBookCover: View {
+    let url: URL?
+    let title: String
+
+    var body: some View {
+        Group {
+            if let url, !CopyMangaMirror.isRetired(url.host) {
+                CachedCoverImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        Image(nsImage: image).resizable().scaledToFill()
+                            .transition(.opacity.combined(with: .scale(scale: 1.04)))
+                    case .loading, .failure:
+                        placeholder
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.black.opacity(0.08), lineWidth: 0.5)
+        }
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            MGTheme.palette.softSelectedFill
+            Text(String(title.prefix(1)))
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(MGTheme.palette.softSelectedText)
+        }
     }
 }
