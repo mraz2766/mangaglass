@@ -81,7 +81,10 @@ struct QueueWorkspaceView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MGSpacing.sm) {
-            MGPageHeader(title: "队列", subtitle: headerSubtitle) { controls }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) { header; Spacer(minLength: 0); controls }
+                VStack(alignment: .leading, spacing: 8) { header; controls }
+            }
             filters
             if let circuit = downloader.manhuaGuiSoftCircuit {
                 softCircuitNotice(circuit)
@@ -112,6 +115,22 @@ struct QueueWorkspaceView: View {
         }
     }
 
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("队列").font(.system(size: 18, weight: .semibold))
+            Text("进行中 \(counts.running) · 失败 \(counts.failed) · 完成 \(counts.done)")
+                .font(MGFont.caption)
+                .foregroundStyle(.secondary)
+            Button {
+                showLogs = true
+            } label: {
+                Image(systemName: "doc.text")
+            }
+            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
+            .help("活动日志")
+        }
+    }
+
     private var controls: some View {
         HStack(spacing: MGSpacing.xs) {
             if counts.queued > 0 && !downloader.isRunning {
@@ -128,14 +147,6 @@ struct QueueWorkspaceView: View {
                 Button("重试失败") { vm.retryFailed() }
                     .buttonStyle(MGActionButtonStyle(variant: .secondary))
             }
-            Button {
-                showLogs = true
-            } label: {
-                Image(systemName: "doc.text")
-            }
-            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
-            .help("活动日志")
-            .accessibilityLabel("活动日志")
             Menu {
                 Button("打开下载目录") { vm.openDownloadDirectory() }
                 Button("清空已完成") { vm.clearCompletedTasks() }
@@ -146,24 +157,25 @@ struct QueueWorkspaceView: View {
                 Button("清空全部记录", role: .destructive) { confirmation = .clearAll }
                     .disabled(downloader.taskItems.isEmpty || downloader.isRunning)
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(systemName: "ellipsis")
             }
             .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("更多操作")
         }
+        .padding(.vertical, MGSpacing.xs)
     }
 
     private var filters: some View {
-        Picker("筛选", selection: $filter) {
+        HStack(spacing: 6) {
             ForEach(QueueFilter.allCases) { item in
-                Text("\(item.rawValue) \(count(for: item))").monospacedDigit().tag(item)
+                Button { filter = item } label: {
+                    Text("\(item.rawValue) \(count(for: item))")
+                        .font(MGFont.caption).padding(.horizontal, 8).frame(height: 28)
+                }
+                .buttonStyle(MGChoiceButtonStyle(selected: filter == item, bordered: false))
+                .accessibilityValue(filter == item ? "已选中" : "未选中")
             }
+            Spacer(minLength: 0)
         }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-        .fixedSize()
     }
 
     private var taskList: some View {
@@ -177,11 +189,10 @@ struct QueueWorkspaceView: View {
                     )
                     .frame(maxWidth: .infinity, minHeight: 320)
                 } else {
-                    ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
-                        if index > 0 {
-                            MGHairlineDivider(opacity: 0.7).padding(.leading, MGSpacing.sm)
-                        }
+                    ForEach(filteredItems) { item in
                         taskRow(item)
+                        Divider()
+                            .overlay(MGTheme.divider(for: colorScheme))
                     }
                 }
             }
@@ -192,24 +203,21 @@ struct QueueWorkspaceView: View {
     private func taskRow(_ item: DownloadTaskItem) -> some View {
         let tint = MGTheme.statusColor(for: item.state)
         return HStack(alignment: .top, spacing: MGSpacing.sm) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: MGSpacing.xs) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.chapter.displayName)
-                            .font(MGFont.bodyStrong)
-                            .lineLimit(1)
-                        Text(item.comic.name)
-                            .font(MGFont.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: MGSpacing.xs)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(item.comic.name)
+                        .font(MGFont.bodyStrong)
+                        .lineLimit(1)
                     Label(statusTitle(item.state), systemImage: statusImage(item.state))
                         .font(MGFont.caption)
-                        .foregroundStyle(item.state == .queued ? Color.secondary : tint)
-                        .fixedSize()
+                        .foregroundStyle(tint)
+                    Spacer()
                     taskActions(item)
                 }
+                Text(item.chapter.displayName)
+                    .font(MGFont.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 if expandedTaskID == item.id {
                     taskDetails(item)
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
@@ -217,8 +225,8 @@ struct QueueWorkspaceView: View {
             }
         }
         .padding(.horizontal, MGSpacing.sm)
-        .padding(.vertical, 8)
-        .frame(minHeight: 52)
+        .padding(.vertical, 10)
+        .frame(minHeight: 64)
         .mgHoverBackground(radius: 0)
     }
 
@@ -397,8 +405,9 @@ private struct QueueProgressFooter: View {
                 progressMetrics
             }
         }
-        .padding(.horizontal, 2)
-        .frame(minHeight: 36, maxHeight: 56)
+        .padding(.horizontal, 12)
+        .frame(minHeight: 44, maxHeight: 64)
+        .overlay(alignment: .top) { Divider() }
     }
 
     private var message: some View {

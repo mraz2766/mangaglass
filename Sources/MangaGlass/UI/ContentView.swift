@@ -21,15 +21,10 @@ enum WorkspaceDestination: String, CaseIterable, Identifiable {
         switch self {
         case .download: return "house"
         case .queue: return "tray.full"
-        case .history: return "clock"
+        case .history: return "clock.arrow.circlepath"
         case .settings: return "gearshape"
         }
     }
-}
-
-enum WorkspaceLayout {
-    static let sidebarWidth: CGFloat = 176
-    static let minWindowWidth: CGFloat = 880
 }
 
 struct ContentView: View {
@@ -43,9 +38,11 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             WorkspaceSidebar(downloader: vm.downloader, destination: $destination)
-                .frame(width: WorkspaceLayout.sidebarWidth)
+                .frame(width: 64)
 
-            Divider()
+            Rectangle()
+                .fill(MGTheme.divider(for: colorScheme))
+                .frame(width: 1)
 
             GeometryReader { proxy in
                 ZStack {
@@ -55,8 +52,7 @@ struct ContentView: View {
                     ForEach(WorkspaceDestination.allCases) { workspaceDestination in
                         if workspaceDestination == destination {
                             workspace(for: workspaceDestination)
-                                .padding(.horizontal, MGSpacing.content)
-                                .padding(.vertical, MGSpacing.md)
+                                .padding(MGSpacing.md)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .transition(workspaceTransition)
                         }
@@ -64,7 +60,7 @@ struct ContentView: View {
                 }
             }
         }
-        .frame(minWidth: WorkspaceLayout.minWindowWidth, minHeight: 560)
+        .frame(minWidth: 720, minHeight: 540)
         .preferredColorScheme(vm.preferredColorScheme)
         .animation(reduceMotion ? nil : MGMotion.panel, value: destination)
         .onAppear(perform: presentRestoredQueuePromptIfNeeded)

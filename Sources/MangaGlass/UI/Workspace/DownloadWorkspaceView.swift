@@ -36,12 +36,12 @@ struct DownloadWorkspaceView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let contentWidth = proxy.size.width
-            let coverWidth: CGFloat = contentWidth >= 900 ? 260 : (contentWidth >= 720 ? 220 : 180)
-            let coverHeight: CGFloat = contentWidth >= 900 ? 364 : (contentWidth >= 720 ? 308 : 250)
+            let windowWidth = proxy.size.width + 97
+            let coverWidth: CGFloat = windowWidth >= 1100 ? 280 : (windowWidth >= 900 ? 240 : 180)
+            let coverHeight: CGFloat = windowWidth >= 1100 ? 390 : (windowWidth >= 900 ? 340 : 250)
             VStack(spacing: 16) {
                 homeToolbar
-                HStack(alignment: .top, spacing: MGSpacing.lg) {
+                HStack(alignment: .top, spacing: 20) {
                     ScrollView {
                         comicInspector(height: min(coverHeight, max(180, proxy.size.height - 220)))
                     }
@@ -85,19 +85,21 @@ struct DownloadWorkspaceView: View {
 
     private var homeToolbar: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: MGSpacing.sm) {
+            HStack(spacing: 12) {
+                homeStatus
                 linkInput.frame(minWidth: 240)
                 toolbarActions
             }
             VStack(spacing: 8) {
                 HStack {
+                    homeStatus
                     Spacer()
                     toolbarActions
                 }
                 linkInput
             }
         }
-        .frame(minHeight: 36)
+        .frame(minHeight: 44)
     }
 
     private var linkInput: some View {
@@ -162,6 +164,10 @@ struct DownloadWorkspaceView: View {
         vm.inputURL = previous
     }
 
+    private var homeStatus: some View {
+        MGActivityMark(isLoading: vm.isLoading, hasResult: vm.comic != nil, hasError: !vm.errorText.isEmpty)
+    }
+
     private var toolbarActions: some View {
         HStack(spacing: 8) {
             Menu {
@@ -173,9 +179,7 @@ struct DownloadWorkspaceView: View {
                 Button("漫画柜") { NSWorkspace.shared.open(MangaSiteConfig.manhuaGui.webBase) }
                 Button("包子漫画") { NSWorkspace.shared.open(MangaSiteConfig.baoziManga.webBase) }
             } label: { Label("站点", systemImage: "globe") }
-                .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("在浏览器中打开支持站点")
             Button { showLogs = true } label: { Image(systemName: "doc.text").frame(width: 28, height: 28) }
                 .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
                 .help("活动日志").accessibilityLabel("活动日志")
@@ -183,7 +187,7 @@ struct DownloadWorkspaceView: View {
     }
 
     private func comicInspector(height: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Button { showCover = true } label: {
                 coverImage.frame(maxWidth: .infinity).frame(height: height)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -192,8 +196,7 @@ struct DownloadWorkspaceView: View {
             .buttonStyle(.plain).disabled(vm.comic?.coverURL == nil)
             .help("查看大图").accessibilityLabel("查看漫画封面大图")
             Text(vm.comic?.name ?? "添加一部漫画")
-                .font(.system(size: 15, weight: .semibold)).lineLimit(3).textSelection(.enabled)
-                .padding(.top, 4)
+                .font(.system(size: 16, weight: .semibold)).lineLimit(3).textSelection(.enabled)
             if let comic = vm.comic {
                 Text("\(comic.site.displayName) · \(comic.volumes.count) 类 · \(vm.totalChapterCount) 话")
                     .font(MGFont.caption).foregroundStyle(.secondary)
@@ -201,19 +204,10 @@ struct DownloadWorkspaceView: View {
                 Text("输入链接，解析后选择卷与章节。").font(MGFont.caption).foregroundStyle(.secondary)
             }
             Button { vm.chooseDestination() } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "folder")
-                    Text(vm.destinationFolder.lastPathComponent)
-                        .lineLimit(1).truncationMode(.middle)
-                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold))
-                }
-                .font(MGFont.caption)
-                .foregroundStyle(.secondary)
-                .contentShape(Rectangle())
+                Label("下载到：\(vm.destinationFolder.lastPathComponent)", systemImage: "folder")
+                    .lineLimit(1).truncationMode(.middle)
             }
-            .buttonStyle(.plain)
-            .help("下载到 \(vm.destinationFolder.path)，点按更改")
-            .accessibilityLabel("下载目录：\(vm.destinationFolder.lastPathComponent)，点按更改")
+            .buttonStyle(MGActionButtonStyle(variant: .ghost)).help(vm.destinationFolder.path)
             parseStatus
         }.padding(.bottom, 8)
     }
@@ -276,15 +270,14 @@ struct DownloadWorkspaceView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 6, pinnedViews: [.sectionHeaders]) {
+                    LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
                         ForEach(vm.filteredVolumeSections.filter { !$0.chapters.isEmpty }) { section in
                             Section {
                                 if !vm.collapsedVolumeIDs.contains(section.id) {
-                                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 136), spacing: 4)], spacing: 4) {
+                                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 8)], spacing: 8) {
                                         ForEach(section.chapters) { chapter in chapterCell(chapter) }
                                     }
                                     .padding(.horizontal, 2)
-                                    .padding(.bottom, 8)
                                     .contentShape(Rectangle())
                                     .gesture(chapterDragGesture)
                                 }
@@ -320,11 +313,11 @@ struct DownloadWorkspaceView: View {
                     Label(vm.selectedVolumeIDs.count == vm.displayVolumes.count ? "分类：全部" : "分类：\(vm.selectedVolumeIDs.count)",
                           systemImage: "line.3.horizontal.decrease")
                 }
-                .buttonStyle(MGActionButtonStyle(variant: .ghost))
+                .buttonStyle(MGActionButtonStyle(variant: .secondary, drawsBorder: false))
                 .popover(isPresented: $showCategories, arrowEdge: .bottom) { categoryPopover }
                 Spacer(minLength: 0)
                 Button("全选可见") { vm.selectAllVisible() }
-                    .buttonStyle(MGActionButtonStyle(variant: .ghost))
+                    .buttonStyle(MGActionButtonStyle(variant: .secondary, drawsBorder: false))
                     .disabled(vm.visibleChapterCount == 0)
                 Button("清除选择") { vm.clearChapterSelection() }.buttonStyle(MGActionButtonStyle(variant: .ghost))
                     .disabled(vm.selectedChapters.isEmpty)
@@ -442,7 +435,7 @@ struct DownloadWorkspaceView: View {
 
     private var selectionSummary: some View {
         Text("已选 \(vm.selectedChapterCount) 话" + (vm.hiddenSelectedChapterCount > 0 ? " · 隐藏 \(vm.hiddenSelectedChapterCount) 话" : ""))
-            .font(MGFont.bodyStrong).monospacedDigit().foregroundStyle(vm.selectedChapterCount == 0 ? .secondary : .primary)
+            .font(MGFont.bodyStrong).foregroundStyle(vm.selectedChapterCount == 0 ? .secondary : MGTheme.accent)
     }
 
     private var enqueueButton: some View {
@@ -470,7 +463,7 @@ struct DownloadWorkspaceView: View {
             .disabled(enqueueFeedback == nil && !isCheckingExistingFiles && (vm.selectedChapterCount == 0 || vm.isLoading || !vm.errorText.isEmpty))
             .allowsHitTesting(enqueueFeedback == nil && !isCheckingExistingFiles)
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 7)
                     .stroke(MGTheme.accent.opacity(enqueuePulse ? 0 : 0.55), lineWidth: 2)
                     .scaleEffect(enqueuePulse ? 1.08 : 1)
                     .opacity(reduceMotion || enqueueFeedback == nil ? 0 : 1)

@@ -64,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = false
         window.toolbarStyle = .automatic
-        window.minSize = NSSize(width: WorkspaceLayout.minWindowWidth, height: 560)
+        window.minSize = NSSize(width: 720, height: 540)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {

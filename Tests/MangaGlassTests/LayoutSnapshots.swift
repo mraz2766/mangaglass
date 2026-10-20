@@ -13,7 +13,7 @@ final class LayoutSnapshots: XCTestCase {
         _ = NSApplication.shared
         let output = URL(fileURLWithPath: directory, isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        let sizes: [(Int, Int)] = [(1200, 800), (1080, 760), (880, 560), (1440, 900)]
+        let sizes: [(Int, Int)] = [(1200, 800), (1080, 760), (720, 540), (1440, 900)]
         for dark in [false, true] {
             for (width, height) in sizes {
                 let vm = MainViewModel(persistsState: false)
@@ -30,7 +30,7 @@ final class LayoutSnapshots: XCTestCase {
             vm.enqueueSelectedChapters()
             vm.recentRecords = [RecentComicRecord(title: "测试漫画", input: "https://www.mangacopy.com/comic/test-fixture-long-link", siteName: "主站")]
             for page in [WorkspaceDestination.queue, .history, .settings] {
-                for (width, height) in [(1200, 800), (880, 560)] {
+                for (width, height) in [(1200, 800), (720, 540)] {
                     let body: AnyView
                     switch page {
                     case .queue: body = AnyView(QueueWorkspaceView(vm: vm, showLogs: .constant(false)))
@@ -39,9 +39,9 @@ final class LayoutSnapshots: XCTestCase {
                     default: continue
                     }
                     let root = HStack(spacing: 0) {
-                        WorkspaceSidebar(downloader: vm.downloader, destination: .constant(page)).frame(width: WorkspaceLayout.sidebarWidth)
+                        WorkspaceSidebar(downloader: vm.downloader, destination: .constant(page)).frame(width: 64)
                         Divider()
-                        body.padding(.horizontal, 20).padding(.vertical, 16).frame(maxWidth: .infinity, maxHeight: .infinity)
+                        body.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     .background(Color(nsColor: .windowBackgroundColor))
                     .environment(\.colorScheme, dark ? .dark : .light)
@@ -64,7 +64,7 @@ final class LayoutSnapshots: XCTestCase {
             case "collapsed": vm.collapsedVolumeIDs = Set(vm.displayVolumes.map(\.id))
             default: break
             }
-            try await render(ContentView(vm: vm), size: NSSize(width: 880, height: 560), name: "home-\(scenario)", output: output, dark: false)
+            try await render(ContentView(vm: vm), size: NSSize(width: 720, height: 540), name: "home-\(scenario)", output: output, dark: false)
         }
     }
 
