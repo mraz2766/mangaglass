@@ -1,43 +1,5 @@
 import SwiftUI
 
-/// Compact, semantic status feedback inspired by Fluid Functionalism's motion tiers.
-struct MGActivityMark: View {
-    let isLoading: Bool
-    let hasResult: Bool
-    let hasError: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hovering = false
-
-    private var title: String {
-        isLoading ? "正在解析" : (hasError ? "解析失败" : (hasResult ? "目录已就绪" : "等待漫画链接"))
-    }
-    private var tint: Color {
-        hasError ? MGTheme.danger : ((isLoading || hasResult) ? MGTheme.accent : .secondary)
-    }
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !isLoading || reduceMotion)) { context in
-            HStack(spacing: 3) {
-                ForEach(0..<3) { index in
-                    let wave = sin(context.date.timeIntervalSinceReferenceDate * 5 - Double(index) * 0.9)
-                    Circle().fill(tint)
-                        .frame(width: 5, height: 5)
-                        .opacity(isLoading && !reduceMotion ? 0.55 + wave * 0.35 : (hovering ? 1 : 0.7))
-                        .offset(y: reduceMotion ? 0 : (isLoading ? wave * 2 : (hovering && index == 1 ? -2 : 0)))
-                }
-            }
-            .frame(width: 28, height: 28)
-            .contentShape(Rectangle())
-        }
-        .onHover { hovering = $0 }
-        .animation(reduceMotion ? nil : MGMotion.regular, value: hovering)
-        .animation(reduceMotion ? nil : MGMotion.fast, value: hasResult)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .help(title)
-    }
-}
-
 enum MGSelectionState {
     case none, partial, all
     var symbol: String {
@@ -82,13 +44,15 @@ struct MGChapterSelectionCell: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
+            HStack(spacing: 6) {
                 Image(systemName: selected ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(selected ? MGTheme.accent : .secondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(selected ? MGTheme.accent : Color.secondary.opacity(0.7))
                 Text(title).font(MGFont.body).lineLimit(1)
+                    .foregroundStyle(selected ? Color.primary : Color.primary.opacity(0.85))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8).frame(height: 38)
+            .padding(.horizontal, 8).frame(height: 30)
             .frame(maxWidth: .infinity).contentShape(Rectangle())
         }
         .buttonStyle(MGChoiceButtonStyle(selected: selected, bordered: false, quietSurface: true))
@@ -104,8 +68,8 @@ enum MGActionVariant {
 }
 
 enum MGTheme {
-    static let accent = Color(nsColor: .systemBlue)
-    static let accentStrong = Color(nsColor: .systemBlue).opacity(0.82)
+    static let accent = Color.accentColor
+    static let accentStrong = Color.accentColor.opacity(0.82)
     static let success = Color(nsColor: .systemGreen)
     static let warning = Color(nsColor: .systemOrange)
     static let danger = Color(nsColor: .systemRed)
@@ -145,6 +109,7 @@ enum MGTheme {
 enum MGFont {
     static let appTitle = Font.system(size: 14, weight: .semibold)
     static let title = Font.system(size: 22, weight: .semibold)
+    static let pageTitle = Font.system(size: 20, weight: .semibold)
     static let section = Font.system(size: 14, weight: .semibold)
     static let body = Font.system(size: 13, weight: .regular)
     static let bodyStrong = Font.system(size: 13, weight: .medium)
@@ -195,11 +160,11 @@ private struct MGActionBody: View {
             .font(MGFont.bodyStrong)
             .foregroundStyle(!enabled ? Color.secondary : (variant == .primary || variant == .destructive ? .white : .primary))
             .padding(.horizontal, iconOnly ? 0 : 10)
-            .frame(minWidth: iconOnly ? 28 : nil, minHeight: variant == .primary ? 32 : 28)
+            .frame(minWidth: iconOnly ? 28 : nil, minHeight: 28)
             .background(fill, in: RoundedRectangle(cornerRadius: 6))
             .overlay {
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(focused ? MGTheme.accent : (variant == .secondary && drawsBorder ? MGTheme.divider(for: scheme) : .clear), lineWidth: focused ? 2 : 0.7)
+                    .stroke(focused ? MGTheme.accent : (variant == .secondary && drawsBorder ? MGTheme.divider(for: scheme) : .clear), lineWidth: focused ? 2 : 0.5)
             }
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
@@ -208,12 +173,12 @@ private struct MGActionBody: View {
     }
 
     private var fill: Color {
-        guard enabled else { return Color.primary.opacity(0.035) }
+        guard enabled else { return variant == .ghost ? .clear : Color.primary.opacity(0.035) }
         if variant == .primary || variant == .destructive {
             let color = variant == .primary ? MGTheme.accent : MGTheme.danger
             return color.opacity(configuration.isPressed ? 0.75 : (hovering ? 0.88 : 1))
         }
-        return Color.primary.opacity(configuration.isPressed ? 0.09 : (hovering ? 0.055 : (variant == .secondary ? 0.025 : 0)))
+        return Color.primary.opacity(configuration.isPressed ? 0.09 : (hovering ? 0.055 : (variant == .secondary ? 0.04 : 0)))
     }
 }
 
@@ -244,9 +209,8 @@ private struct MGChoiceBody: View {
             .background(fill, in: RoundedRectangle(cornerRadius: 6))
             .overlay {
                 RoundedRectangle(cornerRadius: 6).stroke(
-                    focused ? MGTheme.accent : (selected && (bordered || quietSurface) ? MGTheme.accent.opacity(0.68) :
-                        (bordered ? MGTheme.divider(for: scheme).opacity(0.75) : .clear)),
-                    lineWidth: focused ? 2 : (selected && (bordered || quietSurface) ? 1 : 0.7))
+                    focused ? MGTheme.accent : (bordered && !selected ? MGTheme.divider(for: scheme).opacity(0.75) : .clear),
+                    lineWidth: focused ? 2 : 0.5)
             }
             .contentShape(Rectangle())
             .opacity(enabled ? 1 : 0.45)
@@ -260,12 +224,12 @@ private struct MGChoiceBody: View {
         guard enabled else { return quietSurface ? MGTheme.quietSurface(for: scheme) : Color.primary.opacity(bordered ? 0.025 : 0) }
         if selected {
             let interactionBoost = configuration.isPressed ? 0.10 : (hovering ? 0.07 : 0)
-            return MGTheme.accent.opacity((scheme == .dark ? 0.20 : 0.10) + interactionBoost)
+            return MGTheme.accent.opacity((scheme == .dark ? 0.24 : 0.13) + interactionBoost)
         }
         if quietSurface {
             let opacity = configuration.isPressed
-                ? (scheme == .dark ? 0.13 : 0.085)
-                : (hovering ? (scheme == .dark ? 0.10 : 0.06) : (scheme == .dark ? 0.06 : 0.035))
+                ? (scheme == .dark ? 0.12 : 0.08)
+                : (hovering ? (scheme == .dark ? 0.08 : 0.05) : (scheme == .dark ? 0.035 : 0.025))
             return Color.primary.opacity(opacity)
         }
         let active = hovering || configuration.isPressed
@@ -357,6 +321,32 @@ struct MGSelectionButtonStyle: ButtonStyle {
     }
 }
 
+struct MGPageHeader<Trailing: View>: View {
+    let title: String
+    var subtitle: String? = nil
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(alignment: .center, spacing: MGSpacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(MGFont.pageTitle)
+                if let subtitle {
+                    Text(subtitle).font(MGFont.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: MGSpacing.sm)
+            trailing()
+        }
+        .frame(minHeight: 36)
+    }
+}
+
+extension MGPageHeader where Trailing == EmptyView {
+    init(title: String, subtitle: String? = nil) {
+        self.init(title: title, subtitle: subtitle) { EmptyView() }
+    }
+}
+
 struct MGEmptyState: View {
     let title: String
     let systemImage: String
@@ -428,7 +418,7 @@ private struct MGSurfaceModifier: ViewModifier {
             .background(MGTheme.surface(for: colorScheme, elevated: elevated), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(MGTheme.divider(for: colorScheme).opacity(elevated ? 0.8 : 0), lineWidth: 0.6)
+                    .stroke(MGTheme.divider(for: colorScheme).opacity(elevated ? 0.8 : 0.5), lineWidth: 0.5)
             }
     }
 }

@@ -6,54 +6,117 @@ struct WorkspaceSidebar: View {
     @Binding var destination: WorkspaceDestination
 
     var body: some View {
-        VStack(spacing: 12) {
-            BrandMarkView(size: 28)
-                .padding(.vertical, 12)
-                .help("MangaGlass")
-            ForEach(WorkspaceDestination.allCases.filter { $0 != .settings }) { item in
-                navigationButton(item)
+        let counts = downloader.countsSummary()
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                BrandMarkView(size: 22)
+                Text("MangaGlass").font(MGFont.bodyStrong)
             }
-            Spacer(minLength: 8)
-            navigationButton(.settings)
-            Button { destination = .queue } label: {
-                VStack(spacing: 3) {
-                    Image(systemName: downloader.isRunning ? "arrow.down.circle.fill" : "tray")
-                    if downloader.isRunning {
-                        ProgressView(value: downloader.progress).frame(width: 28)
-                    } else if downloader.countsSummary().queued > 0 {
-                        Text("\(downloader.countsSummary().queued)").font(.system(size: 10)).monospacedDigit()
-                    }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+            .accessibilityElement(children: .combine)
+
+            VStack(spacing: 2) {
+                ForEach([WorkspaceDestination.download, .queue, .history]) { item in
+                    row(item, badge: item == .queue ? counts.queued + counts.running : 0)
                 }
-                .frame(width: 40, height: 40)
-                .contentShape(Rectangle())
+                Spacer(minLength: MGSpacing.md)
+                row(.settings, badge: 0)
             }
-            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
-            .help(downloader.isRunning ? "正在下载 · \(downloader.speedText)" :
-                    (downloader.countsSummary().queued > 0 ? "等待下载 \(downloader.countsSummary().queued) 话" : "队列空闲"))
-            .accessibilityLabel("打开队列状态")
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+
+            if downloader.isRunning {
+                queueStatus
+            }
         }
-        .padding(.vertical, 8)
-        .frame(width: 64)
         .frame(maxHeight: .infinity)
-        .background(.ultraThinMaterial)
+        .background(SidebarMaterial().ignoresSafeArea())
     }
 
-    private func navigationButton(_ item: WorkspaceDestination) -> some View {
-        Button { destination = item } label: {
-            VStack(spacing: 2) {
-                Image(systemName: item.systemImage).font(.system(size: 17, weight: .medium))
-                if destination == item {
-                    Text(item.title).font(.system(size: 10, weight: .medium))
+    private func row(_ item: WorkspaceDestination, badge: Int) -> some View {
+        SidebarRow(item: item, badge: badge, selected: destination == item) { destination = item }
+    }
+
+    private var queueStatus: some View {
+        Button { destination = .queue } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(downloader.isPaused ? "已暂停" : "正在下载")
+                    Spacer(minLength: 4)
+                    Text(downloader.speedText).monospacedDigit()
                 }
+                .font(MGFont.caption)
+                .foregroundStyle(.secondary)
+                ProgressView(value: downloader.progress)
+                    .progressViewStyle(.linear)
+                    .controlSize(.small)
             }
-            .frame(width: 40, height: 40)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .contentShape(Rectangle())
         }
-        .buttonStyle(MGChoiceButtonStyle(selected: destination == item, bordered: false))
-        .help(item.title)
-        .accessibilityLabel("打开\(item.title)")
-        .accessibilityValue(destination == item ? "当前页面" : "")
+        .buttonStyle(.plain)
+        .overlay(alignment: .top) { MGHairlineDivider(opacity: 0.6) }
+        .help("打开队列")
+        .accessibilityLabel("下载进度，打开队列")
     }
+}
+
+private struct SidebarRow: View {
+    let item: WorkspaceDestination
+    let badge: Int
+    let selected: Bool
+    let action: () -> Void
+    @Environment(\.colorScheme) private var scheme
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: item.systemImage)
+                    .font(.system(size: 14))
+                    .foregroundStyle(MGTheme.accent)
+                    .frame(width: 20)
+                Text(item.title).font(MGFont.body)
+                Spacer(minLength: 4)
+                if badge > 0 {
+                    Text("\(badge)")
+                        .font(MGFont.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(fill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel("打开\(item.title)")
+        .accessibilityValue(selected ? "当前页面" : (badge > 0 ? "\(badge) 项" : ""))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var fill: Color {
+        if selected { return Color.primary.opacity(scheme == .dark ? 0.12 : 0.09) }
+        return hovering ? Color.primary.opacity(scheme == .dark ? 0.06 : 0.04) : .clear
+    }
+}
+
+private struct SidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 struct BrandMarkView: View {
