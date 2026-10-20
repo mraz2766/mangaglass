@@ -39,6 +39,7 @@ struct ContentView: View {
         HStack(spacing: 0) {
             WorkspaceSidebar(downloader: vm.downloader, destination: $destination)
                 .frame(width: 64)
+                .id(vm.themeStyle)
 
             Rectangle()
                 .fill(MGTheme.divider(for: colorScheme))
@@ -49,6 +50,7 @@ struct ContentView: View {
                     MGTheme.background(for: colorScheme)
                         .ignoresSafeArea()
 
+                    // Rebuild on theme change so views that don't observe `vm` repaint too.
                     ForEach(WorkspaceDestination.allCases) { workspaceDestination in
                         if workspaceDestination == destination {
                             workspace(for: workspaceDestination)
@@ -58,9 +60,12 @@ struct ContentView: View {
                         }
                     }
                 }
+                .id(vm.themeStyle)
             }
         }
         .frame(minWidth: 720, minHeight: 540)
+        .foregroundStyle(MGTheme.palette.text)
+        .tint(MGTheme.accent)
         .preferredColorScheme(vm.preferredColorScheme)
         .animation(reduceMotion ? nil : MGMotion.panel, value: destination)
         .onAppear(perform: presentRestoredQueuePromptIfNeeded)

@@ -39,7 +39,13 @@ struct WorkspaceSidebar: View {
         .padding(.vertical, 8)
         .frame(width: 64)
         .frame(maxHeight: .infinity)
-        .background(.ultraThinMaterial)
+        .background {
+            if let sidebar = MGTheme.palette.sidebar {
+                sidebar.ignoresSafeArea()
+            } else {
+                Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
+            }
+        }
     }
 
     private func navigationButton(_ item: WorkspaceDestination) -> some View {

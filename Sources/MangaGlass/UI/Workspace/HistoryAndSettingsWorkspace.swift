@@ -139,7 +139,18 @@ struct SettingsWorkspaceView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: MGSpacing.lg) {
 
-                settingsSection("外观", detail: "仅保留系统、浅色和深色三种显示模式。") {
+                settingsSection("主题", detail: vm.themeStyle.detail) {
+                    Picker("主题", selection: $vm.themeStyle) {
+                        ForEach(AppThemeStyle.allCases) { style in
+                            Text(style.title).tag(style)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+
+                settingsSection("外观", detail: "每个主题都有浅色与深色两套配色，按这里的模式切换。") {
                     Picker("显示模式", selection: $vm.themeMode) {
                         ForEach(AppThemeMode.allCases) { mode in
                             Text(mode.title).tag(mode)

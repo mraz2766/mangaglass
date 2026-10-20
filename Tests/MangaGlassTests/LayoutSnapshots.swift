@@ -13,10 +13,24 @@ final class LayoutSnapshots: XCTestCase {
         _ = NSApplication.shared
         let output = URL(fileURLWithPath: directory, isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        defer { MGTheme.style = .ink }
+        for style in AppThemeStyle.allCases {
+            MGTheme.style = style
+            for dark in [false, true] {
+                let vm = MainViewModel(persistsState: false)
+                vm.themeStyle = style
+                vm.applyFetchedComic(SelectionTests.fixture(chapterCount: 160, groups: 4), final: true, sourceText: "测试")
+                vm.selectedChapterIDs = ["0", "4", "8", "1"]
+                try await render(ContentView(vm: vm).environment(\.colorScheme, dark ? .dark : .light),
+                                 size: NSSize(width: 1200, height: 800),
+                                 name: "theme-\(style.rawValue)-\(dark ? "dark" : "light")", output: output, dark: dark)
+            }
+        }
         let sizes: [(Int, Int)] = [(1200, 800), (1080, 760), (720, 540), (1440, 900)]
         for dark in [false, true] {
             for (width, height) in sizes {
                 let vm = MainViewModel(persistsState: false)
+                vm.themeStyle = .ink
                 vm.applyFetchedComic(SelectionTests.fixture(chapterCount: 160, groups: 4), final: true, sourceText: "测试")
                 vm.selectedChapterIDs = ["0", "4", "8", "1"]
                 let root = ContentView(vm: vm)
@@ -29,8 +43,10 @@ final class LayoutSnapshots: XCTestCase {
             vm.selectAllVisible()
             vm.enqueueSelectedChapters()
             vm.recentRecords = [RecentComicRecord(title: "测试漫画", input: "https://www.mangacopy.com/comic/test-fixture-long-link", siteName: "主站")]
+            for style in AppThemeStyle.allCases {
+            vm.themeStyle = style
             for page in [WorkspaceDestination.queue, .history, .settings] {
-                for (width, height) in [(1200, 800), (720, 540)] {
+                for (width, height) in style == .ink ? [(1200, 800), (720, 540)] : [(1200, 800)] {
                     let body: AnyView
                     switch page {
                     case .queue: body = AnyView(QueueWorkspaceView(vm: vm, showLogs: .constant(false)))
@@ -43,12 +59,16 @@ final class LayoutSnapshots: XCTestCase {
                         Divider()
                         body.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .background(Color(nsColor: .windowBackgroundColor))
+                    .foregroundStyle(MGTheme.palette.text)
+                    .tint(MGTheme.accent)
+                    .background(MGTheme.background(for: dark ? .dark : .light))
                     .environment(\.colorScheme, dark ? .dark : .light)
                     try await render(root, size: NSSize(width: width, height: height),
-                                     name: "\(page.rawValue)-\(width)x\(height)-\(dark ? "dark" : "light")", output: output, dark: dark)
+                                     name: "\(page.rawValue)-\(style.rawValue)-\(width)x\(height)-\(dark ? "dark" : "light")", output: output, dark: dark)
                 }
             }
+            }
+            vm.themeStyle = .ink
         }
         for scenario in ["empty", "loading", "error", "no-results", "no-categories", "collapsed", "many-categories"] {
             let vm = MainViewModel(persistsState: false)

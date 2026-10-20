@@ -152,7 +152,7 @@ struct DownloadWorkspaceView: View {
                     if vm.isLoading { ProgressView().controlSize(.small) }
                 }.frame(width: 28)
             }
-            .buttonStyle(MGActionButtonStyle(variant: .primary))
+            .buttonStyle(MGActionButtonStyle(variant: MGTheme.style == .classic ? .primary : .emphasis))
             .disabled(vm.isLoading || vm.inputURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityLabel(vm.isLoading ? "正在解析" : "解析")
         }

@@ -116,6 +116,15 @@ final class MainViewModel: ObservableObject {
             updateAppAppearance()
         }
     }
+    @Published var themeStyle: AppThemeStyle = {
+        let raw = UserDefaults.standard.string(forKey: AppThemeStyle.storageKey) ?? AppThemeStyle.ink.rawValue
+        return AppThemeStyle(rawValue: raw) ?? .ink
+    }() {
+        didSet {
+            MGTheme.style = themeStyle
+            persistString(themeStyle.rawValue, key: AppThemeStyle.storageKey)
+        }
+    }
     @Published var comic: ComicInfo? {
         didSet {
             persistCodable(comic, key: StorageKey.lastComic)
@@ -170,6 +179,7 @@ final class MainViewModel: ObservableObject {
         let api = CopyMangaAPI()
         self.api = api
         self.downloader = DownloadCoordinator(api: api)
+        MGTheme.style = themeStyle
         if persistsState {
             windowCloseBehavior = WindowCloseBehavior.load()
             restorePersistedState()

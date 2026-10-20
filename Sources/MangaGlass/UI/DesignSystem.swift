@@ -84,8 +84,19 @@ struct MGChapterSelectionCell: View {
         Button(action: action) {
             HStack(spacing: 7) {
                 Image(systemName: selected ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(selected ? MGTheme.accent : .secondary)
-                Text(title).font(MGFont.body).lineLimit(1)
+                    .foregroundStyle(selected ? MGTheme.palette.selectedText : .secondary)
+                if MGTheme.palette.numberForwardChapters, let parts = MGChapterTitleParts(title) {
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text(parts.number).font(.system(size: 15, weight: .semibold)).monospacedDigit()
+                        Text(parts.unit).font(MGFont.caption).opacity(0.6)
+                        if !parts.rest.isEmpty {
+                            Text(parts.rest).font(MGFont.caption).opacity(0.6)
+                        }
+                    }
+                    .lineLimit(1)
+                } else {
+                    Text(title).font(MGFont.body).lineLimit(1)
+                }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8).frame(height: 38)
@@ -96,39 +107,65 @@ struct MGChapterSelectionCell: View {
     }
 }
 
+/// Splits "第 12 话 标题" into a prominent number and quieter remainder for number-forward cells.
+struct MGChapterTitleParts {
+    let number: String
+    let unit: String
+    let rest: String
+
+    private static let pattern = try! NSRegularExpression(pattern: #"^\s*第\s*([0-9]+(?:\.[0-9]+)?)\s*([话話回卷])\s*(.*)$"#)
+
+    init?(_ title: String) {
+        let range = NSRange(title.startIndex..., in: title)
+        guard let match = Self.pattern.firstMatch(in: title, range: range),
+              let number = Range(match.range(at: 1), in: title),
+              let unit = Range(match.range(at: 2), in: title),
+              let rest = Range(match.range(at: 3), in: title)
+        else { return nil }
+        self.number = String(title[number])
+        self.unit = String(title[unit])
+        self.rest = String(title[rest])
+    }
+}
+
 enum MGActionVariant {
     case primary
+    /// Strong but not the screen's main call to action (e.g. 解析); ink/graphite rather than accent.
+    case emphasis
     case secondary
     case destructive
     case ghost
 }
 
 enum MGTheme {
-    static let accent = Color(nsColor: .systemBlue)
-    static let accentStrong = Color(nsColor: .systemBlue).opacity(0.82)
+    /// Set by `MainViewModel.themeStyle`; views rebuild via `.id(themeStyle)` when it changes.
+    nonisolated(unsafe) static var style: AppThemeStyle = .ink
+    static var palette: MGPalette { MGPalette.forStyle(style) }
+    static var accent: Color { palette.accent }
+    static var accentStrong: Color { palette.accent.opacity(0.82) }
     static let success = Color(nsColor: .systemGreen)
     static let warning = Color(nsColor: .systemOrange)
     static let danger = Color(nsColor: .systemRed)
     static let queued = Color.secondary
 
     static func background(for scheme: ColorScheme) -> Color {
-        Color(nsColor: .windowBackgroundColor)
+        palette.canvas
     }
 
     static func surface(for scheme: ColorScheme, elevated: Bool = false) -> Color {
-        Color(nsColor: .controlBackgroundColor)
+        style == .classic ? Color(nsColor: .controlBackgroundColor) : palette.cell
     }
 
     static func inset(for scheme: ColorScheme) -> Color {
-        Color(nsColor: .controlBackgroundColor)
+        style == .classic ? Color(nsColor: .controlBackgroundColor) : palette.field
     }
 
     static func divider(for scheme: ColorScheme) -> Color {
-        Color(nsColor: .separatorColor)
+        palette.divider
     }
 
     static func quietSurface(for scheme: ColorScheme) -> Color {
-        Color.primary.opacity(scheme == .dark ? 0.06 : 0.035)
+        palette.field
     }
 
     static func statusColor(for state: DownloadTaskItem.State) -> Color {
@@ -193,9 +230,9 @@ private struct MGActionBody: View {
     var body: some View {
         configuration.label
             .font(MGFont.bodyStrong)
-            .foregroundStyle(!enabled ? Color.secondary : (variant == .primary || variant == .destructive ? .white : .primary))
+            .foregroundStyle(!enabled ? Color.secondary : (variant == .primary || variant == .destructive ? .white : (variant == .emphasis ? MGTheme.palette.emphasisText : .primary)))
             .padding(.horizontal, iconOnly ? 0 : 10)
-            .frame(minWidth: iconOnly ? 28 : nil, minHeight: variant == .primary ? 32 : 28)
+            .frame(minWidth: iconOnly ? 28 : nil, minHeight: variant == .primary || variant == .emphasis ? 32 : 28)
             .background(fill, in: RoundedRectangle(cornerRadius: 6))
             .overlay {
                 RoundedRectangle(cornerRadius: 6)
@@ -209,8 +246,8 @@ private struct MGActionBody: View {
 
     private var fill: Color {
         guard enabled else { return Color.primary.opacity(0.035) }
-        if variant == .primary || variant == .destructive {
-            let color = variant == .primary ? MGTheme.accent : MGTheme.danger
+        if variant == .primary || variant == .destructive || variant == .emphasis {
+            let color = variant == .primary ? MGTheme.accent : (variant == .emphasis ? MGTheme.palette.emphasisFill : MGTheme.danger)
             return color.opacity(configuration.isPressed ? 0.75 : (hovering ? 0.88 : 1))
         }
         return Color.primary.opacity(configuration.isPressed ? 0.09 : (hovering ? 0.055 : (variant == .secondary ? 0.025 : 0)))
@@ -240,11 +277,11 @@ private struct MGChoiceBody: View {
 
     var body: some View {
         configuration.label
-            .foregroundStyle(selected ? MGTheme.accent : .primary)
+            .foregroundStyle(selected ? (quietSurface ? MGTheme.palette.selectedText : MGTheme.palette.softSelectedText) : .primary)
             .background(fill, in: RoundedRectangle(cornerRadius: 6))
             .overlay {
                 RoundedRectangle(cornerRadius: 6).stroke(
-                    focused ? MGTheme.accent : (selected && (bordered || quietSurface) ? MGTheme.accent.opacity(0.68) :
+                    focused ? MGTheme.accent : (selected && (bordered || quietSurface) ? MGTheme.palette.selectedStroke :
                         (bordered ? MGTheme.divider(for: scheme).opacity(0.75) : .clear)),
                     lineWidth: focused ? 2 : (selected && (bordered || quietSurface) ? 1 : 0.7))
             }
@@ -257,16 +294,17 @@ private struct MGChoiceBody: View {
     }
 
     private var fill: Color {
-        guard enabled else { return quietSurface ? MGTheme.quietSurface(for: scheme) : Color.primary.opacity(bordered ? 0.025 : 0) }
+        let palette = MGTheme.palette
+        guard enabled else { return quietSurface ? palette.cell : Color.primary.opacity(bordered ? 0.025 : 0) }
         if selected {
-            let interactionBoost = configuration.isPressed ? 0.10 : (hovering ? 0.07 : 0)
-            return MGTheme.accent.opacity((scheme == .dark ? 0.20 : 0.10) + interactionBoost)
+            if MGTheme.style == .classic {
+                let interactionBoost = configuration.isPressed ? 0.10 : (hovering ? 0.07 : 0)
+                return MGTheme.accent.opacity((scheme == .dark ? 0.20 : 0.10) + interactionBoost)
+            }
+            return quietSurface ? palette.selectedFill : palette.softSelectedFill
         }
         if quietSurface {
-            let opacity = configuration.isPressed
-                ? (scheme == .dark ? 0.13 : 0.085)
-                : (hovering ? (scheme == .dark ? 0.10 : 0.06) : (scheme == .dark ? 0.06 : 0.035))
-            return Color.primary.opacity(opacity)
+            return configuration.isPressed ? palette.cellPressed : (hovering ? palette.cellHover : palette.cell)
         }
         let active = hovering || configuration.isPressed
         return Color.primary.opacity(active ? 0.065 : (bordered ? 0.025 : 0))
@@ -410,7 +448,9 @@ private struct MGSearchFieldFrame: ViewModifier {
 
     func body(content: Content) -> some View {
         if quiet {
-            content.overlay { RoundedRectangle(cornerRadius: 6).stroke(focused ? MGTheme.accent : .clear, lineWidth: 2) }
+            content.overlay {
+                RoundedRectangle(cornerRadius: 6).stroke(focused ? MGTheme.accent : MGTheme.palette.fieldStroke, lineWidth: focused ? 2 : 0.5)
+            }
         } else {
             content.mgInset(radius: 6)
                 .overlay { RoundedRectangle(cornerRadius: 6).stroke(focused ? MGTheme.accent : .clear, lineWidth: 2) }
@@ -489,6 +529,9 @@ private struct MGQuietTextFieldModifier: ViewModifier {
             .padding(.horizontal, 10)
             .frame(minHeight: 32)
             .background(MGTheme.quietSurface(for: colorScheme), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(MGTheme.palette.fieldStroke, lineWidth: 0.5)
+            }
     }
 }
 
