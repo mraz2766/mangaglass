@@ -1,273 +1,178 @@
+<div align="center">
+
+<img src="./assets/logo.png" alt="MangaGlass" width="104">
+
 # MangaGlass
 
-[English](./README.md)
+**粘贴链接，挑好章节，整部漫画下载到本地。**
 
-MangaGlass 是一个面向 macOS 的本地漫画解析与下载工具，基于 SwiftUI 和 Swift Package Manager 构建。
+一个原生 macOS 漫画下载工具，基于 SwiftUI 构建。
 
-它的核心流程很直接：
+[English](./README.md) · 简体中文
 
-- 输入漫画详情页或章节页链接
-- 解析分类、卷和章节
-- 选择下载目录并加入下载队列
-- 在本地管理下载、失败重试和日志
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple) ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white) ![Version](https://img.shields.io/badge/version-1.12.1-2C78F2)
 
-当前项目定位是桌面工具，不是通用爬虫框架，也不是后端服务。
+<img src="./assets/screenshots/home-ink.png" alt="解析后的章节选择界面" width="900">
 
-## 当前支持站点
-
-- 拷贝漫画系列
-  - `mangacopy.com`
-  - `2026copy.com`
-  - `copy4000.com`（国内站）
-- 漫画柜
-  - `manhuagui.com`
-- 包子漫画
-  - `baozimh.com`
-- MYCOMIC
-  - `mycomic.com`
-
-说明：
-
-- 不同站点的页面结构、反爬策略和稳定性不同。
-- 某些站点在特定网络、Cookie 或代理条件下才能稳定解析。
-- 站点改版后，解析和下载逻辑可能需要跟进调整。
-
-## 界面预览
-
-<div align="center">
-  <img src="./assets/home.png" alt="MangaGlass 首页截图" width="900">
 </div>
 
-## 主要功能
+## 亮点
 
-- 支持漫画详情页、章节页链接解析
-- 支持分类、卷和章节选择
-- 支持批量下载、暂停、继续、取消、失败重试
-- 支持下载管理页查看队列、状态和失败原因
-- 支持 Cookie 与代理配置
-- 支持最近打开记录
-- 支持清缓存：
-  - 解析缓存
-  - 镜像冷却状态
-  - 当前输入和解析结果
-- 支持基础风控避让、局部停机和下载保护
+- **一步到位**：粘贴漫画链接回车，封面、分类和全部章节随即列出。
+- **选得快**：点选、⇧ 连选、⌘ 加选，或直接在网格上拖出一个框；分类标签一键切换。
+- **下得稳**：并发、错峰和自动降速都有限制；每话先写入临时目录，校验完整后才落盘。
+- **看得清**：总进度、速度和剩余时间一目了然，任务按漫画分组，失败原因随时可查。
+- **随时接上**：书架记住看过的漫画；未完成的队列重启后会提示继续。
+- **三套主题**：经典（白蓝玻璃）、墨与纸、石墨，各自带浅色与深色。
 
-## 环境要求
+## 支持站点
 
-- macOS 13 或更高版本
-- Xcode Command Line Tools
-- Swift 6.2 工具链
+| 站点 | 域名 | 备注 |
+| --- | --- | --- |
+| 拷贝漫画 | `mangacopy.com` · `2026copy.com` · `copy4000.com` | 分别为主站、备用站、国内站；解析失败时可一键切换镜像 |
+| 漫画柜 | `manhuagui.com` | 请求较严格，触发风控时会暂停并提示打开网页验证 |
+| 包子漫画 | `baozimh.com` | |
 
-如果你还没有安装命令行工具，可以先执行：
+> 解析依赖各站点当前的页面结构。站点改版、限流或屏蔽都可能导致暂时不可用。
+
+## 截图
+
+<table>
+  <tr>
+    <td width="50%"><img src="./assets/screenshots/start-ink-dark.png" alt="首页：输入链接与继续上次"></td>
+    <td width="50%"><img src="./assets/screenshots/download-graphite-dark.png" alt="下载页：总进度与分组任务"></td>
+  </tr>
+  <tr>
+    <td align="center">首页 · 墨与纸 · 深色</td>
+    <td align="center">下载 · 石墨 · 深色</td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="33%"><img src="./assets/screenshots/theme-classic.png" alt="经典主题"></td>
+    <td width="33%"><img src="./assets/screenshots/theme-ink.png" alt="墨与纸主题"></td>
+    <td width="33%"><img src="./assets/screenshots/theme-graphite.png" alt="石墨主题"></td>
+  </tr>
+  <tr>
+    <td align="center">经典</td>
+    <td align="center">墨与纸</td>
+    <td align="center">石墨</td>
+  </tr>
+</table>
+
+## 安装
+
+需要 macOS 13 及以上，以及 Xcode 命令行工具（Swift 6.2）。
 
 ```bash
-xcode-select --install
+xcode-select --install          # 若尚未安装命令行工具
+git clone https://github.com/mraz2766/mangaglass.git
+cd mangaglass
+scripts/build_app.sh --install --open
 ```
 
-## 快速开始
+脚本会编译 Release 版本，生成 `dist/MangaGlass.app`，复制到 `/Applications` 并打开。只想构建、不安装时，去掉 `--install --open` 即可。
 
-### 本地运行
+## 使用
 
-```bash
-swift build
-swift run MangaGlass
-```
+1. **粘贴链接**：在首页输入框粘贴漫画详情页链接，按回车。拷贝漫画也可以只填 `path_word`（链接里 `/comic/` 后面那一段）。
 
-### 构建 `.app` 与 `.dmg`
+   ```text
+   https://www.mangacopy.com/comic/<path_word>
+   https://www.manhuagui.com/comic/<id>/
+   https://www.baozimh.com/comic/<slug>
+   ```
 
-```bash
-./scripts/build_dmg.sh
-```
+2. **挑选章节**：
+   - 点击选择单话，⇧ 点击选择连续范围，⌘ 点击追加。
+   - 在网格空白处拖动，可框选多话。
+   - 卷标题右侧的方框可整卷全选或取消。
+   - 用上方分类标签只看某一类；搜索和排序在同一行。被隐藏的已选章节仍会一起下载。
 
-构建完成后，产物位于：
+3. **加入队列**：底部浮条显示已选数量，点「加入队列」。若目标目录已有同名章节，会询问「保留并补全」还是「覆盖重新下载」。
 
-- `dist/MangaGlass.app`
-- `dist/MangaGlass.dmg`
+4. **查看进度**：在侧栏「下载」页开始、暂停或重试失败项。全部结束后会发送系统通知。
 
-## 使用方式
-
-### 1. 加载漫画
-
-支持以下输入方式：
-
-- 完整漫画详情页链接
-- 完整章节页链接
-- 某些站点的简化 slug 或 path
-
-常见示例：
+下载结果按以下结构保存：
 
 ```text
-https://www.manhuagui.com/comic/19430/
-https://www.baozimh.com/comic/yaoshenji-taxuedongman
-https://www.2026copy.com/comic/haizeiwang
-https://mycomic.com/comics/1759
-https://mycomic.com/chapters/790421
+下载目录/
+└── 漫画名/
+    └── 单行本/                      # 仅当所选章节跨多个分组时才有这一层
+        └── 第 1 卷/
+            ├── 漫画名-单行本-第 1 卷-0001.jpg
+            └── ...
 ```
 
-### 2. 选择章节
+正在下载的章节位于 `.下载中-章节名`，完整性检查通过后才会改名为正式目录。
 
-- 先选择分类或卷
-- 再选择单话
-- 支持全选、清空、本分类全选
-- 支持多选和框选
+## 设置
 
-### 3. 开始下载
+| 项目 | 说明 |
+| --- | --- |
+| 主题 / 外观 | 选择主题，再选跟随系统、浅色或深色 |
+| 关闭窗口时 | 询问、直接退出，或留在后台继续下载 |
+| 下载目录 | 选择保存位置；也可在首页标题区直接修改 |
+| Cookie | 仅在需要登录或访问受限章节时填写，留空则不发送 |
+| Copy 图片并发 / 质量 | 并发 4–8，默认 4；默认使用 `c1500x` 高清图，失败时回退标准图 |
+| 本地数据 | 清除当前输入、解析结果与缓存，不会删除已下载的文件 |
 
-- 选择下载目录
-- 点击加入队列
-- 在下载管理中查看状态、失败项和日志
-
-## 配置说明
-
-### Cookie
-
-某些站点或章节需要 Cookie 才能正常访问，可以在应用内直接填写。
-
-适合优先排查的场景：
-
-- 详情页能打开，但应用解析不到内容
-- 章节页能打开，但下载时返回 `403`、`404` 或空内容
-
-### Copy 下载性能
-
-- 章节并发固定为 3。
-- 全局图片并发可在设置中选择 4–8，默认 4。
-- 图片请求保留 80–180ms 错峰和动态降速。
-- 图片质量默认使用 `c1500x` 高清地址；高清地址不可用时自动回退标准地址。
-- 章节先写入 `.下载中-章节名`，完整性检查通过后才发布为正式目录。
-
-### 代理
-
-应用支持在界面中配置代理，包括：
-
-- 无代理
-- HTTP
-- HTTPS
-- SOCKS5
-
-如果你所在网络对目标站点访问不稳定，建议优先结合代理一起排查。
-
-## 常用操作
-
-### 清缓存
-
-顶部提供 `清缓存` 按钮，会清理：
-
-- 输入框中的当前链接
-- 当前封面与漫画信息
-- 已解析的分类与章节结果
-- 解析相关缓存
-- 镜像冷却状态
-
-适合在站点风控、镜像异常或页面结构临时异常后手动重试。
-
-### 下载管理
-
-下载管理页主要用于：
-
-- 查看排队、下载中、失败和完成数量
-- 暂停所有下载
-- 继续下载
-- 取消所有下载
-- 重新下载失败项
-- 清空已完成项
-- 查看失败原因与当前进度
-
-## 项目结构
-
-```text
-Sources/MangaGlass/
-  App/        应用入口、窗口设置、主状态管理
-  Models/     站点、漫画、下载、代理等数据模型
-  Services/   站点解析、下载调度、DOM 提取
-  UI/         SwiftUI 界面
-  Utils/      网络、JSON、会话等通用工具
-  Resources/  应用资源
-
-assets/
-  AppIcon.icns
-  logo.png
-  home.png
-
-scripts/
-  build_dmg.sh
-```
-
-关键文件：
-
-- `Sources/MangaGlass/App/MainViewModel.swift`
-- `Sources/MangaGlass/Services/CopyMangaAPI.swift`
-- `Sources/MangaGlass/Services/DownloadCoordinator.swift`
-- `Sources/MangaGlass/UI/ContentView.swift`
-
-## 开发说明
-
-### 常用命令
-
-```bash
-# 调试构建
-swift build
-
-# 本地运行
-swift run MangaGlass
-
-# 打包 app 和 dmg
-./scripts/build_dmg.sh
-```
-
-### 代码设计方向
-
-- 优先简单、稳定、可维护
-- 站点解析尽量收敛在服务层
-- 下载逻辑和 UI 逻辑分开
-- 避免为了单站点特例把公共逻辑污染得过重
+网络请求遵循 macOS 系统代理设置。
 
 ## 常见问题
 
-### 1. 解析不到章节
+<details>
+<summary><b>解析不到章节</b></summary>
 
-优先排查：
+先在浏览器打开同一链接确认页面正常；拷贝漫画可按提示切换镜像。仍然失败时，在设置中清除本地数据后重试，或打开右上角活动日志查看具体原因。
+</details>
 
-- 站点是否改版
-- 当前网络是否被风控
-- 是否需要 Cookie
-- 是否需要先清缓存再重试
+<details>
+<summary><b>浏览器能看，应用里报 403 或内容为空</b></summary>
 
-### 2. 下载全部失败或频繁 404
+通常是站点需要登录或校验 Cookie。在浏览器开发者工具中复制该站点的 Cookie，粘贴到设置页后重试。
+</details>
 
-优先判断：
+<details>
+<summary><b>下载中途暂停并提示风控</b></summary>
 
-- 图片资源本身失效
-- 当前站点或图片 host 进入风控
-- 章节解析出的图片地址不再有效
-- 代理或网络质量不稳定
+这是保护机制：漫画柜会提示打开网页完成验证，拷贝漫画会自动冷却一段时间。按提示操作后点「继续」即可，已完成的章节不会重复下载。
+</details>
 
-### 3. 某些站点可以在浏览器打开，但应用里失败
+<details>
+<summary><b>Dock 里还是旧图标</b></summary>
 
-这通常意味着：
+macOS 会缓存应用图标，退出应用后重新打开即可刷新。
+</details>
 
-- 浏览器里已有 Cookie，而应用里没有
-- 目标站点对请求头、Referer、频率更敏感
-- 当前机器或 IP 被目标站点限制
+## 开发
 
-### 4. `.app` 和 `.dmg` 用哪个
+```bash
+swift build                     # 调试构建
+swift run MangaGlass            # 本地运行
+swift test                      # 单元测试
+scripts/build_app.sh --install  # Release 构建并安装
+scripts/build_dmg.sh            # 生成 dist/MangaGlass.dmg
+```
 
-项目脚本会同时生成：
+UI 快照：设置 `MANGAGLASS_SNAPSHOT_DIR` 后运行 `swift test --filter LayoutSnapshots`，会把三套主题在浅色和深色下的各页面渲染为 PNG；README 截图用 `MANGAGLASS_README_DIR` 加 `--filter testRenderReadmeShowcase` 生成。
 
-- `dist/MangaGlass.app`
-- `dist/MangaGlass.dmg`
+```text
+Sources/MangaGlass/
+├── App/        入口、窗口行为、主状态（MainViewModel）、日志
+├── Models/     站点、漫画、下载任务等数据模型
+├── Services/   站点解析（CopyMangaAPI）、下载调度（DownloadCoordinator）、完整性校验、队列持久化
+├── UI/         SwiftUI 界面、主题配色、动效
+└── Utils/      网络会话与 JSON 工具
+scripts/
+├── build_app.sh   构建并可选安装 .app
+├── build_dmg.sh   打包 .dmg
+└── draw_logo.swift  Logo 矢量源，可重新生成全部图标尺寸
+```
 
-二者来自同一次构建。一般直接使用 `dist/MangaGlass.app` 或 DMG 中安装的版本即可。
+较复杂的改动先在 `docs/execplans/` 写执行计划，模板见 `.agent/PLANS.md`。
 
-## 已知边界
+## 声明
 
-- 解析逻辑依赖第三方站点页面结构
-- 站点可能随时改版、限流或封禁
-- 某些章节或图片 host 对 Referer、Cookie、请求频率较敏感
-- 本项目不承诺长期稳定适配所有目标站点
-
-## 使用说明
-
-本项目仅用于本地学习、研究和个人使用。
-
-请仅访问和下载你有权访问的内容。使用者需自行承担由目标站点规则、版权或网络限制带来的风险。
+本项目仅供个人学习与研究。请只下载你有权访问的内容，并遵守目标站点的使用条款与版权要求。

@@ -1,273 +1,180 @@
+<div align="center">
+
+<img src="./assets/logo.png" alt="MangaGlass" width="104">
+
 # MangaGlass
 
-[中文](./README.zh-CN.md)
+**Paste a link, pick your chapters, and keep the whole series on your Mac.**
 
-MangaGlass is a local manga parsing and download tool for macOS, built with SwiftUI and Swift Package Manager.
+A native macOS manga downloader built with SwiftUI.
 
-Its core workflow is straightforward:
+English · [简体中文](./README.zh-CN.md)
 
-- paste a manga detail-page URL or chapter URL
-- parse categories, volumes, and chapters
-- choose a local download directory and add items to the queue
-- manage downloads, retries, and logs on your machine
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple) ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white) ![Version](https://img.shields.io/badge/version-1.12.1-2C78F2)
 
-This project is a desktop app. It is not a general-purpose crawler framework and not a backend service.
+<img src="./assets/screenshots/home-ink.png" alt="Chapter selection after parsing" width="900">
 
-## Supported Sites
-
-- CopyManga family
-  - `mangacopy.com`
-  - `2026copy.com`
-  - `copy4000.com` (Domestic site)
-- Manhuagui
-  - `manhuagui.com`
-- Baozi Manga
-  - `baozimh.com`
-- MYCOMIC
-  - `mycomic.com`
-
-Notes:
-
-- Different sites use different page structures, anti-bot strategies, and stability levels.
-- Some sites only parse reliably under specific network conditions, with cookies, or through a proxy.
-- When a target site changes its layout, the parsing and download logic may need updates.
-
-## Preview
-
-<div align="center">
-  <img src="./assets/home.png" alt="MangaGlass home screen" width="900">
 </div>
 
-## Features
+> The app's interface is in Chinese, because the supported sites are Chinese-language.
 
-- Parse manga detail pages and chapter pages
-- Select categories, volumes, and chapters
-- Batch download, pause, resume, cancel, and retry failed items
-- Review queue state, progress, and failure reasons in the download manager
-- Configure cookies and proxies
-- Keep a recent history of opened entries
-- Clear caches for:
-  - parsed data
-  - mirror cooldown state
-  - current input and current parsing result
-- Include basic rate-limit avoidance, partial site shutdown handling, and download protection
+## Highlights
 
-## Requirements
+- **One step in**: paste a series link, press Return, and the cover, categories, and every chapter appear.
+- **Fast selection**: click, ⇧-click for a range, ⌘-click to add, or drag a box across the grid; category chips switch views in one click.
+- **Careful downloads**: bounded concurrency, request staggering, and automatic slowdown; each chapter is written to a temporary folder and only published after an integrity check.
+- **Clear progress**: overall percent, speed, and time remaining at a glance, with tasks grouped by series and failure reasons one click away.
+- **Pick up where you left off**: the bookshelf remembers series you've opened, and an unfinished queue is offered again after relaunch.
+- **Three themes**: Classic (white and blue glass), Ink & Paper, and Graphite, each with light and dark variants.
 
-- macOS 13 or later
-- Xcode Command Line Tools
-- Swift 6.2 toolchain
+## Supported sites
 
-If command line tools are not installed yet:
+| Site | Domains | Notes |
+| --- | --- | --- |
+| CopyManga | `mangacopy.com` · `2026copy.com` · `copy4000.com` | Main, backup, and mainland mirrors; switch mirrors in one click when parsing fails |
+| Manhuagui | `manhuagui.com` | Strict rate limits; downloads pause and ask you to verify in the browser when the site pushes back |
+| Baozi Manga | `baozimh.com` | |
+
+> Parsing depends on each site's current page structure. Redesigns, rate limits, or blocks can break a site temporarily.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="./assets/screenshots/start-ink-dark.png" alt="Start screen with link field and recent series"></td>
+    <td width="50%"><img src="./assets/screenshots/download-graphite-dark.png" alt="Downloads with overall progress and grouped tasks"></td>
+  </tr>
+  <tr>
+    <td align="center">Start · Ink &amp; Paper · dark</td>
+    <td align="center">Downloads · Graphite · dark</td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="33%"><img src="./assets/screenshots/theme-classic.png" alt="Classic theme"></td>
+    <td width="33%"><img src="./assets/screenshots/theme-ink.png" alt="Ink and Paper theme"></td>
+    <td width="33%"><img src="./assets/screenshots/theme-graphite.png" alt="Graphite theme"></td>
+  </tr>
+  <tr>
+    <td align="center">Classic</td>
+    <td align="center">Ink &amp; Paper</td>
+    <td align="center">Graphite</td>
+  </tr>
+</table>
+
+## Install
+
+Requires macOS 13 or later and the Xcode Command Line Tools (Swift 6.2).
 
 ```bash
-xcode-select --install
+xcode-select --install          # if the command line tools aren't installed yet
+git clone https://github.com/mraz2766/mangaglass.git
+cd mangaglass
+scripts/build_app.sh --install --open
 ```
 
-## Quick Start
+The script builds a release binary, assembles `dist/MangaGlass.app`, copies it to `/Applications`, and opens it. Drop `--install --open` to build without installing.
 
-### Run locally
+## Usage
 
-```bash
-swift build
-swift run MangaGlass
-```
+1. **Paste a link** into the field on the start screen and press Return. For CopyManga you can also enter just the `path_word` (the part after `/comic/`).
 
-### Build the `.app` and `.dmg`
+   ```text
+   https://www.mangacopy.com/comic/<path_word>
+   https://www.manhuagui.com/comic/<id>/
+   https://www.baozimh.com/comic/<slug>
+   ```
 
-```bash
-./scripts/build_dmg.sh
-```
+2. **Pick chapters**:
+   - Click to select one, ⇧-click for a range, ⌘-click to add more.
+   - Drag across empty space in the grid to box-select.
+   - The square next to each volume heading selects or clears the whole volume.
+   - Use the category chips to focus on one category; search and sort sit on the same row. Selected chapters that are hidden by a filter still download.
 
-Generated artifacts:
+3. **Add to queue** from the floating bar at the bottom. If chapters with the same name already exist in the destination, you choose between keeping and completing them or overwriting.
 
-- `dist/MangaGlass.app`
-- `dist/MangaGlass.dmg`
+4. **Track progress** on the Downloads page: start, pause, or retry failures. A system notification arrives when everything finishes.
 
-## How To Use
-
-### 1. Load a manga
-
-MangaGlass accepts:
-
-- a full manga detail-page URL
-- a full chapter-page URL
-- for some sites, a simplified slug or path
-
-Common examples:
+Files are saved like this:
 
 ```text
-https://www.manhuagui.com/comic/19430/
-https://www.baozimh.com/comic/yaoshenji-taxuedongman
-https://www.2026copy.com/comic/haizeiwang
-https://mycomic.com/comics/1759
-https://mycomic.com/chapters/790421
+Destination/
+└── Series name/
+    └── 单行本/                      # only when your selection spans more than one category
+        └── 第 1 卷/
+            ├── Series name-单行本-第 1 卷-0001.jpg
+            └── ...
 ```
 
-### 2. Choose chapters
+A chapter in progress lives in `.下载中-<chapter>` and is renamed to its final folder only after the integrity check passes.
 
-- select a category or volume first
-- then choose one or more chapters
-- use select all, clear, or select-all-in-current-category
-- multi-selection and drag selection are supported
+## Settings
 
-### 3. Start downloading
+| Setting | What it does |
+| --- | --- |
+| Theme / Appearance | Choose a theme, then follow the system, light, or dark |
+| When closing the window | Ask, quit, or keep downloading in the background |
+| Download folder | Where files go; also editable from the series header on the home screen |
+| Cookie | Only needed for sign-in or restricted chapters; nothing is sent when empty |
+| CopyManga image concurrency / quality | Concurrency 4–8 (default 4); uses `c1500x` high-res images and falls back to standard when needed |
+| Local data | Clears the current input, parse results, and caches; downloaded files are kept |
 
-- choose a download directory
-- add selected chapters to the queue
-- watch progress, failures, and logs in Download Manager
-
-## Configuration
-
-### Cookies
-
-Some sites or chapters require cookies to be accessed correctly. You can enter cookies directly in the app.
-
-Typical cases where cookies help:
-
-- the page opens in a browser, but the app cannot parse the content
-- the chapter opens in a browser, but the app returns `403`, `404`, or empty content when downloading
-
-### CopyManga download tuning
-
-- Chapter concurrency is fixed at 3.
-- Global image concurrency is configurable from 4 to 8 and defaults to 4.
-- Image requests retain 80–180 ms staggering and adaptive slowdown.
-- Image quality defaults to the `c1500x` high-resolution URL and falls back to the standard URL when needed.
-- Chapters are written to `.下载中-<chapter>` and published to the final folder only after integrity validation succeeds.
-
-### Proxy
-
-The app supports proxy configuration in the UI:
-
-- no proxy
-- HTTP
-- HTTPS
-- SOCKS5
-
-If your network is unstable when reaching the target site, proxy-based troubleshooting is often the first thing to try.
-
-## Common Operations
-
-### Clear cache
-
-The top bar includes a `Clear Cache` action. It clears:
-
-- the current URL in the input field
-- the current cover and manga metadata
-- parsed categories and chapters
-- parsing-related caches
-- mirror cooldown state
-
-This is useful after anti-bot triggers, mirror issues, or temporary page-structure errors.
-
-### Download Manager
-
-The download manager is mainly used to:
-
-- inspect queued, active, failed, and completed counts
-- pause all downloads
-- resume downloads
-- cancel all downloads
-- retry failed items
-- clear completed items
-- inspect failure reasons and current progress
-
-## Project Structure
-
-```text
-Sources/MangaGlass/
-  App/        App entry point, window setup, main state management
-  Models/     Site, manga, download, proxy, and related data models
-  Services/   Site parsing, download scheduling, DOM extraction
-  UI/         SwiftUI views
-  Utils/      Networking, JSON, session, and shared helpers
-  Resources/  Bundled app resources
-
-assets/
-  AppIcon.icns
-  logo.png
-  home.png
-
-scripts/
-  build_dmg.sh
-```
-
-Key files:
-
-- `Sources/MangaGlass/App/MainViewModel.swift`
-- `Sources/MangaGlass/Services/CopyMangaAPI.swift`
-- `Sources/MangaGlass/Services/DownloadCoordinator.swift`
-- `Sources/MangaGlass/UI/ContentView.swift`
-
-## Development
-
-### Common commands
-
-```bash
-# debug build
-swift build
-
-# run locally
-swift run MangaGlass
-
-# package app and dmg
-./scripts/build_dmg.sh
-```
-
-### Design direction
-
-- prioritize simplicity, stability, and maintainability
-- keep site-specific parsing logic inside the service layer as much as possible
-- keep download logic separate from UI logic
-- avoid over-polluting shared logic with one-off site-specific behavior
+Network requests follow your macOS system proxy settings.
 
 ## FAQ
 
-### 1. No chapters are parsed
+<details>
+<summary><b>No chapters show up</b></summary>
 
-Check the following first:
+Open the same link in a browser to confirm the page loads. For CopyManga, switch mirrors when prompted. If it still fails, clear local data in Settings and try again, or open the activity log (top right) to see the exact error.
+</details>
 
-- the site may have changed its layout
-- the current network may be rate-limited or blocked
-- cookies may be required
-- clearing the cache before retrying may help
+<details>
+<summary><b>The browser works, but the app gets 403 or empty content</b></summary>
 
-### 2. All downloads fail or many images return 404
+The site most likely expects a signed-in cookie. Copy the site's cookie from your browser's developer tools, paste it in Settings, and retry.
+</details>
 
-Common causes:
+<details>
+<summary><b>Downloads paused with a rate-limit notice</b></summary>
 
-- the image resources are no longer valid
-- the site or image host has entered a defensive mode
-- parsed image URLs are no longer usable
-- proxy quality or network stability is poor
+That's the protection kicking in: Manhuagui asks you to complete a check in the browser, and CopyManga cools down automatically. Follow the prompt and press Continue; finished chapters aren't downloaded again.
+</details>
 
-### 3. A site works in my browser but fails in the app
+<details>
+<summary><b>The Dock still shows the old icon</b></summary>
 
-This usually means:
+macOS caches app icons. Quit the app and open it again to refresh.
+</details>
 
-- your browser already has cookies, but the app does not
-- the site is more sensitive to headers, referer, or request frequency
-- the current machine or IP is limited by the target site
+## Development
 
-### 4. Should I use the `.app` or the `.dmg`?
+```bash
+swift build                     # debug build
+swift run MangaGlass            # run locally
+swift test                      # unit tests
+scripts/build_app.sh --install  # release build and install
+scripts/build_dmg.sh            # produce dist/MangaGlass.dmg
+```
 
-The build script generates both:
+UI snapshots: set `MANGAGLASS_SNAPSHOT_DIR` and run `swift test --filter LayoutSnapshots` to render every page in all three themes, light and dark, as PNGs. README screenshots come from `MANGAGLASS_README_DIR` with `--filter testRenderReadmeShowcase`.
 
-- `dist/MangaGlass.app`
-- `dist/MangaGlass.dmg`
+```text
+Sources/MangaGlass/
+├── App/        Entry point, window behavior, main state (MainViewModel), activity log
+├── Models/     Sites, series, download tasks
+├── Services/   Site parsing (CopyMangaAPI), download scheduling (DownloadCoordinator), integrity checks, queue persistence
+├── UI/         SwiftUI views, theme palettes, motion
+└── Utils/      Network session and JSON helpers
+scripts/
+├── build_app.sh     Build, and optionally install, the .app
+├── build_dmg.sh     Package a .dmg
+└── draw_logo.swift  Vector source of the logo; regenerates every icon size
+```
 
-They come from the same build. In most cases you can use the app bundle directly or install the version inside the DMG.
+Larger changes start with an execution plan in `docs/execplans/`, using the template in `.agent/PLANS.md`.
 
-## Known Boundaries
+## Disclaimer
 
-- Parsing depends on third-party site structures.
-- Target sites may change, rate-limit requests, or block access at any time.
-- Some chapters or image hosts are sensitive to referer, cookies, or request frequency.
-- This project does not guarantee long-term compatibility with every target site.
-
-## Usage Notice
-
-This project is intended for local learning, research, and personal use.
-
-Only access and download content that you are allowed to access. You are responsible for complying with the target site's rules, copyright requirements, and network restrictions.
+For personal learning and research only. Download only content you're allowed to access, and follow each site's terms and copyright rules.
