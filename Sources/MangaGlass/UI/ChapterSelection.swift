@@ -5,11 +5,20 @@ final class ChapterFrameStore: ObservableObject {
     var frames: [String: CGRect] = [:]
 }
 
-struct ChapterFrameKey: PreferenceKey {
-    static let defaultValue: [String: CGRect] = [:]
+/// Writes one cell's frame straight into the non-published store, so layout and scrolling
+/// never merge or republish the whole frame dictionary. Only rendered (lazy) cells keep an entry.
+struct ChapterFrameReporter: View {
+    let id: String
+    let store: ChapterFrameStore
 
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    var body: some View {
+        GeometryReader { proxy in
+            let frame = proxy.frame(in: .named("chapter-canvas"))
+            Color.clear
+                .onAppear { store.frames[id] = frame }
+                .onChange(of: frame) { store.frames[id] = $0 }
+                .onDisappear { store.frames[id] = nil }
+        }
     }
 }
 

@@ -6,6 +6,7 @@ struct WorkspaceSidebar: View {
     @Binding var destination: WorkspaceDestination
 
     var body: some View {
+        let queuedCount = downloader.countsSummary().queued
         VStack(spacing: 12) {
             BrandMarkView(size: 28)
                 .padding(.vertical, 12)
@@ -15,22 +16,25 @@ struct WorkspaceSidebar: View {
             }
             Spacer(minLength: 8)
             navigationButton(.settings)
-            Button { destination = .queue } label: {
-                VStack(spacing: 3) {
-                    Image(systemName: downloader.isRunning ? "arrow.down.circle.fill" : "tray")
-                    if downloader.isRunning {
-                        ProgressView(value: downloader.progress).frame(width: 28)
-                    } else if downloader.countsSummary().queued > 0 {
-                        Text("\(downloader.countsSummary().queued)").font(.system(size: 10)).monospacedDigit()
+            // Idle with nothing queued: the status button would only repeat the 队列 icon.
+            if downloader.isRunning || queuedCount > 0 {
+                Button { destination = .queue } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: downloader.isRunning ? "arrow.down.circle.fill" : "tray")
+                        if downloader.isRunning {
+                            ProgressView(value: downloader.progress).frame(width: 28)
+                        } else if queuedCount > 0 {
+                            Text("\(queuedCount)").font(.system(size: 10)).monospacedDigit()
+                        }
                     }
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
                 }
-                .frame(width: 40, height: 40)
-                .contentShape(Rectangle())
+                .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
+                .help(downloader.isRunning ? "正在下载 · \(downloader.speedText)" :
+                        (queuedCount > 0 ? "等待下载 \(queuedCount) 话" : "队列空闲"))
+                .accessibilityLabel("打开队列状态")
             }
-            .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
-            .help(downloader.isRunning ? "正在下载 · \(downloader.speedText)" :
-                    (downloader.countsSummary().queued > 0 ? "等待下载 \(downloader.countsSummary().queued) 话" : "队列空闲"))
-            .accessibilityLabel("打开队列状态")
         }
         .padding(.vertical, 8)
         .frame(width: 64)
@@ -75,16 +79,24 @@ struct BrandMarkView: View {
         }
     }
 
-    private var brandImage: NSImage? {
+    private var brandImage: NSImage? { Self.cachedBrandImage }
+
+    private static let cachedBrandImage: NSImage? = {
         guard let url = Bundle.module.url(forResource: "logo", withExtension: "png") else { return nil }
         return NSImage(contentsOf: url)
-    }
+    }()
 }
 
 struct ActivityLogSheet: View {
-    @ObservedObject var vm: MainViewModel
+    let vm: MainViewModel
+    @ObservedObject private var logs: ActivityLogStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+
+    init(vm: MainViewModel) {
+        self.vm = vm
+        self._logs = ObservedObject(wrappedValue: vm.logStore)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: MGSpacing.md) {
@@ -103,7 +115,7 @@ struct ActivityLogSheet: View {
             }
 
             HStack {
-                Toggle("只看错误", isOn: $vm.showOnlyErrorLogs)
+                Toggle("只看错误", isOn: $logs.showOnlyErrors)
                     .toggleStyle(.checkbox)
                     .font(MGFont.body)
                 Spacer()
@@ -115,12 +127,12 @@ struct ActivityLogSheet: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 5) {
-                    if vm.filteredLogLines.isEmpty {
+                    if logs.visibleEntries.isEmpty {
                         MGEmptyState(title: "暂无日志", systemImage: "doc.text", detail: "加载或下载后会显示实时记录。")
                             .frame(maxWidth: .infinity, minHeight: 220)
                     } else {
-                        ForEach(Array(vm.filteredLogLines.enumerated()), id: \.offset) { _, line in
-                            Text(line)
+                        ForEach(logs.visibleEntries) { entry in
+                            Text(entry.text)
                                 .font(MGFont.mono)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)

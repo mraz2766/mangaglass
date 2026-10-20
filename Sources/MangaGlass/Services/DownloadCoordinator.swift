@@ -191,7 +191,12 @@ final class DownloadCoordinator: ObservableObject {
         }
     }
 
-    @Published var taskItems: [DownloadTaskItem] = []
+    @Published var taskItems: [DownloadTaskItem] = [] {
+        didSet {
+            cachedCounts = nil
+            cachedProgressSummary = nil
+        }
+    }
     @Published var progress: Double = 0
     @Published var isRunning = false
     @Published var isPaused = false
@@ -224,8 +229,15 @@ final class DownloadCoordinator: ObservableObject {
     private var masterTask: Task<Void, Never>?
     private var logger: ((String) -> Void)?
     private var manhuaGuiPreferredHost: String?
-    private var chapterExpectedPages: [UUID: Int] = [:]
-    private var chapterCompletedPages: [UUID: Int] = [:]
+    private var chapterExpectedPages: [UUID: Int] = [:] {
+        didSet { cachedProgressSummary = nil }
+    }
+    private var chapterCompletedPages: [UUID: Int] = [:] {
+        didSet { cachedProgressSummary = nil }
+    }
+    /// Views read these on every progress tick; recompute only after the inputs change.
+    private var cachedCounts: (queued: Int, running: Int, failed: Int, done: Int)?
+    private var cachedProgressSummary: (completedPages: Int, totalPages: Int, completedTasks: Int, totalTasks: Int)?
     private var chapterResolvedPageCounts: Set<UUID> = []
     private var explicitlyCanceledItemIDs: Set<UUID> = []
     private var shouldUseGroupFolder = true
@@ -1827,7 +1839,8 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     func countsSummary() -> (queued: Int, running: Int, failed: Int, done: Int) {
-        taskItems.reduce(into: (queued: 0, running: 0, failed: 0, done: 0)) { partial, item in
+        if let cachedCounts { return cachedCounts }
+        let counts = taskItems.reduce(into: (queued: 0, running: 0, failed: 0, done: 0)) { partial, item in
             switch item.state {
             case .queued:
                 partial.queued += 1
@@ -1839,9 +1852,12 @@ final class DownloadCoordinator: ObservableObject {
                 partial.failed += 1
             }
         }
+        cachedCounts = counts
+        return counts
     }
 
     func progressSummary() -> (completedPages: Int, totalPages: Int, completedTasks: Int, totalTasks: Int) {
+        if let cachedProgressSummary { return cachedProgressSummary }
         let totalTasks = taskItems.count
         let completedTasks = taskItems.reduce(0) { partial, item in
             switch item.state {
@@ -1866,7 +1882,9 @@ final class DownloadCoordinator: ObservableObject {
                 return partial + done
             }
         }
-        return (completedPages, totalPages, completedTasks, totalTasks)
+        let summary = (completedPages: completedPages, totalPages: totalPages, completedTasks: completedTasks, totalTasks: totalTasks)
+        cachedProgressSummary = summary
+        return summary
     }
 
     func failureSummary() -> [(reason: String, count: Int)] {

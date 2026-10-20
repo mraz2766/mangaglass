@@ -215,11 +215,11 @@ struct DownloadWorkspaceView: View {
     private var coverImage: some View {
         Group {
             if let url = vm.comic?.coverURL, !CopyMangaMirror.isRetired(url.host) {
-                AsyncImage(url: url) { phase in
+                CachedCoverImage(url: url) { phase in
                     switch phase {
-                    case .success(let image): image.resizable().scaledToFit()
-                    case .empty: ZStack { coverPlaceholder; ProgressView().controlSize(.small) }
-                    default: coverPlaceholder
+                    case .success(let image): Image(nsImage: image).resizable().scaledToFit()
+                    case .loading: ZStack { coverPlaceholder; ProgressView().controlSize(.small) }
+                    case .failure: coverPlaceholder
                     }
                 }
             } else { coverPlaceholder }
@@ -270,23 +270,17 @@ struct DownloadWorkspaceView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
-                        ForEach(vm.filteredVolumeSections.filter { !$0.chapters.isEmpty }) { section in
-                            Section {
-                                if !vm.collapsedVolumeIDs.contains(section.id) {
-                                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 8)], spacing: 8) {
-                                        ForEach(section.chapters) { chapter in chapterCell(chapter) }
-                                    }
-                                    .padding(.horizontal, 2)
-                                    .contentShape(Rectangle())
-                                    .gesture(chapterDragGesture)
-                                }
-                            } header: { sectionHeader(section) }
-                        }
-                    }.padding(.bottom, 4)
+                    ChapterGridContent(
+                        vm: vm,
+                        sections: vm.filteredVolumeSections.filter { !$0.chapters.isEmpty },
+                        selectedChapterIDs: vm.selectedChapterIDs,
+                        collapsedVolumeIDs: vm.collapsedVolumeIDs,
+                        frameStore: chapterFrameStore,
+                        dragGesture: chapterDragGesture
+                    )
+                    .equatable()
                 }
                 .coordinateSpace(name: "chapter-canvas")
-                .onPreferenceChange(ChapterFrameKey.self) { chapterFrameStore.frames = $0 }
                 .overlay(DragRectOverlay(rect: dragRect))
             }
             selectionBar
@@ -366,57 +360,6 @@ struct DownloadWorkspaceView: View {
             }.frame(height: min(260, CGFloat(max(1, vm.displayVolumes.count)) * 36))
             Text("仅影响显示，已选章节会保留。").font(MGFont.caption).foregroundStyle(.secondary)
         }.padding(16).frame(width: 280)
-    }
-
-    private func sectionHeader(_ section: MainViewModel.FilteredVolumeSection) -> some View {
-        let selectedCount = section.chapters.reduce(into: 0) { count, chapter in
-            if vm.selectedChapterIDs.contains(chapter.id) { count += 1 }
-        }
-        let selectionState: MGSelectionState = selectedCount == section.chapterCount && section.chapterCount > 0
-            ? .all
-            : (selectedCount > 0 ? .partial : .none)
-        return HStack(spacing: 6) {
-            Button {
-                if vm.collapsedVolumeIDs.contains(section.id) {
-                    vm.collapsedVolumeIDs.remove(section.id)
-                } else {
-                    vm.collapsedVolumeIDs.insert(section.id)
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .rotationEffect(.degrees(vm.collapsedVolumeIDs.contains(section.id) ? 0 : 90))
-                        .animation(reduceMotion ? nil : MGMotion.fast, value: vm.collapsedVolumeIDs.contains(section.id))
-                    Text(section.volumeName).font(MGFont.section).lineLimit(1)
-                    Text("已选 \(selectedCount) / \(section.chapterCount)")
-                        .font(MGFont.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-                .mgHoverBackground(radius: 5)
-                .accessibilityLabel("\(vm.collapsedVolumeIDs.contains(section.id) ? "展开" : "折叠")\(section.volumeName)")
-            MGGroupSelectionButton(title: section.volumeName,
-                                   state: selectionState) {
-                vm.toggleVolumeChapterSelection(volumeID: section.id)
-            }
-        }.padding(.horizontal, 2).frame(height: 32).background(MGTheme.background(for: colorScheme))
-    }
-
-    private func chapterCell(_ chapter: ComicChapter) -> some View {
-        let selected = vm.selectedChapterIDs.contains(chapter.id)
-        return MGChapterSelectionCell(title: chapter.displayName, selected: selected) {
-            vm.selectChapter(chapter, modifiers: NSEvent.modifierFlags)
-        }
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(key: ChapterFrameKey.self, value: [chapter.id: proxy.frame(in: .named("chapter-canvas"))])
-            }
-        }
-        .help(chapter.displayName).accessibilityValue(selected ? "已选择" : "未选择")
     }
 
     private var selectionBar: some View {
@@ -616,5 +559,91 @@ struct DownloadWorkspaceView: View {
         return Set(ids[min(start, end)...max(start, end)])
     }
 
+
+}
+
+/// The chapter grid only depends on these inputs; `Equatable` lets SwiftUI skip re-evaluating
+/// every cell when unrelated model state (link text, parse status, logs) changes.
+private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurrency Equatable {
+    let vm: MainViewModel
+    let sections: [MainViewModel.FilteredVolumeSection]
+    let selectedChapterIDs: Set<String>
+    let collapsedVolumeIDs: Set<String>
+    let frameStore: ChapterFrameStore
+    let dragGesture: DragGestureType
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.sections == rhs.sections
+            && lhs.selectedChapterIDs == rhs.selectedChapterIDs
+            && lhs.collapsedVolumeIDs == rhs.collapsedVolumeIDs
+    }
+
+    var body: some View {
+        LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+            ForEach(sections) { section in
+                Section {
+                    if !collapsedVolumeIDs.contains(section.id) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 8)], spacing: 8) {
+                            ForEach(section.chapters) { chapter in chapterCell(chapter) }
+                        }
+                        .padding(.horizontal, 2)
+                        .contentShape(Rectangle())
+                        .gesture(dragGesture)
+                    }
+                } header: { sectionHeader(section) }
+            }
+        }.padding(.bottom, 4)
+    }
+
+    private func sectionHeader(_ section: MainViewModel.FilteredVolumeSection) -> some View {
+        let selectedCount = section.chapters.reduce(into: 0) { count, chapter in
+            if selectedChapterIDs.contains(chapter.id) { count += 1 }
+        }
+        let selectionState: MGSelectionState = selectedCount == section.chapterCount && section.chapterCount > 0
+            ? .all
+            : (selectedCount > 0 ? .partial : .none)
+        return HStack(spacing: 6) {
+            Button {
+                if collapsedVolumeIDs.contains(section.id) {
+                    vm.collapsedVolumeIDs.remove(section.id)
+                } else {
+                    vm.collapsedVolumeIDs.insert(section.id)
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .rotationEffect(.degrees(collapsedVolumeIDs.contains(section.id) ? 0 : 90))
+                        .animation(reduceMotion ? nil : MGMotion.fast, value: collapsedVolumeIDs.contains(section.id))
+                    Text(section.volumeName).font(MGFont.section).lineLimit(1)
+                    Text("已选 \(selectedCount) / \(section.chapterCount)")
+                        .font(MGFont.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+                .mgHoverBackground(radius: 5)
+                .accessibilityLabel("\(collapsedVolumeIDs.contains(section.id) ? "展开" : "折叠")\(section.volumeName)")
+            MGGroupSelectionButton(title: section.volumeName,
+                                   state: selectionState) {
+                vm.toggleVolumeChapterSelection(volumeID: section.id)
+            }
+        }.padding(.horizontal, 2).frame(height: 32).background(MGTheme.background(for: colorScheme))
+    }
+
+    private func chapterCell(_ chapter: ComicChapter) -> some View {
+        let selected = selectedChapterIDs.contains(chapter.id)
+        return MGChapterSelectionCell(title: chapter.displayName, selected: selected) {
+            vm.selectChapter(chapter, modifiers: NSEvent.modifierFlags)
+        }
+        .background {
+            ChapterFrameReporter(id: chapter.id, store: frameStore)
+        }
+        .help(chapter.displayName).accessibilityValue(selected ? "已选择" : "未选择")
+    }
 
 }

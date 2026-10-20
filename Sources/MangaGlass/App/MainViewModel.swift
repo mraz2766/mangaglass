@@ -55,7 +55,7 @@ private enum StorageKey {
 
 @MainActor
 final class MainViewModel: ObservableObject {
-    struct FilteredVolumeSection: Identifiable {
+    struct FilteredVolumeSection: Identifiable, Equatable {
         let id: String
         let volumeName: String
         let chapters: [ComicChapter]
@@ -142,12 +142,11 @@ final class MainViewModel: ObservableObject {
     @Published var statusText = "输入漫画链接后点击加载。"
     @Published var isLoading = false
     @Published var errorText = ""
-    @Published var logLines: [String] = []
+    let logStore = ActivityLogStore()
     @Published var showParseDone = false
     @Published var parseDoneText = ""
     @Published var parseLiveText = ""
     @Published var recentRecords: [RecentComicRecord] = []
-    @Published var showOnlyErrorLogs = false
     @Published var lastMirrorSuggestion: CopyMangaMirror?
     @Published var lastFailedInput: String = ""
     @Published var shouldOfferRestoredQueuePrompt = false
@@ -263,14 +262,12 @@ final class MainViewModel: ObservableObject {
         filteredVolumeSections.contains { !$0.chapters.isEmpty }
     }
 
+    var logLines: [String] {
+        logStore.entries.map(\.text)
+    }
+
     var filteredLogLines: [String] {
-        if !showOnlyErrorLogs {
-            return logLines
-        }
-        return logLines.filter { line in
-            let lowered = line.lowercased()
-            return lowered.contains("失败") || lowered.contains("错误") || lowered.contains("error") || lowered.contains("http 4") || lowered.contains("http 5")
-        }
+        logStore.visibleEntries.map(\.text)
     }
 
     var preferredColorScheme: ColorScheme? {
@@ -832,7 +829,7 @@ final class MainViewModel: ObservableObject {
     }
 
     func clearLogs() {
-        logLines = []
+        logStore.clear()
     }
 
     func copyCurrentError() {
@@ -1114,13 +1111,7 @@ final class MainViewModel: ObservableObject {
     }
 
     private func appendLog(_ message: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        let line = "[\(formatter.string(from: Date()))] \(message)"
-        logLines.append(line)
-        if logLines.count > 400 {
-            logLines.removeFirst(logLines.count - 400)
-        }
+        logStore.append(message)
         refreshParseLiveProgress(from: message)
     }
 

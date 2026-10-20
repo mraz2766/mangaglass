@@ -106,8 +106,12 @@ struct HistoryWorkspaceView: View {
         .mgHoverBackground(radius: 0)
     }
 
+    private static let relativeFormatter = RelativeDateTimeFormatter()
+
     private func relativeTime(_ date: Date) -> String {
-        RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+        let now = Date()
+        // Records saved this instant would read "0 秒钟后"; never show a future time.
+        return Self.relativeFormatter.localizedString(for: min(date, now), relativeTo: now)
     }
 
     private func absoluteTime(_ date: Date) -> String {
@@ -143,7 +147,7 @@ struct SettingsWorkspaceView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(width: 240)
+                    .fixedSize()
                 }
 
                 settingsSection("关闭窗口时", detail: vm.windowCloseBehavior.detail + " Command-Q 或菜单“退出”仍会询问并完全退出应用。") {
@@ -154,7 +158,7 @@ struct SettingsWorkspaceView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(maxWidth: 320)
+                    .fixedSize()
                 }
 
                 settingsSection("下载目录", detail: vm.destinationFolder.path) {
@@ -202,7 +206,7 @@ struct SettingsWorkspaceView: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.segmented)
-                        .frame(width: 240)
+                        .fixedSize()
                     }
                     adaptiveSettingRow("Copy 图片质量") {
                         Picker("Copy 图片质量", selection: $vm.copyImageQuality) {
@@ -212,23 +216,16 @@ struct SettingsWorkspaceView: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.segmented)
-                        .frame(width: 240)
+                        .fixedSize()
                     }
                 }
 
                 settingsSection("站点入口", detail: "在默认浏览器中打开支持站点。") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: MGSpacing.xs)], alignment: .leading, spacing: MGSpacing.xs) {
-                        ForEach(CopyMangaMirror.allCases) { mirror in
-                            Button(mirror.displayName) {
-                                openInBrowser(mirror.webBaseURL.absoluteString)
-                            }
-                            .buttonStyle(MGActionButtonStyle(variant: .secondary))
-                            .help(mirror.webBaseURL.host ?? mirror.displayName)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: MGSpacing.xs) { siteButtons }
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 88, maximum: 120), spacing: MGSpacing.xs)], alignment: .leading, spacing: MGSpacing.xs) {
+                            siteButtons
                         }
-                        Button("漫画柜") { openInBrowser("https://www.manhuagui.com") }
-                            .buttonStyle(MGActionButtonStyle(variant: .secondary))
-                        Button("包子漫画") { openInBrowser("https://www.baozimh.com") }
-                            .buttonStyle(MGActionButtonStyle(variant: .secondary))
                     }
                 }
 
@@ -267,7 +264,8 @@ struct SettingsWorkspaceView: View {
                 : AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
             layout {
                 Text(title).font(MGFont.section)
-                    .frame(width: formWidth >= 600 ? 104 : nil, alignment: .leading)
+                    .lineLimit(1)
+                    .frame(width: formWidth >= 600 ? 112 : nil, alignment: .leading)
                     .padding(.top, 5)
                 VStack(alignment: .leading, spacing: 10) {
                     content()
@@ -295,6 +293,20 @@ struct SettingsWorkspaceView: View {
                 .frame(width: formWidth >= 600 ? 112 : nil, alignment: .leading)
             control()
         }
+    }
+
+    @ViewBuilder private var siteButtons: some View {
+        ForEach(CopyMangaMirror.allCases) { mirror in
+            Button(mirror.displayName) {
+                openInBrowser(mirror.webBaseURL.absoluteString)
+            }
+            .buttonStyle(MGActionButtonStyle(variant: .secondary))
+            .help(mirror.webBaseURL.host ?? mirror.displayName)
+        }
+        Button("漫画柜") { openInBrowser("https://www.manhuagui.com") }
+            .buttonStyle(MGActionButtonStyle(variant: .secondary))
+        Button("包子漫画") { openInBrowser("https://www.baozimh.com") }
+            .buttonStyle(MGActionButtonStyle(variant: .secondary))
     }
 
     private func openInBrowser(_ rawURL: String) {
