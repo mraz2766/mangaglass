@@ -98,6 +98,11 @@ final class LayoutSnapshots: XCTestCase {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         defer { MGTheme.style = .ink }
 
+        // A generated, colorful stand-in cover (no real artwork) so banners show a real blurred backdrop.
+        let coverURL = output.appendingPathComponent("sample-cover.png")
+        try Self.sampleCover().write(to: coverURL)
+        _ = await CoverImageCache.shared.image(for: coverURL)
+
         func sample() -> MainViewModel {
             let groups = [("话", 96), ("单行本", 12), ("番外", 6)]
             let volumes = groups.enumerated().map { offset, group in
@@ -107,12 +112,12 @@ final class LayoutSnapshots: XCTestCase {
                                  order: Double(index), volumeID: "v\(offset)", volumeName: group.0)
                 })
             }
-            let comic = ComicInfo(slug: "sample", name: "示例漫画：星海旅人", coverURL: nil, volumes: volumes,
+            let comic = ComicInfo(slug: "sample", name: "示例漫画：星海旅人", coverURL: coverURL, volumes: volumes,
                                   site: .mangaCopy, apiPathPrefix: "", apiBaseURL: MangaSiteConfig.mangaCopy.apiBaseURLs[0])
             let vm = MainViewModel(persistsState: false)
             vm.applyFetchedComic(comic, final: true, sourceText: "示例")
             vm.recentRecords = [
-                RecentComicRecord(title: "示例漫画：星海旅人", input: "https://www.mangacopy.com/comic/sample", siteName: "拷贝漫画"),
+                RecentComicRecord(title: "示例漫画：星海旅人", input: "https://www.mangacopy.com/comic/sample", siteName: "拷贝漫画", coverURL: coverURL),
                 RecentComicRecord(title: "山间小店", input: "https://www.manhuagui.com/comic/1/", siteName: "漫画柜", updatedAt: Date().addingTimeInterval(-7200)),
                 RecentComicRecord(title: "午夜列车", input: "https://www.baozimh.com/comic/sample", siteName: "包子漫画", updatedAt: Date().addingTimeInterval(-90000)),
             ]
@@ -147,6 +152,22 @@ final class LayoutSnapshots: XCTestCase {
         empty.recentRecords = sample().recentRecords
         try await render(ContentView(vm: empty).environment(\.colorScheme, .dark),
                          size: NSSize(width: 1200, height: 760), name: "readme-start-ink-dark", output: output, dark: true)
+    }
+
+    private static func sampleCover() -> Data {
+        let width = 600, height = 840
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let colors = [CGColor(red: 0.10, green: 0.16, blue: 0.36, alpha: 1), CGColor(red: 0.20, green: 0.55, blue: 0.62, alpha: 1),
+                      CGColor(red: 0.95, green: 0.62, blue: 0.38, alpha: 1)] as CFArray
+        let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.55, 1])!
+        context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: width, y: height), options: [])
+        context.setFillColor(CGColor(red: 1, green: 0.92, blue: 0.75, alpha: 0.9))
+        context.fillEllipse(in: CGRect(x: 360, y: 560, width: 150, height: 150))
+        context.setFillColor(CGColor(red: 0.05, green: 0.07, blue: 0.15, alpha: 0.85))
+        context.fill(CGRect(x: 60, y: 80, width: 480, height: 120))
+        let rep = NSBitmapImageRep(cgImage: context.makeImage()!)
+        return rep.representation(using: .png, properties: [:])!
     }
 
     private func render<V: View>(_ view: V, size: NSSize, name: String, output: URL, dark: Bool) async throws {

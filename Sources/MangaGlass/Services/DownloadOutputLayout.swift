@@ -28,6 +28,25 @@ enum DownloadOutputLayout {
         return parent.appendingPathComponent(sanitize(chapter.displayName), isDirectory: true)
     }
 
+    /// Chapters whose final folder already exists in either layout (with or without a group folder).
+    /// Read-only; staging folders (`.下载中-…`) don't count.
+    static func downloadedChapterIDs(comic: ComicInfo, destination: URL, manager: FileManager = .default) -> Set<String> {
+        var ids: Set<String> = []
+        for volume in comic.volumes {
+            for chapter in volume.chapters {
+                for grouped in [true, false] {
+                    let folder = chapterFolder(comic: comic, chapter: chapter, destination: destination, usesGroupFolder: grouped)
+                    var isDirectory: ObjCBool = false
+                    if manager.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                        ids.insert(chapter.id)
+                        break
+                    }
+                }
+            }
+        }
+        return ids
+    }
+
     static func stagingChapterFolder(for chapterFolder: URL) -> URL {
         chapterFolder.deletingLastPathComponent().appendingPathComponent(
             ".下载中-\(chapterFolder.lastPathComponent)",

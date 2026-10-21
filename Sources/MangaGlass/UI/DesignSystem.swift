@@ -325,8 +325,7 @@ struct MGSearchField: View {
         fieldContent
             .background {
                 if quiet {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(MGTheme.quietSurface(for: colorScheme))
+                    Capsule().fill(MGTheme.quietSurface(for: colorScheme))
                 }
             }
             .modifier(MGSearchFieldFrame(quiet: quiet, focused: focused))
@@ -365,7 +364,7 @@ struct MGSearchField: View {
             }
         }
         .font(MGFont.body)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 12)
         .frame(height: 30)
     }
 
@@ -485,7 +484,7 @@ private struct MGSearchFieldFrame: ViewModifier {
     func body(content: Content) -> some View {
         if quiet {
             content.overlay {
-                RoundedRectangle(cornerRadius: 6).stroke(focused ? MGTheme.accent : MGTheme.palette.fieldStroke, lineWidth: focused ? 2 : 0.5)
+                Capsule().stroke(focused ? MGTheme.accent : MGTheme.palette.fieldStroke, lineWidth: focused ? 2 : 0.5)
             }
         } else {
             content.mgInset(radius: 6)
@@ -564,9 +563,10 @@ private struct MGQuietTextFieldModifier: ViewModifier {
             .font(MGFont.body)
             .padding(.horizontal, 10)
             .frame(minHeight: 32)
-            .background(MGTheme.quietSurface(for: colorScheme), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .padding(.horizontal, 4)
+            .background(MGTheme.quietSurface(for: colorScheme), in: Capsule())
             .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(MGTheme.palette.fieldStroke, lineWidth: 0.5)
+                Capsule().stroke(MGTheme.palette.fieldStroke, lineWidth: 0.5)
             }
     }
 }

@@ -246,6 +246,20 @@ final class MainViewModel: ObservableObject {
         max(0, selectedChapterIDs.count - selectedVisibleChapterCount)
     }
 
+    /// Adds the newest `count` chapters of the main visible group (the one with the most chapters)
+    /// to the selection, so 卷 and 话 numbering never mix.
+    func selectLatest(_ count: Int) {
+        guard let main = filteredVolumeSections.max(by: { $0.chapters.count < $1.chapters.count }) else { return }
+        let latest = main.chapters.sorted { $0.order > $1.order }.prefix(count)
+        selectedChapterIDs.formUnion(latest.map(\.id))
+    }
+
+    /// Newest chapter title of the main group, for the banner.
+    var latestChapterTitle: String? {
+        displayVolumes.max(by: { $0.chapters.count < $1.chapters.count })?
+            .chapters.max(by: { $0.order < $1.order })?.displayName
+    }
+
     func clearChapterSelection() {
         selectedChapterIDs.removeAll()
         lastSelectedChapterID = nil

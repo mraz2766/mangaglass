@@ -35,6 +35,8 @@ struct DownloadWorkspaceView: View {
     @Namespace private var heroSpace
     @State private var enqueueButtonCenter: CGPoint = .zero
     @Environment(\.mgFlyToQueue) private var flyToQueue
+    /// Chapters whose folder already exists in the download directory (green dot on tiles).
+    @State private var downloadedChapterIDs: Set<String> = []
 
     private var isEmptyHome: Bool {
         vm.comic == nil && !vm.isLoading && vm.errorText.isEmpty
@@ -50,9 +52,12 @@ struct DownloadWorkspaceView: View {
                 emptyHome
                     .transition(.opacity)
             } else {
-                VStack(spacing: 16) {
+                VStack(spacing: 14) {
                     homeToolbar
                     comicHeader
+                    if vm.comic != nil {
+                        filterRow
+                    }
                     chapterWorkspace
                 }
                 .transition(.opacity)
@@ -78,6 +83,10 @@ struct DownloadWorkspaceView: View {
             }
             .padding(20)
             .frame(minWidth: 360, idealWidth: 520, maxWidth: 700, minHeight: 400, idealHeight: 620, maxHeight: 800)
+        }
+        .task(id: downloadScanKey) { await refreshDownloadedChapters() }
+        .onReceive(vm.downloader.$lastCompletedOutputURL) { _ in
+            Task { await refreshDownloadedChapters() }
         }
         .onChange(of: vm.comic?.slug) { slug in
             vm.collapsedVolumeIDs.removeAll()
@@ -134,9 +143,9 @@ struct DownloadWorkspaceView: View {
                             Button { vm.applyRecentRecord(record) } label: {
                                 VStack(spacing: 6) {
                                     MGBookCover(url: record.coverURL, title: record.title)
-                                        .frame(width: 72, height: 100)
+                                        .frame(width: 96, height: 132)
                                         .mgHoverLift()
-                                    Text(record.title).font(MGFont.caption).lineLimit(1).frame(width: 80)
+                                    Text(record.title).font(MGFont.captionStrong).lineLimit(1).frame(width: 104)
                                 }
                             }
                             .buttonStyle(.plain)
@@ -184,13 +193,14 @@ struct DownloadWorkspaceView: View {
                 }
                 .buttonStyle(MGActionButtonStyle(variant: .ghost, iconOnly: true))
                 .disabled(!vm.hasHomeContent)
+                .opacity(vm.hasHomeContent ? 1 : 0)
                 .help("清除链接、封面、卷与章节及解析状态")
                 .accessibilityLabel("清除首页搜索数据和状态")
             }
             .font(large ? .system(size: 15) : MGFont.body)
             .mgQuietTextField()
             .frame(height: large ? 44 : 32)
-            .overlay { RoundedRectangle(cornerRadius: 6).stroke(linkFocused ? MGTheme.accent : .clear, lineWidth: 2) }
+            .overlay { Capsule().stroke(linkFocused ? MGTheme.accent : .clear, lineWidth: 2) }
             .matchedGeometryEffect(id: "link-field", in: heroSpace)
             .background {
                 Button(action: undoLinkInput) { Color.clear.frame(width: 1, height: 1) }
@@ -205,7 +215,7 @@ struct DownloadWorkspaceView: View {
                     if vm.isLoading { ProgressView().controlSize(.small) }
                 }.frame(width: large ? 44 : 28, height: large ? 30 : nil)
             }
-            .buttonStyle(MGActionButtonStyle(variant: MGTheme.style == .classic ? .primary : .emphasis))
+            .buttonStyle(MGActionButtonStyle(variant: MGTheme.style == .classic ? .primary : .emphasis, capsule: true))
             .disabled(vm.isLoading || vm.inputURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityLabel(vm.isLoading ? "正在解析" : "解析")
             .matchedGeometryEffect(id: "link-button", in: heroSpace)
@@ -237,64 +247,115 @@ struct DownloadWorkspaceView: View {
     }
 
     /// Cover, title, meta and category chips in one band above the grid.
+    /// Banner: blurred cover backdrop, big cover, title, stats and the two quick actions.
     private var comicHeader: some View {
-        HStack(alignment: .top, spacing: 18) {
-            Button { showCover = true } label: {
-                Group {
+        MGHeroBanner(coverURL: vm.comic?.coverURL) {
+            HStack(alignment: .bottom, spacing: 20) {
+                Button { showCover = true } label: {
                     if vm.isLoading && vm.comic == nil {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous).fill(MGTheme.palette.cell)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 112, height: 155)
                     } else {
-                        coverImage
+                        MGHeroCover(url: vm.comic?.coverURL, title: vm.comic?.name ?? "?")
                     }
                 }
-                .frame(width: 92, height: 128)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).disabled(vm.comic?.coverURL == nil)
-            .help("查看大图").accessibilityLabel("查看漫画封面大图")
+                .buttonStyle(.plain)
+                .disabled(vm.comic?.coverURL == nil)
+                .help("查看大图")
+                .accessibilityLabel("查看漫画封面大图")
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(headerTitle)
-                    .font(.system(size: 22, weight: .semibold))
-                    .lineLimit(2)
-                    .textSelection(.enabled)
-                HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     if let comic = vm.comic {
-                        Text("\(comic.site.displayName) · \(vm.totalChapterCount) 话")
-                            .font(MGFont.caption).foregroundStyle(.secondary)
+                        Text(comic.site.displayName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .opacity(0.75)
                     }
-                    Button { vm.chooseDestination() } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "folder")
-                            Text("下载到 \(vm.destinationFolder.lastPathComponent)").lineLimit(1).truncationMode(.middle)
-                            Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
-                        }
-                        .font(MGFont.caption)
-                        .foregroundStyle(.secondary)
-                        .contentShape(Rectangle())
+                    Text(headerTitle)
+                        .font(.system(size: 28, weight: .bold))
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                    if vm.comic != nil {
+                        bannerStats
                     }
-                    .buttonStyle(.plain)
-                    .help(vm.destinationFolder.path)
+                    parseStatus
                 }
-                parseStatus
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 if vm.comic != nil {
-                    HStack(spacing: 10) {
-                        if vm.displayVolumes.count > 1 {
-                            categoryChips
+                    VStack(alignment: .trailing, spacing: 10) {
+                        Button { vm.chooseDestination() } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "folder")
+                                Text(vm.destinationFolder.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+                            }
+                            .font(.system(size: 12))
+                            .opacity(0.8)
+                            .contentShape(Rectangle())
                         }
-                        Spacer(minLength: 8)
-                        MGSearchField(title: "搜索章节", text: $vm.chapterSearchQuery, quiet: true)
-                            .frame(minWidth: 120, maxWidth: 220)
-                        sortPicker
+                        .buttonStyle(.plain)
+                        .help("下载到 \(vm.destinationFolder.path)，点按更改")
+                        HStack(spacing: 8) {
+                            Button("选最新 10 话") { vm.selectLatest(10) }
+                                .buttonStyle(MGBannerButtonStyle(kind: .secondary))
+                                .help("把最新的 10 话加入选择")
+                            Button("下载全部可见") {
+                                vm.selectAllVisible()
+                                enqueueSelection()
+                            }
+                            .buttonStyle(MGBannerButtonStyle(kind: .primary))
+                            .disabled(vm.visibleChapterCount == 0 || vm.isLoading || isCheckingExistingFiles)
+                            .help("选中当前分类下的全部章节并加入下载队列")
+                        }
                     }
-                    .padding(.top, 2)
+                    .fixedSize()
                 }
             }
-            Spacer(minLength: 0)
         }
-        .frame(minHeight: 128, alignment: .top)
+    }
+
+    private var bannerStats: some View {
+        HStack(spacing: 6) {
+            ForEach(vm.displayVolumes.prefix(3)) { volume in
+                MGBannerStat(value: "\(volume.chapters.count)", label: volume.displayName)
+            }
+            if let latest = vm.latestChapterTitle {
+                MGBannerStat(value: latest, label: "最新")
+            }
+            if !downloadedChapterIDs.isEmpty {
+                MGBannerStat(value: "\(downloadedChapterIDs.count)", label: "已下载")
+            }
+        }
+        .lineLimit(1)
+    }
+
+    /// Categories on the left, search and sort on the right, below the banner.
+    private var filterRow: some View {
+        HStack(spacing: 10) {
+            categoryChips
+            Spacer(minLength: 8)
+            MGSearchField(title: "搜索章节", text: $vm.chapterSearchQuery, quiet: true)
+                .frame(minWidth: 120, maxWidth: 220)
+            sortPicker
+        }
+    }
+
+    private var downloadScanKey: String {
+        "\(vm.comic?.slug ?? "-")|\(vm.comic?.volumes.count ?? 0)|\(vm.destinationFolder.path)"
+    }
+
+    private func refreshDownloadedChapters() async {
+        guard let comic = vm.comic else {
+            downloadedChapterIDs = []
+            return
+        }
+        let destination = vm.destinationFolder
+        let ids = await Task.detached(priority: .utility) {
+            DownloadOutputLayout.downloadedChapterIDs(comic: comic, destination: destination)
+        }.value
+        guard vm.comic?.slug == comic.slug else { return }
+        withAnimation(reduceMotion ? nil : MGMotion.regular) { downloadedChapterIDs = ids }
     }
 
     private var headerTitle: String {
@@ -392,6 +453,7 @@ struct DownloadWorkspaceView: View {
                         sections: vm.filteredVolumeSections.filter { !$0.chapters.isEmpty },
                         selectedChapterIDs: vm.selectedChapterIDs,
                         collapsedVolumeIDs: vm.collapsedVolumeIDs,
+                        downloadedChapterIDs: downloadedChapterIDs,
                         frameStore: chapterFrameStore,
                         dragGesture: chapterDragGesture
                     )
@@ -671,6 +733,7 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
     let sections: [MainViewModel.FilteredVolumeSection]
     let selectedChapterIDs: Set<String>
     let collapsedVolumeIDs: Set<String>
+    let downloadedChapterIDs: Set<String>
     let frameStore: ChapterFrameStore
     let dragGesture: DragGestureType
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -680,14 +743,15 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
         lhs.sections == rhs.sections
             && lhs.selectedChapterIDs == rhs.selectedChapterIDs
             && lhs.collapsedVolumeIDs == rhs.collapsedVolumeIDs
+            && lhs.downloadedChapterIDs == rhs.downloadedChapterIDs
     }
 
     var body: some View {
-        LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+        LazyVStack(spacing: 6, pinnedViews: [.sectionHeaders]) {
             ForEach(Array(sections.enumerated()), id: \.element.id) { sectionIndex, section in
                 Section {
                     if !collapsedVolumeIDs.contains(section.id) {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], spacing: 8) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 8)], spacing: 8) {
                             ForEach(Array(section.chapters.enumerated()), id: \.element.id) { index, chapter in
                                 chapterCell(chapter)
                                     .mgStaggerAppear(index: sectionIndex * 12 + index)
@@ -695,6 +759,7 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
                         }
                         .transition(.opacity.combined(with: .move(edge: .top)))
                         .padding(.horizontal, 2)
+                        .padding(.bottom, 12)
                         .contentShape(Rectangle())
                         .gesture(dragGesture)
                     }
@@ -703,43 +768,59 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
         }.padding(.bottom, 4)
     }
 
+    /// Group header: large label, selection count, and a text action — no gray bar.
     private func sectionHeader(_ section: MainViewModel.FilteredVolumeSection) -> some View {
         let selectedCount = section.chapters.reduce(into: 0) { count, chapter in
             if selectedChapterIDs.contains(chapter.id) { count += 1 }
         }
-        let selectionState: MGSelectionState = selectedCount == section.chapterCount && section.chapterCount > 0
-            ? .all
-            : (selectedCount > 0 ? .partial : .none)
-        return HStack(spacing: 6) {
+        let allSelected = selectedCount == section.chapterCount && section.chapterCount > 0
+        let collapsed = collapsedVolumeIDs.contains(section.id)
+        let downloaded = section.chapters.reduce(into: 0) { count, chapter in
+            if downloadedChapterIDs.contains(chapter.id) { count += 1 }
+        }
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
             Button {
-                if collapsedVolumeIDs.contains(section.id) {
+                if collapsed {
                     vm.collapsedVolumeIDs.remove(section.id)
                 } else {
                     vm.collapsedVolumeIDs.insert(section.id)
                 }
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .rotationEffect(.degrees(collapsedVolumeIDs.contains(section.id) ? 0 : 90))
-                        .animation(reduceMotion ? nil : MGMotion.fast, value: collapsedVolumeIDs.contains(section.id))
-                    Text(section.volumeName).font(MGFont.section).lineLimit(1)
-                    Text("已选 \(selectedCount) / \(section.chapterCount)")
-                        .font(MGFont.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
-                    Spacer(minLength: 0)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(section.volumeName).font(.system(size: 17, weight: .bold))
+                    Text("\(section.chapterCount) 话").font(MGFont.caption).foregroundStyle(.secondary)
+                    if downloaded > 0 {
+                        Text("· 已下载 \(downloaded)").font(MGFont.caption).foregroundStyle(MGTheme.success)
+                    }
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(collapsed ? -90 : 0))
+                        .animation(reduceMotion ? nil : MGMotion.fast, value: collapsed)
                 }
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-                .mgHoverBackground(radius: 5)
-                .accessibilityLabel("\(collapsedVolumeIDs.contains(section.id) ? "展开" : "折叠")\(section.volumeName)")
-            MGGroupSelectionButton(title: section.volumeName,
-                                   state: selectionState) {
+            .accessibilityLabel("\(collapsed ? "展开" : "折叠")\(section.volumeName)")
+            Spacer(minLength: 8)
+            if selectedCount > 0 {
+                Text("已选 \(selectedCount)")
+                    .font(MGFont.captionStrong)
+                    .monospacedDigit()
+                    .foregroundStyle(MGTheme.accent)
+                    .contentTransition(.numericText())
+            }
+            Button(allSelected ? "取消全选" : "全选本组") {
                 vm.toggleVolumeChapterSelection(volumeID: section.id)
             }
+            .buttonStyle(.plain)
+            .font(MGFont.captionStrong)
+            .foregroundStyle(MGTheme.accent)
+            .accessibilityLabel("\(section.volumeName)：\(allSelected ? "取消全选" : "全选本组")")
         }
-        .padding(.horizontal, 2).frame(height: 34)
+        .padding(.horizontal, 4)
+        .padding(.top, 8)
+        .frame(height: 40, alignment: .bottom)
         .background {
             if MGTheme.palette.glass {
                 Rectangle().fill(.regularMaterial)
@@ -751,13 +832,12 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
 
     private func chapterCell(_ chapter: ComicChapter) -> some View {
         let selected = selectedChapterIDs.contains(chapter.id)
-        return MGChapterSelectionCell(title: chapter.displayName, selected: selected) {
+        return MGChapterTile(title: chapter.displayName, selected: selected, downloaded: downloadedChapterIDs.contains(chapter.id)) {
             vm.selectChapter(chapter, modifiers: NSEvent.modifierFlags)
         }
         .background {
             ChapterFrameReporter(id: chapter.id, store: frameStore)
         }
-        .help(chapter.displayName).accessibilityValue(selected ? "已选择" : "未选择")
     }
 
 }

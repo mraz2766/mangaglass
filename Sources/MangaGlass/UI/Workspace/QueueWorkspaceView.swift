@@ -574,29 +574,57 @@ private struct QueueSummaryCard: View {
         let summary = downloader.progressSummary()
         let counts = downloader.countsSummary()
         let percent = Int((downloader.progress * 100).rounded())
-        HStack(alignment: .center, spacing: 18) {
-            Text("\(percent)%")
-                .font(.system(size: 30, weight: .semibold))
-                .monospacedDigit()
-                .contentTransition(.numericText())
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: percent)
-                .frame(minWidth: 84, alignment: .leading)
-            VStack(alignment: .leading, spacing: 8) {
-                MGProgressBar(value: downloader.progress, tint: MGTheme.accent, height: 6)
-                HStack(spacing: 6) {
-                    Text(statusLine(counts: counts))
-                    Text("·")
-                    Text("\(summary.completedTasks) / \(summary.totalTasks) 话 · " + pagesText(summary))
-                        .monospacedDigit()
+        let featured = featuredComic
+        MGHeroBanner(coverURL: featured?.coverURL, height: 190) {
+            HStack(alignment: .bottom, spacing: 20) {
+                if let featured {
+                    MGHeroCover(url: featured.coverURL, title: featured.name, width: 96)
+                        .transition(.opacity)
                 }
-                .font(MGFont.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(featuredCaption(featured))
+                        .font(.system(size: 12, weight: .semibold))
+                        .opacity(0.75)
+                        .lineLimit(1)
+                    Text("\(percent)%")
+                        .font(.system(size: 44, weight: .bold))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: percent)
+                    Text(statusLine(counts: counts))
+                        .font(.system(size: 12))
+                        .monospacedDigit()
+                        .opacity(0.85)
+                        .lineLimit(1)
+                    MGBannerProgress(value: downloader.progress)
+                        .frame(maxWidth: 360)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .trailing, spacing: 10) {
+                    HStack(spacing: 6) {
+                        MGBannerStat(value: "\(summary.completedTasks) / \(summary.totalTasks)", label: "话")
+                        MGBannerStat(value: pagesText(summary), label: "页")
+                        if counts.failed > 0 {
+                            MGBannerStat(value: "\(counts.failed)", label: "失败")
+                        }
+                    }
+                    controls(counts: counts)
+                }
+                .fixedSize()
             }
-            controls(counts: counts)
         }
-        .padding(16)
-        .mgPanel(radius: 14)
+    }
+
+    /// The comic the banner shows: whatever is downloading, else next in line, else the latest added.
+    private var featuredComic: ComicInfo? {
+        let items = downloader.taskItems
+        return (items.first { $0.state == .running } ?? items.first { $0.state == .queued } ?? items.last)?.comic
+    }
+
+    private func featuredCaption(_ comic: ComicInfo?) -> String {
+        guard let comic else { return "下载队列" }
+        if downloader.isRunning { return downloader.isPaused ? "已暂停 · \(comic.name)" : "正在下载 · \(comic.name)" }
+        return comic.name
     }
 
     private func statusLine(counts: (queued: Int, running: Int, failed: Int, done: Int)) -> String {
@@ -613,16 +641,16 @@ private struct QueueSummaryCard: View {
     /// Real page totals only once every chapter's page count is known.
     private func pagesText(_ summary: (completedPages: Int, totalPages: Int, completedTasks: Int, totalTasks: Int, pagesKnown: Bool)) -> String {
         if summary.pagesKnown {
-            return "\(summary.completedPages) / \(summary.totalPages) 页"
+            return "\(summary.completedPages) / \(summary.totalPages)"
         }
-        return downloader.networkPagesThisRun > 0 ? "本次已下载 \(downloader.networkPagesThisRun) 页" : "页数统计中"
+        return downloader.networkPagesThisRun > 0 ? "本次 \(downloader.networkPagesThisRun)" : "统计中"
     }
 
     @ViewBuilder private func controls(counts: (queued: Int, running: Int, failed: Int, done: Int)) -> some View {
         HStack(spacing: 8) {
             if counts.failed > 0 {
                 Button("重试失败") { vm.retryFailed() }
-                    .buttonStyle(MGActionButtonStyle(variant: .secondary))
+                    .buttonStyle(MGBannerButtonStyle(kind: .secondary))
             }
             if downloader.isRunning {
                 Button {
@@ -630,17 +658,37 @@ private struct QueueSummaryCard: View {
                 } label: {
                     Label(downloader.isPaused ? "继续" : "暂停", systemImage: downloader.isPaused ? "play.fill" : "pause.fill")
                 }
-                .buttonStyle(MGActionButtonStyle(variant: .emphasis))
+                .buttonStyle(MGBannerButtonStyle(kind: .primary))
             } else if counts.queued > 0 {
                 Button {
                     vm.startQueuedDownloads()
                 } label: {
                     Label("开始 \(counts.queued)", systemImage: "play.fill")
                 }
-                .buttonStyle(MGActionButtonStyle(variant: .primary))
+                .buttonStyle(MGBannerButtonStyle(kind: .primary))
             }
         }
         .fixedSize()
+    }
+}
+
+/// White progress bar for use on a banner.
+struct MGBannerProgress: View {
+    let value: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.22))
+                Capsule().fill(Color.white)
+                    .frame(width: max(value > 0 ? 6 : 0, proxy.size.width * min(1, max(0, value))))
+            }
+        }
+        .frame(height: 6)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: value)
+        .accessibilityElement()
+        .accessibilityValue("\(Int(value * 100))%")
     }
 }
 
