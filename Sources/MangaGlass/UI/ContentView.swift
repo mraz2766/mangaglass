@@ -89,12 +89,13 @@ struct ContentView: View {
     private var shell: some View {
         HStack(spacing: 0) {
             WorkspaceSidebar(downloader: vm.downloader, destination: $destination, bump: flightCenter.bump)
-                .frame(width: 64)
+                .frame(width: 72)
                 .id(vm.themeStyle)
 
             Rectangle()
                 .fill(MGTheme.divider(for: colorScheme))
                 .frame(width: 1)
+                .ignoresSafeArea()
 
             GeometryReader { proxy in
                 ZStack {

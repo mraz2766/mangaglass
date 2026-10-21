@@ -59,11 +59,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // sheet on macOS 27 (it stays attached but invisible, blocking every click).
         var mask = window.styleMask
         mask.formUnion([.titled, .closable, .miniaturizable, .resizable])
-        mask.remove(.fullSizeContentView)
+        // Content runs under a transparent titlebar so the sidebar and page colors reach the top edge
+        // instead of meeting a differently tinted system titlebar.
+        mask.insert(.fullSizeContentView)
         if mask != window.styleMask { window.styleMask = mask }
         if !window.title.isEmpty { window.title = "" }
         if window.titleVisibility != .hidden { window.titleVisibility = .hidden }
-        if window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = false }
+        if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
         if window.toolbarStyle != .automatic { window.toolbarStyle = .automatic }
         window.minSize = NSSize(width: 720, height: 540)
     }

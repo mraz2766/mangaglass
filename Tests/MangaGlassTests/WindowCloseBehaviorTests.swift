@@ -4,21 +4,22 @@ import XCTest
 
 @MainActor
 final class WindowCloseBehaviorTests: XCTestCase {
-    func testMainWindowKeepsTrafficLightsOutsideWorkspaceContent() {
+    /// Page colors run under a transparent titlebar (no separately tinted strip); the sidebar keeps
+    /// its items inside the safe area so the traffic lights stay uncovered.
+    func testMainWindowUsesTransparentFullSizeTitlebar() {
         _ = NSApplication.shared
         let delegate = AppDelegate()
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 720, height: 540),
-            styleMask: [.titled, .fullSizeContentView],
+            styleMask: [.titled],
             backing: .buffered,
             defer: false
         )
-        window.titlebarAppearsTransparent = true
 
         delegate.configureIfNeeded(window)
 
-        XCTAssertFalse(window.styleMask.contains(.fullSizeContentView))
-        XCTAssertFalse(window.titlebarAppearsTransparent)
+        XCTAssertTrue(window.styleMask.contains(.fullSizeContentView))
+        XCTAssertTrue(window.titlebarAppearsTransparent)
         XCTAssertEqual(window.titleVisibility, .hidden)
         XCTAssertEqual(window.title, "")
     }

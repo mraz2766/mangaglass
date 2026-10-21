@@ -92,6 +92,8 @@ struct MGBookCover: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        // Keep clicks inside the visible cover; a fill-scaled image otherwise hit-tests past the clip.
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color.black.opacity(0.08), lineWidth: 0.5)

@@ -26,8 +26,12 @@ struct MGHeroBanner<Content: View>: View {
                         startPoint: .top, endPoint: .bottom
                     )
                 }
+                // The fill-scaled, enlarged cover overflows the banner; clipping hides it but does not
+                // stop it from taking clicks (it covered the sidebar), so the backdrop never hit-tests.
+                .allowsHitTesting(false)
             }
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 0.5)

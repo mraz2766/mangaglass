@@ -55,7 +55,7 @@ final class LayoutSnapshots: XCTestCase {
                     default: continue
                     }
                     let root = HStack(spacing: 0) {
-                        WorkspaceSidebar(downloader: vm.downloader, destination: .constant(page)).frame(width: 64)
+                        WorkspaceSidebar(downloader: vm.downloader, destination: .constant(page)).frame(width: 72)
                         Divider()
                         body.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -137,7 +137,7 @@ final class LayoutSnapshots: XCTestCase {
         vm.selectedChapterIDs = ["0-0", "0-1", "0-2", "0-3", "1-0", "2-0"]
         _ = vm.enqueueSelectedChapters()
         let queue = HStack(spacing: 0) {
-            WorkspaceSidebar(downloader: vm.downloader, destination: .constant(.queue)).frame(width: 64)
+            WorkspaceSidebar(downloader: vm.downloader, destination: .constant(.queue)).frame(width: 72)
             Divider()
             QueueWorkspaceView(vm: vm, showLogs: .constant(false)).padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
         }

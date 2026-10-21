@@ -5,32 +5,35 @@ struct WorkspaceSidebar: View {
     @ObservedObject var downloader: DownloadCoordinator
     @Binding var destination: WorkspaceDestination
     var bump = 0
-    @Namespace private var indicator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let counts = downloader.countsSummary()
-        VStack(spacing: 10) {
-            BrandMarkView(size: 28)
-                .padding(.vertical, 12)
-                .help("MangaGlass")
+        VStack(spacing: 8) {
             ForEach(WorkspaceDestination.allCases.filter { $0 != .settings }) { item in
-                navigationButton(item, badge: item == .queue ? counts.queued + counts.running : 0)
+                SidebarNavButton(item: item,
+                                 selected: destination == item,
+                                 badge: item == .queue ? counts.queued + counts.running : 0,
+                                 bump: bump) { destination = item }
             }
             Spacer(minLength: 8)
             if downloader.isRunning {
                 runningIndicator
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
-            navigationButton(.settings, badge: 0)
+            SidebarNavButton(item: .settings, selected: destination == .settings, badge: 0, bump: bump) {
+                destination = .settings
+            }
         }
-        .padding(.vertical, 8)
-        .frame(width: 64)
+        // The top safe area (transparent titlebar with the traffic lights) stays clear;
+        // only the background runs under it.
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+        .frame(width: 72)
         .frame(maxHeight: .infinity)
         .background {
             (MGTheme.palette.sidebar ?? MGTheme.palette.canvas).ignoresSafeArea()
         }
-        .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.82), value: destination)
         .animation(reduceMotion ? nil : MGMotion.regular, value: downloader.isRunning)
     }
 
@@ -56,36 +59,47 @@ struct WorkspaceSidebar: View {
         .help(downloader.isPaused ? "已暂停" : "正在下载 · \(downloader.speedText)")
         .accessibilityLabel("下载进度 \(Int(downloader.progress * 100))%")
     }
+}
 
-    private func navigationButton(_ item: WorkspaceDestination, badge: Int) -> some View {
-        let selected = destination == item
-        return Button { destination = item } label: {
-            VStack(spacing: 2) {
+/// One rail item. Kept structurally plain (like the chapter tiles): a `.plain` button whose
+/// label draws its own selection and hover fill, with hover tracked outside the button style.
+private struct SidebarNavButton: View {
+    let item: WorkspaceDestination
+    let selected: Bool
+    let badge: Int
+    let bump: Int
+    let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    var body: some View {
+        let palette = MGTheme.palette
+        Button(action: action) {
+            VStack(spacing: 3) {
                 Image(systemName: item.systemImage)
                     .font(.system(size: 17, weight: .medium))
+                    .symbolVariant(selected ? .fill : .none)
                     .overlay(alignment: .topTrailing) {
                         if badge > 0 {
                             SidebarBadge(count: badge, bump: bump)
                                 .offset(x: 10, y: -8)
                         }
                     }
-                if selected {
-                    Text(item.title).font(.system(size: 10, weight: .medium))
-                        .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .top)))
-                }
+                Text(item.title)
+                    .font(.system(size: 10, weight: selected ? .semibold : .medium))
             }
-            .foregroundStyle(selected ? MGTheme.palette.softSelectedText : Color.secondary)
-            .frame(width: 44, height: 44)
-            .background {
-                if selected {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(MGTheme.palette.softSelectedFill)
-                        .matchedGeometryEffect(id: "nav-selection", in: indicator)
-                }
-            }
-            .contentShape(Rectangle())
+            .foregroundStyle(selected ? palette.softSelectedText : Color.secondary)
+            .frame(width: 52, height: 48)
+            .background(
+                selected ? palette.softSelectedFill : (hovering ? palette.cellHover.opacity(0.6) : Color.clear),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .buttonStyle(SidebarPressStyle())
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
+        .animation(reduceMotion ? nil : MGMotion.fast, value: selected)
         .background {
             if item == .queue {
                 GeometryReader { proxy in
@@ -96,27 +110,6 @@ struct WorkspaceSidebar: View {
         .help(item.title)
         .accessibilityLabel("打开\(item.title)")
         .accessibilityValue(selected ? "当前页面" : (badge > 0 ? "\(badge) 项" : ""))
-    }
-}
-
-private struct SidebarPressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        SidebarPressBody(configuration: configuration)
-    }
-}
-
-private struct SidebarPressBody: View {
-    let configuration: ButtonStyle.Configuration
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hovering = false
-
-    var body: some View {
-        configuration.label
-            .background(hovering ? MGTheme.palette.cellHover.opacity(0.6) : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.92 : 1)
-            .onHover { hovering = $0 }
-            .animation(reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.7), value: configuration.isPressed)
-            .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
     }
 }
 
@@ -146,33 +139,6 @@ private struct SidebarBadge: View {
             }
             .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: count)
     }
-}
-
-struct BrandMarkView: View {
-    let size: CGFloat
-
-    var body: some View {
-        if let image = brandImage {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-        } else {
-            Image(systemName: "books.vertical.fill")
-                .font(.system(size: size * 0.55, weight: .semibold))
-                .foregroundStyle(MGTheme.accent)
-                .frame(width: size, height: size)
-                .background(MGTheme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-        }
-    }
-
-    private var brandImage: NSImage? { Self.cachedBrandImage }
-
-    private static let cachedBrandImage: NSImage? = {
-        guard let url = Bundle.module.url(forResource: "logo", withExtension: "png") else { return nil }
-        return NSImage(contentsOf: url)
-    }()
 }
 
 struct ActivityLogSheet: View {
