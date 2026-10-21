@@ -114,7 +114,7 @@ struct MGChapterTitleParts {
     let unit: String
     let rest: String
 
-    private static let pattern = try! NSRegularExpression(pattern: #"^\s*第\s*([0-9]+(?:\.[0-9]+)?)\s*([话話回卷])\s*(.*)$"#)
+    private static let pattern = try! NSRegularExpression(pattern: #"^\s*(?:第\s*)?([0-9]+(?:\.[0-9]+)?)\s*([话話回卷])\s*(.*)$"#)
 
     init?(_ title: String) {
         let range = NSRange(title.startIndex..., in: title)

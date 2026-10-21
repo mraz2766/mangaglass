@@ -24,16 +24,23 @@ final class DownloadCoordinator: ObservableObject {
         let host: String
         let chapterTitle: String
         let triggeredAt: Date
-        /// Set for rate-limit cooldowns (connection resets); the batch continues on its own then.
+        /// Set for rate-limit cooldowns (connection resets): the moment the cooldown ends.
         var autoResumeAt: Date? = nil
+        /// False once the user cancels auto-continue; the cooldown still runs, then waits for a manual continue.
+        var autoResumeEnabled = true
+
+        var isCooldown: Bool { autoResumeAt != nil }
 
         var remainingSeconds: Int {
             max(0, Int(ceil((autoResumeAt ?? Date()).timeIntervalSinceNow)))
         }
 
         var message: String {
-            if autoResumeAt != nil {
-                return "漫画柜正在限流（连接被站点断开），已暂停漫画柜请求，约 \(remainingSeconds) 秒后自动继续。"
+            if isCooldown {
+                if remainingSeconds == 0 { return "漫画柜冷却已结束，可以继续下载。" }
+                return autoResumeEnabled
+                    ? "漫画柜正在限流（连接被站点断开），已暂停漫画柜请求，约 \(remainingSeconds) 秒后自动继续。"
+                    : "漫画柜冷却中，约 \(remainingSeconds) 秒后可继续（已取消自动继续）。"
             }
             return "漫画柜疑似触发风控（HTTP \(statusCode)，\(host)）。请先打开网页确认是否可访问，再决定是否继续下载。"
         }
@@ -45,13 +52,17 @@ final class DownloadCoordinator: ObservableObject {
         let chapterTitle: String
         let triggeredAt: Date
         let cooldownUntil: Date
+        var autoResumeEnabled = true
 
         var remainingSeconds: Int {
             max(0, Int(ceil(cooldownUntil.timeIntervalSinceNow)))
         }
 
         var message: String {
-            "拷贝漫画连续返回异常目录或页面，已暂停后续请求。请等待约 \(remainingSeconds) 秒再继续。"
+            if remainingSeconds == 0 { return "拷贝漫画冷却已结束，可以继续下载。" }
+            return autoResumeEnabled
+                ? "拷贝漫画连续返回异常目录或页面，已暂停后续请求，约 \(remainingSeconds) 秒后自动继续。"
+                : "拷贝漫画冷却中，约 \(remainingSeconds) 秒后可继续（已取消自动继续）。"
         }
     }
 
@@ -449,6 +460,38 @@ final class DownloadCoordinator: ObservableObject {
         scheduleAutoResume(after: cooldown)
     }
 
+    /// Stops the automatic continue but keeps the cooldown clock running; when it ends the
+    /// queue waits for a manual continue.
+    func cancelAutoResume() {
+        autoResumeTask?.cancel()
+        autoResumeTask = nil
+        manhuaGuiSoftCircuit?.autoResumeEnabled = false
+        copySoftCircuit?.autoResumeEnabled = false
+        message = manhuaGuiSoftCircuit?.message ?? copySoftCircuit?.message ?? message
+        log("已取消冷却后自动继续，冷却计时仍在后台进行")
+    }
+
+    func restoreAutoResume() {
+        manhuaGuiSoftCircuit?.autoResumeEnabled = true
+        copySoftCircuit?.autoResumeEnabled = true
+        let remaining = max(manhuaGuiSoftCircuit?.remainingSeconds ?? 0, copySoftCircuit?.remainingSeconds ?? 0)
+        scheduleAutoResume(after: TimeInterval(remaining) + 1)
+        message = manhuaGuiSoftCircuit?.message ?? copySoftCircuit?.message ?? message
+        log("已恢复冷却后自动继续，约 \(remaining) 秒后继续")
+    }
+
+    /// Continue Copy downloads before its cooldown has ended (the user confirmed the risk).
+    func forceClearCopySoftCircuit() {
+        guard let circuit = copySoftCircuit else { return }
+        copySoftCircuit = nil
+        copySuspiciousChapterFailures = 0
+        copyRecoveryProbeActive = true
+        copyRecoverySuccessfulChapters = 0
+        Task { await copyHostBudget.resetPenalty(key: Self.copyBudgetKey) }
+        log("用户在冷却结束前继续拷贝漫画下载（剩余约 \(circuit.remainingSeconds) 秒），以单话探测速度恢复")
+        updateCurrentTaskTitle()
+    }
+
     /// Clears an expired cooldown and continues the queue without user action.
     private func scheduleAutoResume(after seconds: TimeInterval) {
         autoResumeTask?.cancel()
@@ -457,11 +500,11 @@ final class DownloadCoordinator: ObservableObject {
             guard let self, !Task.isCancelled else { return }
             self.autoResumeTask = nil
             var cleared = false
-            if self.manhuaGuiSoftCircuit?.autoResumeAt != nil {
+            if self.manhuaGuiSoftCircuit?.isCooldown == true, self.manhuaGuiSoftCircuit?.autoResumeEnabled == true {
                 self.manhuaGuiSoftCircuit = nil
                 cleared = true
             }
-            if self.copySoftCircuit != nil, self.clearCopySoftCircuitIfReady() {
+            if self.copySoftCircuit?.autoResumeEnabled == true, self.clearCopySoftCircuitIfReady() {
                 cleared = true
             }
             guard cleared else { return }

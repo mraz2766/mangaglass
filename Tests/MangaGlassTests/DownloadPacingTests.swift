@@ -84,3 +84,15 @@ final class DownloadPacingTests: XCTestCase {
         XCTAssertEqual(SiteFamily.of(.baoziManga), .other)
     }
 }
+
+final class ChapterTitlePartsTests: XCTestCase {
+    func testNumbersWithAndWithoutPrefixRenderTheSameWay() {
+        for (title, number, unit) in [("第62话", "62", "话"), ("54话", "54", "话"), ("55.5话", "55.5", "话"),
+                                      ("第 72.5 話", "72.5", "話"), ("1卷", "1", "卷")] {
+            let parts = MGChapterTitleParts(title)
+            XCTAssertEqual(parts?.number, number, title)
+            XCTAssertEqual(parts?.unit, unit, title)
+        }
+        XCTAssertNil(MGChapterTitleParts("番外篇"))
+    }
+}

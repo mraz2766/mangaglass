@@ -867,6 +867,21 @@ final class MainViewModel: ObservableObject {
         downloader.start()
     }
 
+    func cancelAutoResume() {
+        downloader.cancelAutoResume()
+    }
+
+    func restoreAutoResume() {
+        downloader.restoreAutoResume()
+    }
+
+    /// Continue Copy before the cooldown ends; the UI asks for confirmation first.
+    func forceContinueCopyDownload() {
+        downloader.forceClearCopySoftCircuit()
+        appendLog("用户确认在冷却结束前继续拷贝漫画下载")
+        downloader.start()
+    }
+
     func continueCopyDownloadAfterCooldown() {
         guard downloader.clearCopySoftCircuitIfReady() else {
             statusText = downloader.copySoftCircuit?.message ?? "拷贝漫画仍在冷却中。"

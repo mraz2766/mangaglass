@@ -50,6 +50,23 @@ struct QueueWorkspaceView: View {
         var id: String { rawValue }
     }
 
+    private enum CooldownSite {
+        case manhuaGui
+        case copy
+
+        var title: String {
+            switch self {
+            case .manhuaGui: return "漫画柜"
+            case .copy: return "拷贝漫画"
+            }
+        }
+    }
+
+    private struct EarlyContinue {
+        let site: CooldownSite
+        let remaining: Int
+    }
+
     private enum QueueConfirmation: Identifiable {
         case cancelAll
         case clearAll
@@ -72,6 +89,7 @@ struct QueueWorkspaceView: View {
     @State private var expandedTaskID: UUID?
     @State private var groupExpansion: [String: Bool] = [:]
     @State private var confirmation: QueueConfirmation?
+    @State private var earlyContinue: EarlyContinue?
 
     init(vm: MainViewModel, showLogs: Binding<Bool>) {
         self.vm = vm
@@ -133,6 +151,12 @@ struct QueueWorkspaceView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.86), value: downloader.taskItems.map(\.id))
         .animation(reduceMotion ? nil : MGMotion.panel, value: filter)
+        .alert("仍在冷却中", isPresented: earlyContinueBinding, presenting: earlyContinue) { pending in
+            Button("仍要继续", role: .destructive) { continueCooldown(pending.site, force: true) }
+            Button("等待冷却", role: .cancel) {}
+        } message: { pending in
+            Text("\(pending.site.title)还需约 \(Self.countdown(pending.remaining)) 才冷却结束。现在继续很可能再次被限流，并延长站点的封禁时间。")
+        }
         .alert(confirmationTitle, isPresented: confirmationBinding, presenting: confirmation) { item in
             switch item {
             case .cancelAll:
@@ -287,49 +311,112 @@ struct QueueWorkspaceView: View {
     }
 
     private func softCircuitNotice(_ circuit: DownloadCoordinator.ManhuaGuiSoftCircuit) -> some View {
-        HStack(spacing: MGSpacing.xs) {
+        if circuit.isCooldown {
+            return AnyView(cooldownNotice(
+                site: .manhuaGui,
+                remaining: circuit.remainingSeconds,
+                autoResume: circuit.autoResumeEnabled,
+                detail: "连接被站点断开，已暂停新的漫画柜请求"
+            ))
+        }
+        return AnyView(HStack(spacing: MGSpacing.xs) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(MGTheme.warning)
             VStack(alignment: .leading, spacing: 2) {
-                Text(circuit.autoResumeAt != nil ? "漫画柜正在限流，冷却后自动继续" : "漫画柜可能触发风控")
-                    .font(MGFont.bodyStrong)
-                Text(circuit.autoResumeAt != nil
-                     ? "约 \(circuit.remainingSeconds) 秒后自动继续 · 已暂停新的漫画柜请求"
-                     : "\(circuit.chapterTitle) · HTTP \(circuit.statusCode) · \(circuit.host)")
+                Text("漫画柜可能触发风控").font(MGFont.bodyStrong)
+                Text("\(circuit.chapterTitle) · HTTP \(circuit.statusCode) · \(circuit.host)")
                     .font(MGFont.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer()
-            if circuit.autoResumeAt == nil {
-                Button("打开网页") { vm.openManhuaGuiWebCheck() }
-                    .buttonStyle(MGActionButtonStyle(variant: .secondary))
-            }
-            Button(circuit.autoResumeAt != nil ? "立即继续" : "继续") { vm.continueManhuaGuiDownloadAfterCheck() }
+            Button("打开网页") { vm.openManhuaGuiWebCheck() }
+                .buttonStyle(MGActionButtonStyle(variant: .secondary))
+            Button("继续") { vm.continueManhuaGuiDownloadAfterCheck() }
                 .buttonStyle(MGActionButtonStyle(variant: .primary))
         }
         .padding(MGSpacing.sm)
-        .background(MGTheme.warning.opacity(colorScheme == .dark ? 0.16 : 0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(MGTheme.warning.opacity(colorScheme == .dark ? 0.16 : 0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous)))
     }
 
     private func copySoftCircuitNotice(_ circuit: DownloadCoordinator.CopySoftCircuit) -> some View {
-        HStack(spacing: MGSpacing.xs) {
-            Image(systemName: "shield.lefthalf.filled")
-                .foregroundStyle(MGTheme.warning)
+        cooldownNotice(
+            site: .copy,
+            remaining: circuit.remainingSeconds,
+            autoResume: circuit.autoResumeEnabled,
+            detail: "\(circuit.reason) · \(circuit.chapterTitle)"
+        )
+    }
+
+    /// Shared rate-limit cooldown banner: auto-continue on, cancelled (clock still running), or finished.
+    private func cooldownNotice(site: CooldownSite, remaining: Int, autoResume: Bool, detail: String) -> some View {
+        let finished = remaining == 0
+        let title: String
+        let subtitle: String
+        if finished {
+            title = "\(site.title)冷却已结束"
+            subtitle = "可以继续下载了"
+        } else if autoResume {
+            title = "\(site.title)正在限流冷却"
+            subtitle = "约 \(Self.countdown(remaining)) 后自动继续 · \(detail)"
+        } else {
+            title = "\(site.title)冷却中"
+            subtitle = "约 \(Self.countdown(remaining)) 后可继续 · 已取消自动继续，冷却仍在后台计时"
+        }
+        return HStack(spacing: MGSpacing.xs) {
+            Image(systemName: finished ? "checkmark.circle.fill" : "hourglass")
+                .foregroundStyle(finished ? MGTheme.success : MGTheme.warning)
+                .contentTransition(.opacity)
             VStack(alignment: .leading, spacing: 2) {
-                Text("拷贝漫画请求已自动降速暂停")
-                    .font(MGFont.bodyStrong)
-                Text("\(circuit.chapterTitle) · \(circuit.reason) · 约 \(circuit.remainingSeconds) 秒后可继续")
+                Text(title).font(MGFont.bodyStrong)
+                Text(subtitle)
                     .font(MGFont.caption)
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
                     .lineLimit(1)
             }
             Spacer()
-            Button("冷却后继续") { vm.continueCopyDownloadAfterCooldown() }
-                .buttonStyle(MGActionButtonStyle(variant: .primary))
+            if !finished {
+                if autoResume {
+                    Button("取消自动继续") { vm.cancelAutoResume() }
+                        .buttonStyle(MGActionButtonStyle(variant: .ghost))
+                        .help("停止到点自动继续；冷却仍在后台计时，结束后可手动继续")
+                } else {
+                    Button("恢复自动继续") { vm.restoreAutoResume() }
+                        .buttonStyle(MGActionButtonStyle(variant: .ghost))
+                }
+            }
+            Button(finished ? "继续下载" : "立即继续") {
+                if finished {
+                    continueCooldown(site, force: false)
+                } else {
+                    earlyContinue = EarlyContinue(site: site, remaining: remaining)
+                }
+            }
+            .buttonStyle(MGActionButtonStyle(variant: finished ? .primary : .secondary))
         }
         .padding(MGSpacing.sm)
-        .background(MGTheme.warning.opacity(colorScheme == .dark ? 0.16 : 0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background((finished ? MGTheme.success : MGTheme.warning).opacity(colorScheme == .dark ? 0.16 : 0.09),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .animation(reduceMotion ? nil : MGMotion.regular, value: finished)
+        .animation(reduceMotion ? nil : MGMotion.regular, value: autoResume)
+    }
+
+    private func continueCooldown(_ site: CooldownSite, force: Bool) {
+        switch site {
+        case .manhuaGui:
+            vm.continueManhuaGuiDownloadAfterCheck()
+        case .copy:
+            force ? vm.forceContinueCopyDownload() : vm.continueCopyDownloadAfterCooldown()
+        }
+    }
+
+    private static func countdown(_ seconds: Int) -> String {
+        seconds >= 60 ? String(format: "%d:%02d", seconds / 60, seconds % 60) : "\(seconds) 秒"
+    }
+
+    private var earlyContinueBinding: Binding<Bool> {
+        Binding(get: { earlyContinue != nil }, set: { if !$0 { earlyContinue = nil } })
     }
 
     private var confirmationTitle: String {
