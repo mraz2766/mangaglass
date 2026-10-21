@@ -127,7 +127,7 @@ struct DownloadWorkspaceView: View {
             Spacer(minLength: 24)
             VStack(spacing: 14) {
                 Text("今天想下载哪一部？")
-                    .font(.system(size: 28, weight: .semibold))
+                    .font(MGFont.heroTitle)
                 Text("粘贴拷贝漫画、漫画柜或包子漫画的链接，回车即可解析。")
                     .font(MGFont.body)
                     .foregroundStyle(.secondary)
@@ -197,7 +197,7 @@ struct DownloadWorkspaceView: View {
                 .help("清除链接、封面、卷与章节及解析状态")
                 .accessibilityLabel("清除首页搜索数据和状态")
             }
-            .font(large ? .system(size: 15) : MGFont.body)
+            .font(large ? .title3 : MGFont.body)
             .mgQuietTextField()
             .frame(height: large ? 44 : 32)
             .overlay { Capsule().stroke(linkFocused ? MGTheme.accent : .clear, lineWidth: 2) }
@@ -268,11 +268,11 @@ struct DownloadWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     if let comic = vm.comic {
                         Text(comic.site.displayName)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(MGFont.captionStrong.weight(.semibold))
                             .opacity(0.75)
                     }
                     Text(headerTitle)
-                        .font(.system(size: 28, weight: .bold))
+                        .font(MGFont.heroTitle)
                         .lineLimit(2)
                         .textSelection(.enabled)
                     if vm.comic != nil {
@@ -290,7 +290,7 @@ struct DownloadWorkspaceView: View {
                                 Text(vm.destinationFolder.lastPathComponent).lineLimit(1).truncationMode(.middle)
                                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
                             }
-                            .font(.system(size: 12))
+                            .font(MGFont.caption)
                             .opacity(0.8)
                             .contentShape(Rectangle())
                         }
@@ -504,7 +504,7 @@ struct DownloadWorkspaceView: View {
             HStack(spacing: 4) {
                 Text("已选")
                 Text("\(vm.selectedChapterCount)")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(MGFont.section)
                     .monospacedDigit()
                     .contentTransition(.numericText())
                     .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: vm.selectedChapterCount)
@@ -787,13 +787,13 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
                 }
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(section.volumeName).font(.system(size: 17, weight: .bold))
+                    Text(section.volumeName).font(.title2.weight(.bold))
                     Text("\(section.chapterCount) 话").font(MGFont.caption).foregroundStyle(.secondary)
                     if downloaded > 0 {
                         Text("· 已下载 \(downloaded)").font(MGFont.caption).foregroundStyle(MGTheme.success)
                     }
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(MGFont.micro.weight(.bold))
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(collapsed ? -90 : 0))
                         .animation(reduceMotion ? nil : MGMotion.fast, value: collapsed)
@@ -821,13 +821,7 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
         .padding(.horizontal, 4)
         .padding(.top, 8)
         .frame(height: 40, alignment: .bottom)
-        .background {
-            if MGTheme.palette.glass {
-                Rectangle().fill(.regularMaterial)
-            } else {
-                MGTheme.background(for: colorScheme)
-            }
-        }
+        .background(MGTheme.background(for: colorScheme))
     }
 
     private func chapterCell(_ chapter: ComicChapter) -> some View {

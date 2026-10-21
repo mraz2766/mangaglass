@@ -45,13 +45,12 @@ final class LayoutSnapshots: XCTestCase {
             vm.recentRecords = [RecentComicRecord(title: "测试漫画", input: "https://www.mangacopy.com/comic/test-fixture-long-link", siteName: "主站")]
             for style in AppThemeStyle.allCases {
             vm.themeStyle = style
-            for page in [WorkspaceDestination.queue, .history, .settings] {
+            for page in [WorkspaceDestination.queue, .history] {
                 for (width, height) in style == .ink ? [(1200, 800), (720, 540)] : [(1200, 800)] {
                     let body: AnyView
                     switch page {
                     case .queue: body = AnyView(QueueWorkspaceView(vm: vm, showLogs: .constant(false)))
                     case .history: body = AnyView(HistoryWorkspaceView(vm: vm, openDownload: {}))
-                    case .settings: body = AnyView(SettingsWorkspaceView(vm: vm))
                     default: continue
                     }
                     let root = HStack(spacing: 0) {
@@ -68,6 +67,16 @@ final class LayoutSnapshots: XCTestCase {
                 }
             }
             }
+            vm.themeStyle = .ink
+            // Settings window (each tab is its own pane; the TabView renders the first).
+            for accent in [false, true] {
+                vm.themeStyle = .classic
+                vm.followsSystemAccent = accent
+                let settings = SettingsView(vm: vm).environment(\.colorScheme, dark ? .dark : .light)
+                try await render(settings, size: NSSize(width: 560, height: 520),
+                                 name: "settings-\(accent ? "system-accent" : "theme-accent")-\(dark ? "dark" : "light")", output: output, dark: dark)
+            }
+            vm.followsSystemAccent = false
             vm.themeStyle = .ink
         }
         for scenario in ["empty", "loading", "error", "no-results", "no-categories", "collapsed", "many-categories"] {

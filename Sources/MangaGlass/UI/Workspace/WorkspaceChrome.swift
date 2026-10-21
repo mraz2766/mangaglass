@@ -10,7 +10,7 @@ struct WorkspaceSidebar: View {
     var body: some View {
         let counts = downloader.countsSummary()
         VStack(spacing: 8) {
-            ForEach(WorkspaceDestination.allCases.filter { $0 != .settings }) { item in
+            ForEach(WorkspaceDestination.allCases) { item in
                 SidebarNavButton(item: item,
                                  selected: destination == item,
                                  badge: item == .queue ? counts.queued + counts.running : 0,
@@ -21,9 +21,6 @@ struct WorkspaceSidebar: View {
                 runningIndicator
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
-            SidebarNavButton(item: .settings, selected: destination == .settings, badge: 0, bump: bump) {
-                destination = .settings
-            }
         }
         // The top safe area (transparent titlebar with the traffic lights) stays clear;
         // only the background runs under it.
@@ -32,7 +29,12 @@ struct WorkspaceSidebar: View {
         .frame(width: 72)
         .frame(maxHeight: .infinity)
         .background {
-            (MGTheme.palette.sidebar ?? MGTheme.palette.canvas).ignoresSafeArea()
+            ZStack {
+                // Glass themes frost only the navigation layer.
+                if MGTheme.palette.glass { MGWindowGlass() }
+                MGTheme.palette.sidebar ?? MGTheme.palette.canvas
+            }
+            .ignoresSafeArea()
         }
         .animation(reduceMotion ? nil : MGMotion.regular, value: downloader.isRunning)
     }
@@ -86,7 +88,7 @@ private struct SidebarNavButton: View {
                         }
                     }
                 Text(item.title)
-                    .font(.system(size: 10, weight: selected ? .semibold : .medium))
+                    .font(MGFont.micro.weight(selected ? .semibold : .medium))
             }
             .foregroundStyle(selected ? palette.softSelectedText : Color.secondary)
             .frame(width: 52, height: 48)
@@ -122,7 +124,7 @@ private struct SidebarBadge: View {
 
     var body: some View {
         Text(count > 99 ? "99+" : "\(count)")
-            .font(.system(size: 9, weight: .bold))
+            .font(MGFont.micro.weight(.bold))
             .monospacedDigit()
             .foregroundStyle(.white)
             .padding(.horizontal, 4)

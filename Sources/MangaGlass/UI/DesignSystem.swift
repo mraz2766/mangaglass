@@ -88,7 +88,7 @@ struct MGChapterSelectionCell: View {
                     .scaleEffect(selected ? 1 : 0.88)
                 if MGTheme.palette.numberForwardChapters, let parts = MGChapterTitleParts(title) {
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text(parts.number).font(.system(size: 15, weight: .semibold)).monospacedDigit()
+                        Text(parts.number).font(MGFont.section).monospacedDigit()
                         Text(parts.unit).font(MGFont.caption).opacity(0.6)
                         if !parts.rest.isEmpty {
                             Text(parts.rest).font(MGFont.caption).opacity(0.6)
@@ -141,7 +141,12 @@ enum MGActionVariant {
 enum MGTheme {
     /// Set by `MainViewModel.themeStyle`; views rebuild via `.id(themeStyle)` when it changes.
     nonisolated(unsafe) static var style: AppThemeStyle = .ink
-    static var palette: MGPalette { MGPalette.forStyle(style) }
+    /// Set by `MainViewModel.followsSystemAccent`.
+    nonisolated(unsafe) static var followsSystemAccent = false
+    static var palette: MGPalette {
+        let base = MGPalette.forStyle(style)
+        return followsSystemAccent ? base.withSystemAccent() : base
+    }
     static var accent: Color { palette.accent }
     static var accentStrong: Color { palette.accent.opacity(0.82) }
     static let success = Color(nsColor: .systemGreen)
@@ -180,16 +185,32 @@ enum MGTheme {
     }
 }
 
+/// System text styles (macOS: body 13, callout 12, subheadline 11, title3 15, title 22), so text
+/// follows the platform's type ramp instead of hand-picked point sizes.
 enum MGFont {
-    static let appTitle = Font.system(size: 14, weight: .semibold)
-    static let title = Font.system(size: 22, weight: .semibold)
-    static let section = Font.system(size: 14, weight: .semibold)
-    static let body = Font.system(size: 13, weight: .regular)
-    static let bodyStrong = Font.system(size: 13, weight: .medium)
-    static let caption = Font.system(size: 12, weight: .regular)
-    static let captionStrong = Font.system(size: 12, weight: .medium)
-    static let mono = Font.system(size: 11, weight: .medium, design: .monospaced)
-    static let number = Font.system(size: 12, weight: .semibold, design: .monospaced)
+    static let appTitle = Font.title3.weight(.semibold)
+    static let title = Font.title.weight(.semibold)
+    /// Page heading (首页 / 下载 / 书架).
+    static let pageTitle = Font.title.weight(.bold)
+    /// Comic name on a banner.
+    static let heroTitle = Font.largeTitle.weight(.bold)
+    static let section = Font.title3.weight(.semibold)
+    static let body = Font.body
+    static let bodyStrong = Font.body.weight(.medium)
+    static let caption = Font.callout
+    static let captionStrong = Font.callout.weight(.medium)
+    /// Smallest text in the app (tile units, badges); macOS's 10pt floor.
+    static let micro = Font.caption2
+    static let mono = Font.subheadline.monospaced().weight(.medium)
+    static let number = Font.callout.monospaced().weight(.semibold)
+}
+
+/// Corner radii: controls, small surfaces (covers, cells), cards, hero banners.
+enum MGRadius {
+    static let control: CGFloat = 6
+    static let small: CGFloat = 8
+    static let card: CGFloat = 12
+    static let hero: CGFloat = 16
 }
 
 enum MGSpacing {
@@ -236,10 +257,10 @@ private struct MGActionBody: View {
             .foregroundStyle(!enabled ? Color.secondary : (variant == .primary || variant == .destructive ? .white : (variant == .emphasis ? MGTheme.palette.emphasisText : .primary)))
             .padding(.horizontal, iconOnly ? 0 : (capsule ? 16 : 10))
             .frame(minWidth: iconOnly ? 28 : nil, minHeight: variant == .primary || variant == .emphasis ? 32 : 28)
-            .background(fill, in: RoundedRectangle(cornerRadius: capsule ? 18 : 6, style: .continuous))
+            .background(fill, in: RoundedRectangle(cornerRadius: capsule ? 18 : MGRadius.control, style: .continuous))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .overlay {
-                RoundedRectangle(cornerRadius: capsule ? 18 : 6, style: .continuous)
+                RoundedRectangle(cornerRadius: capsule ? 18 : MGRadius.control, style: .continuous)
                     .stroke(focused ? MGTheme.accent : (variant == .secondary && drawsBorder ? MGTheme.divider(for: scheme) : .clear), lineWidth: focused ? 2 : 0.7)
             }
             .contentShape(Rectangle())

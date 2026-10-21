@@ -91,11 +91,11 @@ struct MGBookCover: View {
                 placeholder
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: MGRadius.small, style: .continuous))
         // Keep clicks inside the visible cover; a fill-scaled image otherwise hit-tests past the clip.
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: MGRadius.small, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: MGRadius.small, style: .continuous)
                 .stroke(Color.black.opacity(0.08), lineWidth: 0.5)
         }
     }

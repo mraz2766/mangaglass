@@ -6,7 +6,7 @@ let MGRootSpace = "mg-root"
 
 // MARK: - Window glass
 
-/// Frosted material behind the whole window, used by themes with `palette.glass`.
+/// Frosted material behind the sidebar, used by themes with `palette.glass`.
 struct MGWindowGlass: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .sidebar
 
@@ -145,7 +145,7 @@ struct MGFlightView: View {
 
     var body: some View {
         Text("+\(flight.count)")
-            .font(.system(size: 13, weight: .semibold))
+            .font(MGFont.body.weight(.semibold))
             .monospacedDigit()
             .foregroundStyle(.white)
             .padding(.horizontal, 10)
@@ -202,7 +202,7 @@ extension View {
     func mgHoverLift() -> some View { modifier(MGHoverLift()) }
 
     /// Panel surface that follows the theme: solid cell color, plus a light hairline on glass themes.
-    func mgPanel(radius: CGFloat = 12) -> some View {
+    func mgPanel(radius: CGFloat = MGRadius.card) -> some View {
         background(MGTheme.palette.cell, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)

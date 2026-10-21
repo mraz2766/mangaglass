@@ -178,7 +178,7 @@ struct QueueWorkspaceView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
-            Text("下载").font(.system(size: 22, weight: .semibold))
+            Text("下载").font(MGFont.pageTitle)
             Spacer()
             Button { showLogs = true } label: {
                 Image(systemName: "doc.text").frame(width: 28, height: 28)
@@ -463,7 +463,7 @@ private struct QueueTaskRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
                 Image(systemName: statusImage)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(MGFont.bodyStrong)
                     .foregroundStyle(item.state == .queued ? Color.secondary : tint)
                     .frame(width: 20)
                     .contentTransition(.opacity)
@@ -583,7 +583,7 @@ private struct QueueSummaryCard: View {
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text(featuredCaption(featured))
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(MGFont.captionStrong.weight(.semibold))
                         .opacity(0.75)
                         .lineLimit(1)
                     Text("\(percent)%")
@@ -592,7 +592,7 @@ private struct QueueSummaryCard: View {
                         .contentTransition(.numericText())
                         .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: percent)
                     Text(statusLine(counts: counts))
-                        .font(.system(size: 12))
+                        .font(MGFont.caption)
                         .monospacedDigit()
                         .opacity(0.85)
                         .lineLimit(1)

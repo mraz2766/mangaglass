@@ -10,7 +10,7 @@ A native macOS manga downloader built with SwiftUI.
 
 English · [简体中文](./README.zh-CN.md)
 
-![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple) ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white) ![Version](https://img.shields.io/badge/version-1.15.0-2C78F2)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple) ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white) ![Version](https://img.shields.io/badge/version-1.16.0-2C78F2)
 
 <img src="./assets/screenshots/home-ink.png" alt="Chapter selection after parsing" width="900">
 
@@ -25,7 +25,7 @@ English · [简体中文](./README.zh-CN.md)
 - **Careful downloads**: bounded concurrency, request staggering, and automatic slowdown; each chapter is written to a temporary folder and only published after an integrity check.
 - **Clear progress**: overall percent, speed, and time remaining at a glance, with tasks grouped by series and failure reasons one click away.
 - **Pick up where you left off**: the bookshelf remembers series you've opened, and an unfinished queue is offered again after relaunch.
-- **Three themes**: Classic (white and blue glass), Ink & Paper, and Graphite, each with light and dark variants.
+- **Three themes**: Classic (white and blue, frosted sidebar), Ink & Paper, and Graphite, each with light and dark variants.
 
 ## Supported sites
 
@@ -111,9 +111,11 @@ A chapter in progress lives in `.下载中-<chapter>` and is renamed to its fina
 
 ## Settings
 
+Open with ⌘, (MangaGlass › Settings…). Tabs: General, Downloads, Accounts & Sites.
+
 | Setting | What it does |
 | --- | --- |
-| Theme / Appearance | Choose a theme, then follow the system, light, or dark |
+| Theme / Appearance | Choose a theme, then follow the system, light, or dark; optionally use the macOS accent color |
 | When closing the window | Ask, quit, or keep downloading in the background |
 | Download folder | Where files go; also editable from the series header on the home screen |
 | Cookie | Only needed for sign-in or restricted chapters; nothing is sent when empty |

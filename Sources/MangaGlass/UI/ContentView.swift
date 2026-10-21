@@ -4,7 +4,6 @@ enum WorkspaceDestination: String, CaseIterable, Identifiable {
     case download
     case queue
     case history
-    case settings
 
     var id: String { rawValue }
 
@@ -13,7 +12,6 @@ enum WorkspaceDestination: String, CaseIterable, Identifiable {
         case .download: return "首页"
         case .queue: return "下载"
         case .history: return "书架"
-        case .settings: return "设置"
         }
     }
 
@@ -22,7 +20,6 @@ enum WorkspaceDestination: String, CaseIterable, Identifiable {
         case .download: return "house"
         case .queue: return "arrow.down.circle"
         case .history: return "books.vertical"
-        case .settings: return "gearshape"
         }
     }
 }
@@ -59,9 +56,6 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            if MGTheme.palette.glass {
-                MGWindowGlass().ignoresSafeArea()
-            }
             shell
             ForEach(flightCenter.flights) { flight in
                 MGFlightView(flight: flight, target: CGPoint(x: queueTarget.midX, y: queueTarget.midY)) {
@@ -90,7 +84,7 @@ struct ContentView: View {
         HStack(spacing: 0) {
             WorkspaceSidebar(downloader: vm.downloader, destination: $destination, bump: flightCenter.bump)
                 .frame(width: 72)
-                .id(vm.themeStyle)
+                .id(vm.appearanceID)
 
             Rectangle()
                 .fill(MGTheme.divider(for: colorScheme))
@@ -112,7 +106,7 @@ struct ContentView: View {
                         }
                     }
                 }
-                .id(vm.themeStyle)
+                .id(vm.appearanceID)
                 .overlay(alignment: .top) {
                     if restoredQueueBinding.wrappedValue {
                         RestoredQueueBanner(
@@ -149,8 +143,6 @@ struct ContentView: View {
             HistoryWorkspaceView(vm: vm) {
                 destination = .download
             }
-        case .settings:
-            SettingsWorkspaceView(vm: vm)
         }
     }
 
@@ -236,9 +228,9 @@ private struct RestoredQueueBanner: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: 720)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: MGRadius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(MGTheme.palette.divider, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: MGRadius.card, style: .continuous).stroke(MGTheme.palette.divider, lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
     }

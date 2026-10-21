@@ -20,7 +20,7 @@ enum AppThemeStyle: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .classic: return "白色与系统蓝，窗口带磨砂玻璃质感。"
+        case .classic: return "白色与系统蓝，侧栏带磨砂玻璃质感。"
         case .ink: return "暖白纸面、墨色选中、朱红主操作；深色下为墨底纸字。"
         case .graphite: return "分层石墨灰，紫色只用于选中与主操作；浅色下为银灰。"
         }
@@ -34,26 +34,45 @@ struct MGPalette {
     let sidebar: Color?
     let text: Color
     let divider: Color
-    let accent: Color
+    var accent: Color
     let cell: Color
     let cellHover: Color
     let cellPressed: Color
     let field: Color
     let fieldStroke: Color
-    let selectedFill: Color
+    var selectedFill: Color
     let selectedText: Color
     let selectedStroke: Color
-    let softSelectedFill: Color
-    let softSelectedText: Color
-    let emphasisFill: Color
+    var softSelectedFill: Color
+    var softSelectedText: Color
+    var emphasisFill: Color
     let emphasisText: Color
     let numberForwardChapters: Bool
-    /// Frosted window material behind the canvas, with a hairline highlight on panels.
+    /// Frosted material behind the sidebar, with hairline strokes on content cards.
     var glass = false
     var cellStroke: Color = .clear
     /// Solid fill for the floating selection capsule; `nil` uses a material.
     var capsuleFill: Color? = nil
     var capsuleText: Color = Color(nsColor: .labelColor)
+    /// Selection is drawn in the accent color (so it should follow a system accent too).
+    var accentSelects = false
+
+    /// The same palette with the user's macOS accent color: the accent itself everywhere, and
+    /// accent-derived selection colors where the theme already selects in its accent (经典).
+    func withSystemAccent() -> MGPalette {
+        let system = NSColor.controlAccentColor
+        var palette = self
+        palette.accent = Color(nsColor: system)
+        if accentSelects {
+            palette.selectedFill = Color(nsColor: system)
+            palette.softSelectedFill = Self.dynamic { system.withAlphaComponent($0 ? 0.28 : 0.14) }
+            palette.softSelectedText = Color(nsColor: system)
+            palette.emphasisFill = Color(nsColor: system)
+        } else {
+            palette.softSelectedText = Color(nsColor: system)
+        }
+        return palette
+    }
 
     static func forStyle(_ style: AppThemeStyle) -> MGPalette {
         switch style {
@@ -63,20 +82,21 @@ struct MGPalette {
         }
     }
 
-    /// White + system blue over a frosted window (desktop shows through the canvas).
+    /// White + system blue. Frosted glass only under the sidebar (the navigation layer); the
+    /// content canvas and cards are solid, per HIG ("don't use glass in the content layer").
     private static let classic: MGPalette = {
         let blue = NSColor.systemBlue
         return MGPalette(
-            canvas: dynamic { $0 ? NSColor.black.withAlphaComponent(0.18) : NSColor.white.withAlphaComponent(0.42) },
+            canvas: hex(0xF5F6F8, 0x1D1D1F),
             sidebar: dynamic { $0 ? NSColor.black.withAlphaComponent(0.12) : NSColor.white.withAlphaComponent(0.22) },
             text: Color(nsColor: .labelColor),
             divider: dynamic { $0 ? NSColor.white.withAlphaComponent(0.10) : NSColor.black.withAlphaComponent(0.08) },
             accent: Color(nsColor: blue),
-            cell: dynamic { $0 ? NSColor.white.withAlphaComponent(0.07) : NSColor.white.withAlphaComponent(0.72) },
-            cellHover: dynamic { $0 ? NSColor.white.withAlphaComponent(0.12) : NSColor.white.withAlphaComponent(0.92) },
-            cellPressed: dynamic { $0 ? NSColor.white.withAlphaComponent(0.16) : NSColor.white },
-            field: dynamic { $0 ? NSColor.white.withAlphaComponent(0.08) : NSColor.white.withAlphaComponent(0.80) },
-            fieldStroke: dynamic { $0 ? NSColor.white.withAlphaComponent(0.12) : NSColor.white },
+            cell: hex(0xFFFFFF, 0x2A2A2C),
+            cellHover: hex(0xEEF3FB, 0x333336),
+            cellPressed: hex(0xE3ECFA, 0x3A3A3D),
+            field: hex(0xFFFFFF, 0x2A2A2C),
+            fieldStroke: hex(0xDDE1E7, 0x3A3A3D),
             selectedFill: Color(nsColor: blue),
             selectedText: .white,
             selectedStroke: .clear,
@@ -86,7 +106,8 @@ struct MGPalette {
             emphasisText: .white,
             numberForwardChapters: true,
             glass: true,
-            cellStroke: dynamic { $0 ? NSColor.white.withAlphaComponent(0.10) : NSColor.white.withAlphaComponent(0.9) }
+            cellStroke: hex(0xE4E7EC, 0x333336),
+            accentSelects: true
         )
     }()
 
@@ -139,7 +160,7 @@ struct MGPalette {
         dynamic { NSColor(rgb: $0 ? dark : light) }
     }
 
-    private static func dynamic(_ resolve: @escaping @Sendable (_ isDark: Bool) -> NSColor) -> Color {
+    fileprivate static func dynamic(_ resolve: @escaping @Sendable (_ isDark: Bool) -> NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             resolve(appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
         })

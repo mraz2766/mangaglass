@@ -75,6 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// input); changing their style mask trips an AppKit assertion and crashes the app at launch.
     static func isAppContentWindow(_ window: NSWindow) -> Bool {
         guard window.sheetParent == nil, !(window is NSPanel) else { return false }
+        // SwiftUI's Settings window keeps its standard look and normal close behavior.
+        if window.identifier?.rawValue.localizedCaseInsensitiveContains("settings") == true { return false }
         // Swift classes are module-qualified ("AppKit._NSGlassEffectWindow"); check the bare name.
         let className = NSStringFromClass(type(of: window)).split(separator: ".").last.map(String.init) ?? ""
         return !className.hasPrefix("_") && !className.hasPrefix("TUI")

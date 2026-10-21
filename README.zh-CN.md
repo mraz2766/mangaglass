@@ -10,7 +10,7 @@
 
 [English](./README.md) · 简体中文
 
-![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple) ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white) ![Version](https://img.shields.io/badge/version-1.15.0-2C78F2)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple) ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white) ![Version](https://img.shields.io/badge/version-1.16.0-2C78F2)
 
 <img src="./assets/screenshots/home-ink.png" alt="解析后的章节选择界面" width="900">
 
@@ -23,7 +23,7 @@
 - **下得稳**：并发、错峰和自动降速都有限制；每话先写入临时目录，校验完整后才落盘。
 - **看得清**：总进度、速度和剩余时间一目了然，任务按漫画分组，失败原因随时可查。
 - **随时接上**：书架记住看过的漫画；未完成的队列重启后会提示继续。
-- **三套主题**：经典（白蓝玻璃）、墨与纸、石墨，各自带浅色与深色。
+- **三套主题**：经典（白蓝，磨砂侧栏）、墨与纸、石墨，各自带浅色与深色。
 
 ## 支持站点
 
@@ -109,9 +109,11 @@ scripts/build_app.sh --install --open
 
 ## 设置
 
+用 ⌘, 打开（MangaGlass › 设置…），分「通用 / 下载 / 账户与站点」三个标签。
+
 | 项目 | 说明 |
 | --- | --- |
-| 主题 / 外观 | 选择主题，再选跟随系统、浅色或深色 |
+| 主题 / 外观 | 选择主题，再选跟随系统、浅色或深色；可选跟随系统强调色 |
 | 关闭窗口时 | 询问、直接退出，或留在后台继续下载 |
 | 下载目录 | 选择保存位置；也可在首页标题区直接修改 |
 | Cookie | 仅在需要登录或访问受限章节时填写，留空则不发送 |

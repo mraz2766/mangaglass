@@ -50,6 +50,7 @@ private enum StorageKey {
     static let lastComic = "lastComic"
     static let downloadQueue = "downloadQueue"
     static let themeMode = "themeMode"
+    static let followsSystemAccent = "followsSystemAccent"
 }
 
 @MainActor
@@ -123,6 +124,15 @@ final class MainViewModel: ObservableObject {
             persistString(themeStyle.rawValue, key: AppThemeStyle.storageKey)
         }
     }
+    /// Use the macOS accent color (System Settings › Appearance) instead of the theme's own.
+    @Published var followsSystemAccent: Bool = UserDefaults.standard.bool(forKey: StorageKey.followsSystemAccent) {
+        didSet {
+            MGTheme.followsSystemAccent = followsSystemAccent
+            if persistsState { UserDefaults.standard.set(followsSystemAccent, forKey: StorageKey.followsSystemAccent) }
+        }
+    }
+    /// Views that read `MGTheme` statics rebuild when this changes.
+    var appearanceID: String { "\(themeStyle.rawValue)-\(followsSystemAccent)" }
     @Published var comic: ComicInfo? {
         didSet {
             persistCodable(comic, key: StorageKey.lastComic)
@@ -179,6 +189,7 @@ final class MainViewModel: ObservableObject {
         self.downloader = DownloadCoordinator(api: api)
         downloader.configure(pacingMode: downloadPacingMode)
         MGTheme.style = themeStyle
+        MGTheme.followsSystemAccent = followsSystemAccent
         if persistsState {
             windowCloseBehavior = WindowCloseBehavior.load()
             restorePersistedState()

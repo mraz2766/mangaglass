@@ -30,10 +30,10 @@ struct MGHeroBanner<Content: View>: View {
                 // stop it from taking clicks (it covered the sidebar), so the backdrop never hit-tests.
                 .allowsHitTesting(false)
             }
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: MGRadius.hero, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: MGRadius.hero, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: MGRadius.hero, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(0.10), radius: 16, y: 6)
@@ -75,7 +75,7 @@ struct MGHeroCover: View {
         MGBookCover(url: url, title: title)
             .frame(width: width, height: width * 1.38)
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: MGRadius.small, style: .continuous)
                     .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
             }
             .shadow(color: .black.opacity(0.35), radius: 14, y: 8)
@@ -101,7 +101,7 @@ private struct MGBannerButtonBody: View {
 
     var body: some View {
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .font(MGFont.body.weight(.semibold))
             .foregroundStyle(kind == .primary ? Color.black : Color.white)
             .padding(.horizontal, 16)
             .frame(height: 32)
@@ -128,8 +128,8 @@ struct MGBannerStat: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Text(label).font(.system(size: 12)).opacity(0.75)
-            Text(value).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+            Text(label).font(MGFont.caption).opacity(0.75)
+            Text(value).font(MGFont.body.weight(.semibold)).monospacedDigit()
         }
         .padding(.horizontal, 10)
         .frame(height: 24)
@@ -153,15 +153,15 @@ struct MGChapterTile: View {
             VStack(spacing: 3) {
                 if let parts = MGChapterTitleParts(title) {
                     Text(parts.number)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.title2.weight(.semibold))
                         .monospacedDigit()
                     Text(parts.rest.isEmpty ? parts.unit : "\(parts.unit) \(parts.rest)")
-                        .font(.system(size: 10))
+                        .font(MGFont.micro)
                         .lineLimit(1)
                         .opacity(0.6)
                 } else {
                     Text(title)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(MGFont.captionStrong)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                         .padding(.horizontal, 6)
@@ -170,9 +170,9 @@ struct MGChapterTile: View {
             .foregroundStyle(selected ? palette.selectedText : Color.primary)
             .frame(maxWidth: .infinity, minHeight: 58)
             .background(selected ? palette.selectedFill : (hovering ? palette.cellHover : palette.cell),
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: MGRadius.card, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: MGRadius.card, style: .continuous)
                     .stroke(selected ? palette.selectedStroke : (palette.glass ? palette.cellStroke : .clear), lineWidth: 1)
             }
             .overlay(alignment: .topLeading) {
@@ -193,7 +193,7 @@ struct MGChapterTile: View {
                         .help("已下载")
                 }
             }
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: MGRadius.card, style: .continuous))
         }
         .buttonStyle(MGTilePressStyle())
         .onHover { hovering = $0 }

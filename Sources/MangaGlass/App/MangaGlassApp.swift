@@ -15,5 +15,9 @@ struct MangaGlassApp: App {
         .defaultSize(width: min(1200, NSScreen.main?.visibleFrame.width ?? 1200),
                      height: min(800, (NSScreen.main?.visibleFrame.height ?? 828) - 28))
         .windowResizability(.contentMinSize)
+
+        Settings {
+            SettingsView(vm: viewModel)
+        }
     }
 }
