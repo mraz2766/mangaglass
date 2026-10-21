@@ -46,7 +46,8 @@ enum CopyMangaError: LocalizedError {
         case .parseBlocked(let detail):
             return "疑似触发站点风控：\(detail)"
         case .cooldown(let seconds):
-            return "疑似触发风控，已进入冷却期，请 \(seconds) 秒后再试。"
+            let wait = seconds >= 120 ? "约 \(Int((Double(seconds) / 60).rounded(.up))) 分钟" : "\(seconds) 秒"
+            return "站点限流冷却中，请\(wait)后再试。"
         case .htmlParse(let detail):
             return "页面解析失败：\(detail)"
         case .copyMirrorsUnavailable(let attempts):
@@ -1353,6 +1354,14 @@ final class CopyMangaAPI: @unchecked Sendable {
                     retryTimes: 1,
                     extraHeaders: ["dnts": dnts]
                 )
+                if Self.isEmptyCopyCatalogPayload(text: text, decrypt: { self.decryptCopyDetailResults($0, ccz: ccz) }) {
+                    // Rate-limited Copy answers "请求成功" with a valid but empty catalog. Retrying other
+                    // endpoints, the rendered page or other mirrors only adds load, so stop the whole parse.
+                    await apiPacer.markThrottled()
+                    await antiBanGuard.block(site: site, seconds: Self.copySoftBlockCooldownSeconds)
+                    log("Copy 网页解析：comicdetail 返回空目录（章节数 0），判定为限流，停止本次解析")
+                    throw CopyMangaError.parseBlocked(Self.copySoftBlockMessage)
+                }
                 if let volumes = parseCopyDetailVolumesPayload(text: text, ccz: ccz), !volumes.isEmpty {
                     merged = mergeVolumes(merged, with: volumes)
                     let mergedCount = merged.reduce(0, { $0 + $1.chapters.count })
@@ -1363,11 +1372,14 @@ final class CopyMangaAPI: @unchecked Sendable {
                     }
                 }
             } catch let error as CopyMangaError {
+                if case .parseBlocked = error { throw error }
+                if case .cooldown = error { throw error }
                 if case .httpStatus(let code, _) = error, code == 404 {
                     continue
                 }
+                log("Copy 网页解析：comicdetail \(endpoint) 失败：\(error.localizedDescription)")
             } catch {
-                continue
+                log("Copy 网页解析：comicdetail \(endpoint) 失败：\(error.localizedDescription)")
             }
         }
         guard !merged.isEmpty else { return nil }
@@ -1446,6 +1458,36 @@ final class CopyMangaAPI: @unchecked Sendable {
             return parseCopyDetailVolumes(from: decodedRoot)
         }
         return nil
+    }
+
+    static let copySoftBlockCooldownSeconds = 20 * 60
+    static let copySoftBlockMessage = "拷贝漫画暂时隐藏了目录（请求过多），请约 20 分钟后再试"
+
+    /// True when the chapters endpoint returned a well-formed catalog with no chapters at all:
+    /// what Copy serves (as HTTP 200 "请求成功") to a client it is rate-limiting.
+    static func isEmptyCopyCatalogPayload(text: String, decrypt: (String) -> String?) -> Bool {
+        guard let data = text.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        var catalog = root["results"] as? [String: Any]
+        if catalog == nil, let encrypted = root["results"] as? String,
+           let decoded = decrypt(encrypted)?.data(using: .utf8) {
+            catalog = try? JSONSerialization.jsonObject(with: decoded) as? [String: Any]
+        }
+        guard let catalog else { return false }
+        let groups: [[String: Any]]
+        if let map = catalog["groups"] as? [String: Any] {
+            groups = map.values.compactMap { $0 as? [String: Any] }
+        } else if let list = catalog["groups"] as? [[String: Any]] {
+            groups = list
+        } else {
+            return false
+        }
+        guard !groups.isEmpty else { return false }
+        return groups.allSatisfy { group in
+            let chapters = (group["chapters"] as? [Any]) ?? []
+            let count = (group["count"] as? NSNumber)?.intValue ?? 0
+            return chapters.isEmpty && count == 0
+        }
     }
 
     private func decryptCopyDetailResults(_ raw: String, ccz: String) -> String? {
@@ -3555,7 +3597,7 @@ final class CopyMangaAPI: @unchecked Sendable {
     private func baseRequest(url: URL, cookie: String?, site: MangaSiteConfig) -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue(site.webBase.absoluteString, forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue(MGUserAgent.browser, forHTTPHeaderField: "User-Agent")
         if let cookie, !cookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             request.setValue(cookie, forHTTPHeaderField: "Cookie")
         }
@@ -4169,8 +4211,15 @@ actor ChapterImageURLCache {
 actor AntiBanGuard {
     private var blockedUntil: [String: Date] = [:]
 
+    /// Copy mirrors are one site behind several domains and rate-limit by IP, so they share a key.
+    static func key(for site: MangaSiteConfig) -> String {
+        let host = site.webBase.host?.lowercased()
+        if CopyMangaMirror.mirror(for: host) != nil { return "copy-family" }
+        return host ?? site.displayName.lowercased()
+    }
+
     func check(site: MangaSiteConfig) async throws {
-        let key = site.webBase.host?.lowercased() ?? site.displayName.lowercased()
+        let key = Self.key(for: site)
         while let until = blockedUntil[key], until > Date() {
             let remaining = until.timeIntervalSinceNow
             if remaining > 60 {
@@ -4184,7 +4233,7 @@ actor AntiBanGuard {
     }
 
     func block(site: MangaSiteConfig, seconds: Int) {
-        let key = site.webBase.host?.lowercased() ?? site.displayName.lowercased()
+        let key = Self.key(for: site)
         let until = Date().addingTimeInterval(TimeInterval(seconds))
         if let existing = blockedUntil[key], existing > until {
             return

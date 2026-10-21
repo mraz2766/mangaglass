@@ -1520,7 +1520,7 @@ final class DownloadCoordinator: ObservableObject {
                     }
                     var req = URLRequest(url: candidate)
                     req.setValue((refererURL ?? site.webBase).absoluteString, forHTTPHeaderField: "Referer")
-                    req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36", forHTTPHeaderField: "User-Agent")
+                    req.setValue(MGUserAgent.browser, forHTTPHeaderField: "User-Agent")
                     if let cookie, !cookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         req.setValue(cookie, forHTTPHeaderField: "Cookie")
                     }

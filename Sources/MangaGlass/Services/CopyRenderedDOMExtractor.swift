@@ -10,7 +10,7 @@ final class CopyRenderedDOMExtractor: NSObject, WKNavigationDelegate {
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.preferredContentMode = .desktop
         let view = WKWebView(frame: .zero, configuration: configuration)
-        view.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36"
+        view.customUserAgent = MGUserAgent.browser
         view.navigationDelegate = self
         return view
     }()
@@ -86,7 +86,7 @@ final class CopyRenderedDOMExtractor: NSObject, WKNavigationDelegate {
         }
 
         var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue(MGUserAgent.browser, forHTTPHeaderField: "User-Agent")
         if let cookie, !cookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             request.setValue(cookie, forHTTPHeaderField: "Cookie")
         }
