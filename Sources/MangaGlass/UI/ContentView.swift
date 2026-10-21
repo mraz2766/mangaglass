@@ -112,6 +112,23 @@ struct ContentView: View {
                     }
                 }
                 .id(vm.themeStyle)
+                .overlay(alignment: .top) {
+                    if restoredQueueBinding.wrappedValue {
+                        RestoredQueueBanner(
+                            summary: vm.restoredQueuePromptSummary,
+                            resume: { vm.resumeRestoredQueue() },
+                            open: {
+                                vm.dismissRestoredQueuePrompt()
+                                destination = .queue
+                            },
+                            later: { vm.dismissRestoredQueuePrompt() }
+                        )
+                        .padding(.top, 12)
+                        .padding(.horizontal, 24)
+                        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.85), value: restoredQueueBinding.wrappedValue)
             }
         }
     }
@@ -180,21 +197,48 @@ private struct ContentAlerts: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-        .alert("发现上次未完成的队列", isPresented: restoredQueueBinding) {
-            Button("继续下载") { vm.resumeRestoredQueue() }
-            Button("打开队列") {
-                vm.dismissRestoredQueuePrompt()
-                destination = .queue
-            }
-            Button("稍后处理", role: .cancel) { vm.dismissRestoredQueuePrompt() }
-        } message: {
-            Text(vm.restoredQueuePromptSummary)
-        }
-            .alert("退出 MangaGlass？", isPresented: terminationBinding) {
+        // The restored-queue prompt is an inline banner (`RestoredQueueBanner`), not an alert:
+        // a sheet presented at launch could end up attached but invisible, freezing the window.
+        .alert("退出 MangaGlass？", isPresented: terminationBinding) {
             Button("取消", role: .cancel) { vm.cancelTermination() }
             Button("退出", role: .destructive) { vm.confirmTermination() }
         } message: {
             Text(vm.terminationConfirmation?.message ?? "")
         }
+    }
+}
+
+/// Non-modal prompt shown when the app starts with unfinished downloads.
+private struct RestoredQueueBanner: View {
+    let summary: String
+    let resume: () -> Void
+    let open: () -> Void
+    let later: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "arrow.clockwise.circle.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(MGTheme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("发现上次未完成的下载").font(MGFont.bodyStrong)
+                Text(summary).font(MGFont.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer(minLength: 12)
+            Button("稍后", action: later)
+                .buttonStyle(MGActionButtonStyle(variant: .ghost))
+            Button("打开下载", action: open)
+                .buttonStyle(MGActionButtonStyle(variant: .secondary))
+            Button("继续下载", action: resume)
+                .buttonStyle(MGActionButtonStyle(variant: .primary, capsule: true))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 720)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(MGTheme.palette.divider, lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
     }
 }

@@ -55,15 +55,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         configuredWindowNumbers.insert(window.windowNumber)
 
-        window.styleMask.insert(.titled)
-        window.styleMask.insert(.closable)
-        window.styleMask.insert(.miniaturizable)
-        window.styleMask.insert(.resizable)
-        window.styleMask.remove(.fullSizeContentView)
-        window.title = ""
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = false
-        window.toolbarStyle = .automatic
+        // Only write what actually differs: restyling a window that has a sheet attached breaks the
+        // sheet on macOS 27 (it stays attached but invisible, blocking every click).
+        var mask = window.styleMask
+        mask.formUnion([.titled, .closable, .miniaturizable, .resizable])
+        mask.remove(.fullSizeContentView)
+        if mask != window.styleMask { window.styleMask = mask }
+        if !window.title.isEmpty { window.title = "" }
+        if window.titleVisibility != .hidden { window.titleVisibility = .hidden }
+        if window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = false }
+        if window.toolbarStyle != .automatic { window.toolbarStyle = .automatic }
         window.minSize = NSSize(width: 720, height: 540)
     }
 
