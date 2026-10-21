@@ -44,7 +44,6 @@ enum EnqueueResult: Equatable {
 private enum StorageKey {
     static let inputURL = "inputURL"
     static let authCookie = "authCookie"
-    static let copyImageConcurrency = "copyImageConcurrency"
     static let copyImageQuality = "copyImageQuality"
     static let lastDestinationPath = "lastDestinationPath"
     static let recentRecords = "recentRecords"
@@ -90,15 +89,14 @@ final class MainViewModel: ObservableObject {
     @Published var authCookie = "" {
         didSet { persistString(authCookie, key: StorageKey.authCookie) }
     }
-    @Published var copyImageConcurrency = 4 {
+    /// Replaces the old per-site concurrency numbers and the "Copy 图片并发" picker.
+    @Published var downloadPacingMode: DownloadPacingMode = .smart {
         didSet {
-            let clamped = min(8, max(4, copyImageConcurrency))
-            if clamped != copyImageConcurrency {
-                copyImageConcurrency = clamped
-                return
+            persistString(downloadPacingMode.rawValue, key: DownloadPacingMode.storageKey)
+            downloader.configure(pacingMode: downloadPacingMode)
+            if oldValue != downloadPacingMode {
+                appendLog("下载节奏切换为「\(downloadPacingMode.title)」，新开始的章节按新节奏执行")
             }
-            if persistsState { UserDefaults.standard.set(clamped, forKey: StorageKey.copyImageConcurrency) }
-            downloader.configure(copyImageConcurrency: clamped)
         }
     }
     @Published var copyImageQuality: CopyImageQuality = .high {
@@ -179,6 +177,7 @@ final class MainViewModel: ObservableObject {
         let api = CopyMangaAPI()
         self.api = api
         self.downloader = DownloadCoordinator(api: api)
+        downloader.configure(pacingMode: downloadPacingMode)
         MGTheme.style = themeStyle
         if persistsState {
             windowCloseBehavior = WindowCloseBehavior.load()
@@ -684,8 +683,6 @@ final class MainViewModel: ObservableObject {
             presentRetiredSiteMessage()
             return
         }
-        let queueConcurrent = queueMaxConcurrent()
-        
         let pendingItems = downloader.taskItems.filter { $0.state == .queued }
         if pendingItems.isEmpty {
             statusText = "无挂起的下载任务。"
@@ -693,7 +690,7 @@ final class MainViewModel: ObservableObject {
             return
         }
 
-        downloader.start(maxConcurrent: queueConcurrent)
+        downloader.start()
     }
 
 
@@ -711,8 +708,7 @@ final class MainViewModel: ObservableObject {
         }
         downloader.resume()
         if !downloader.isRunning {
-            let concurrent = downloadConcurrent(for: comic.site)
-            downloader.start(maxConcurrent: concurrent)
+            downloader.start()
         }
     }
 
@@ -748,8 +744,7 @@ final class MainViewModel: ObservableObject {
             copyImageQuality: item.copyImageQuality ?? .high
         )
         if !downloader.isRunning {
-             let concurrent = downloadConcurrent(for: item.comic.site)
-             downloader.start(maxConcurrent: concurrent)
+             downloader.start()
         }
     }
 
@@ -791,33 +786,7 @@ final class MainViewModel: ObservableObject {
             }
         }
 
-        downloader.start(maxConcurrent: queueMaxConcurrent())
-    }
-
-    private func queueMaxConcurrent() -> Int {
-        let hasManhuaGui = downloader.taskItems.contains {
-            $0.comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true
-        }
-        let hasCopy = downloader.taskItems.contains {
-            isCopyFamily($0.comic.site)
-        }
-        if hasCopy {
-            return 3
-        }
-        if hasManhuaGui {
-            return 4
-        }
-        return 5
-    }
-
-    func downloadConcurrent(for site: MangaSiteConfig) -> Int {
-        if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
-            return 4
-        }
-        if isCopyFamily(site) {
-            return 3
-        }
-        return 5
+        downloader.start()
     }
 
     private func isCopyFamily(_ site: MangaSiteConfig) -> Bool {
@@ -872,7 +841,7 @@ final class MainViewModel: ObservableObject {
             return
         }
         appendLog("继续上次恢复队列：排队 \(counts.queued) 话")
-        downloader.start(maxConcurrent: queueMaxConcurrent())
+        downloader.start()
     }
 
     func openDownloadDirectory() {
@@ -895,7 +864,7 @@ final class MainViewModel: ObservableObject {
     func continueManhuaGuiDownloadAfterCheck() {
         downloader.clearManhuaGuiSoftCircuit()
         appendLog("用户确认漫画柜网页可访问，继续下载")
-        downloader.start(maxConcurrent: queueMaxConcurrent())
+        downloader.start()
     }
 
     func continueCopyDownloadAfterCooldown() {
@@ -905,7 +874,7 @@ final class MainViewModel: ObservableObject {
             return
         }
         appendLog("拷贝漫画冷却结束，继续下载")
-        downloader.start(maxConcurrent: queueMaxConcurrent())
+        downloader.start()
     }
 
     func clearCaches() {
@@ -1020,8 +989,8 @@ final class MainViewModel: ObservableObject {
         let defaults = UserDefaults.standard
         inputURL = defaults.string(forKey: StorageKey.inputURL) ?? ""
         authCookie = defaults.string(forKey: StorageKey.authCookie) ?? ""
-        let storedImageConcurrency = defaults.integer(forKey: StorageKey.copyImageConcurrency)
-        copyImageConcurrency = storedImageConcurrency == 0 ? 4 : min(8, max(4, storedImageConcurrency))
+        downloadPacingMode = defaults.string(forKey: DownloadPacingMode.storageKey)
+            .flatMap(DownloadPacingMode.init(rawValue:)) ?? .smart
         copyImageQuality = defaults.string(forKey: StorageKey.copyImageQuality)
             .flatMap(CopyImageQuality.init(rawValue:)) ?? .high
         recentRecords = loadCodable([RecentComicRecord].self, key: StorageKey.recentRecords) ?? []

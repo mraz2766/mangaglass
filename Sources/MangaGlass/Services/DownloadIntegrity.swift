@@ -224,7 +224,7 @@ actor HostRequestBudget {
     private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
     private let maxPenaltyMS = 10_000
 
-    func acquire(key: String, kind: RequestKind, maxConcurrent: Int) async throws {
+    func acquire(key: String, kind: RequestKind, maxConcurrent: Int, spacingMS: ClosedRange<Int>? = nil) async throws {
         let limit = max(1, maxConcurrent)
         while (states[key]?.active ?? 0) >= limit {
             await withCheckedContinuation { continuation in
@@ -238,7 +238,7 @@ actor HostRequestBudget {
         }
 
         var state = states[key] ?? State()
-        let range: ClosedRange<Int> = kind == .chapter ? 650...1050 : 80...180
+        let range: ClosedRange<Int> = spacingMS ?? (kind == .chapter ? 650...1050 : 80...180)
         let spacingMS = Int.random(in: range) + state.penaltyMS
         let now = Date()
         let scheduled = max(now, state.nextAllowedAt)

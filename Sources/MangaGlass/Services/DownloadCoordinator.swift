@@ -24,9 +24,18 @@ final class DownloadCoordinator: ObservableObject {
         let host: String
         let chapterTitle: String
         let triggeredAt: Date
+        /// Set for rate-limit cooldowns (connection resets); the batch continues on its own then.
+        var autoResumeAt: Date? = nil
+
+        var remainingSeconds: Int {
+            max(0, Int(ceil((autoResumeAt ?? Date()).timeIntervalSinceNow)))
+        }
 
         var message: String {
-            "漫画柜疑似触发风控（HTTP \(statusCode)，\(host)）。请先打开网页确认是否可访问，再决定是否继续下载。"
+            if autoResumeAt != nil {
+                return "漫画柜正在限流（连接被站点断开），已暂停漫画柜请求，约 \(remainingSeconds) 秒后自动继续。"
+            }
+            return "漫画柜疑似触发风控（HTTP \(statusCode)，\(host)）。请先打开网页确认是否可访问，再决定是否继续下载。"
         }
     }
 
@@ -292,7 +301,12 @@ final class DownloadCoordinator: ObservableObject {
     private var copySuspiciousChapterFailures = 0
     private var copyRecoveryProbeActive = false
     private var copyRecoverySuccessfulChapters = 0
-    private var copyImageConcurrency = 4
+    private(set) var pacingMode: DownloadPacingMode = .smart
+    private var pacingStates: [SiteFamily: AdaptivePacingState] = [:]
+    private var connectionResetStreak: [SiteFamily: Int] = [:]
+    /// Chapters that failed on a connection reset; requeued when a cooldown starts.
+    private var connectionResetFailedIDs: Set<UUID> = []
+    private var autoResumeTask: Task<Void, Never>?
 
     init(api: CopyMangaAPI) {
         self.api = api
@@ -307,8 +321,157 @@ final class DownloadCoordinator: ObservableObject {
         self.logger = logger
     }
 
-    func configure(copyImageConcurrency: Int) {
-        self.copyImageConcurrency = min(8, max(4, copyImageConcurrency))
+    func configure(pacingMode: DownloadPacingMode) {
+        self.pacingMode = pacingMode
+        pacingStates = [:]
+        let manhuaGuiSpacing = SitePacing.make(mode: pacingMode, family: .manhuaGui).imageSpacingMS
+        let otherSpacing = SitePacing.make(mode: pacingMode, family: .other).imageSpacingMS
+        Task {
+            await manhuaGuiPacer.setDelayRange(manhuaGuiSpacing)
+            await requestPacer.setDelayRange(otherSpacing)
+        }
+    }
+
+    func pacingState(for family: SiteFamily) -> AdaptivePacingState {
+        if let state = pacingStates[family] { return state }
+        let state = AdaptivePacingState(pacing: .make(mode: pacingMode, family: family))
+        pacingStates[family] = state
+        return state
+    }
+
+    /// The most conservative chapter concurrency among sites that still have work.
+    private func desiredChapterConcurrency() -> Int {
+        let families = Set(taskItems.filter { $0.state == .queued || $0.state == .running }.map { SiteFamily.of($0.comic.site) })
+        return families.map { pacingState(for: $0).chapterConcurrency }.min() ?? 1
+    }
+
+    private func notePacingSuccess(_ site: MangaSiteConfig) {
+        let family = SiteFamily.of(site)
+        var state = pacingState(for: family)
+        if state.noteSuccess() {
+            let images = family == .copy ? "，图片并发 \(state.globalImageConcurrency)" : ""
+            log("节奏：\(family.title) 运行顺利，提速到章节并发 \(state.chapterConcurrency)\(images)")
+        }
+        pacingStates[family] = state
+    }
+
+    private func notePacingThrottle(_ site: MangaSiteConfig, reason: String) {
+        let family = SiteFamily.of(site)
+        var state = pacingState(for: family)
+        let dropped = state.noteThrottle()
+        pacingStates[family] = state
+        if dropped {
+            log("节奏：\(family.title) 出现限流信号（\(reason)），降到章节并发 \(state.chapterConcurrency)")
+        }
+    }
+
+    /// Connection-level failures sites use to rate-limit (TLS reset, dropped connection, timeout).
+    nonisolated static func isConnectionThrottle(_ error: Error) -> Bool {
+        if case CopyMangaError.connectionReset = error { return true }
+        if let urlError = error as? URLError {
+            return [.secureConnectionFailed, .networkConnectionLost, .cannotConnectToHost, .timedOut].contains(urlError.code)
+        }
+        return false
+    }
+
+    /// Waits for this chapter's start slot: chapters of one site start `chapterGap` apart,
+    /// with a longer rest every `restEveryChapters` chapters.
+    private func waitForChapterTurn(_ item: DownloadTaskItem) async throws {
+        let family = SiteFamily.of(item.comic.site)
+        var state = pacingState(for: family)
+        let gap = Double(Int.random(in: state.pacing.chapterGapMS)) / 1000
+        let rest = Double(Int.random(in: state.pacing.restSeconds))
+        let slot = state.reserveChapterSlot(now: Date(), gap: gap, rest: rest)
+        pacingStates[family] = state
+        if slot.rested {
+            log("节奏：\(family.title) 已连续开始 \(state.pacing.restEveryChapters) 话，休息约 \(Int(rest)) 秒")
+        }
+        if slot.wait > 0.05 {
+            try await Task.sleep(for: .milliseconds(Int(slot.wait * 1000)))
+        }
+        try Task.checkCancellation()
+        await pauseGate.waitIfPaused()
+    }
+
+    private func handleConnectionThrottle(for item: DownloadTaskItem, error: Error) {
+        let family = SiteFamily.of(item.comic.site)
+        notePacingThrottle(item.comic.site, reason: "连接被断开")
+        connectionResetFailedIDs.insert(item.id)
+        let streak = (connectionResetStreak[family] ?? 0) + 1
+        connectionResetStreak[family] = streak
+        guard streak >= 2 else { return }
+        let cooldown = pacingState(for: family).pacing.throttleCooldown
+        switch family {
+        case .manhuaGui:
+            guard manhuaGuiSoftCircuit == nil else { return }
+            startManhuaGuiCooldown(after: item, cooldown: cooldown)
+        case .other:
+            var state = pacingState(for: family)
+            state.postpone(until: Date().addingTimeInterval(cooldown))
+            pacingStates[family] = state
+            log("节奏：\(family.title) 连续 \(streak) 次连接被断开，暂停新章节约 \(Int(cooldown)) 秒")
+        case .copy:
+            break  // handled by the Copy soft circuit (`copyFailureOutcome`)
+        }
+    }
+
+    private func startManhuaGuiCooldown(after item: DownloadTaskItem, cooldown: TimeInterval) {
+        let resumeAt = Date().addingTimeInterval(cooldown)
+        manhuaGuiSoftCircuit = ManhuaGuiSoftCircuit(
+            statusCode: 0,
+            host: item.comic.site.webBase.host?.lowercased() ?? "-",
+            chapterTitle: "[\(item.chapter.volumeName)] \(item.chapter.displayName)",
+            triggeredAt: Date(),
+            autoResumeAt: resumeAt
+        )
+        // Chapters that only failed because of the throttle go back in line instead of staying failed.
+        taskItems = taskItems.map { existing in
+            var updated = existing
+            guard isManhuaGuiItem(updated) else { return updated }
+            if updated.state == .running { updated.state = .queued }
+            if case .failed = updated.state, connectionResetFailedIDs.contains(updated.id) {
+                updated.state = .queued
+                updated.finishedAt = nil
+            }
+            return updated
+        }
+        connectionResetFailedIDs = connectionResetFailedIDs.filter { id in
+            !taskItems.contains { $0.id == id && $0.state == .queued }
+        }
+        var state = pacingState(for: .manhuaGui)
+        state.postpone(until: resumeAt)
+        pacingStates[.manhuaGui] = state
+        connectionResetStreak[.manhuaGui] = 0
+        updateProgress()
+        updateCurrentTaskTitle()
+        message = manhuaGuiSoftCircuit?.message ?? message
+        log("漫画柜限流：连续连接被断开，暂停漫画柜请求 \(Int(cooldown)) 秒，相关章节已回到队列，到点自动继续")
+        scheduleAutoResume(after: cooldown)
+    }
+
+    /// Clears an expired cooldown and continues the queue without user action.
+    private func scheduleAutoResume(after seconds: TimeInterval) {
+        autoResumeTask?.cancel()
+        autoResumeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(1, seconds)))
+            guard let self, !Task.isCancelled else { return }
+            self.autoResumeTask = nil
+            var cleared = false
+            if self.manhuaGuiSoftCircuit?.autoResumeAt != nil {
+                self.manhuaGuiSoftCircuit = nil
+                cleared = true
+            }
+            if self.copySoftCircuit != nil, self.clearCopySoftCircuitIfReady() {
+                cleared = true
+            }
+            guard cleared else { return }
+            self.log("冷却结束，自动继续下载")
+            if self.isRunning {
+                self.message = "冷却结束，继续下载。"
+            } else if self.hasEligibleQueuedItems() {
+                self.start()
+            }
+        }
     }
 
     @discardableResult
@@ -429,6 +592,10 @@ final class DownloadCoordinator: ObservableObject {
         progressRefreshTask = nil
         isCancelling = false
         stopSpeedTicker()
+        autoResumeTask?.cancel()
+        autoResumeTask = nil
+        connectionResetStreak = [:]
+        connectionResetFailedIDs = []
         protectionState.clear()
         copySuspiciousChapterFailures = 0
         copyRecoveryProbeActive = false
@@ -453,7 +620,8 @@ final class DownloadCoordinator: ObservableObject {
         }
     }
 
-    func start(maxConcurrent: Int = 4) {
+    /// `maxConcurrent` overrides the pacing-derived chapter concurrency (tests only).
+    func start(maxConcurrent: Int? = nil) {
         guard !isRunning else {
             if hasEligibleQueuedItems() {
                 message = "已加入队列，当前下载会自动继续。"
@@ -484,13 +652,14 @@ final class DownloadCoordinator: ObservableObject {
         currentRunID = UUID()
         message = "下载开始..."
         updateCurrentTaskTitle()
-        let effectiveMaxConcurrent = copyRecoveryProbeActive ? 1 : maxConcurrent
-        log("下载开始：并发 \(effectiveMaxConcurrent)")
-        if pendingItems.contains(where: isManhuaGuiItem) {
-            log("ManhuaGui 策略：章节并发 4，图片并发 2，请求间隔 240-460ms")
-        }
-        if pendingItems.contains(where: { isCopyFamily($0.comic.site) }) {
-            log("拷贝漫画保护：章节并发 3，全局图片并发 \(copyImageConcurrency)，图片错峰 80-180ms，连续异常自动暂停")
+        let effectiveMaxConcurrent = copyRecoveryProbeActive ? 1 : (maxConcurrent ?? desiredChapterConcurrency())
+        log("下载开始：节奏「\(pacingMode.title)」，章节并发 \(effectiveMaxConcurrent)")
+        for family in Set(pendingItems.map { SiteFamily.of($0.comic.site) }).sorted(by: { $0.rawValue < $1.rawValue }) {
+            let state = pacingState(for: family)
+            let pacing = state.pacing
+            let images = family == .copy ? "全局图片并发 \(state.globalImageConcurrency)" : "每话图片并发 \(pacing.imageConcurrencyPerChapter)"
+            let rest = pacing.restEveryChapters > 0 ? "，每 \(pacing.restEveryChapters) 话休息 \(pacing.restSeconds.lowerBound)–\(pacing.restSeconds.upperBound)s" : ""
+            log("节奏：\(family.title) 章节并发 \(state.chapterConcurrency)，\(images)，图片间隔 \(pacing.imageSpacingMS.lowerBound)–\(pacing.imageSpacingMS.upperBound)ms，章节间隔 \(pacing.chapterGapMS.lowerBound / 1000)–\(Double(pacing.chapterGapMS.upperBound) / 1000)s\(rest)")
         }
         applySleepAssertion(active: true)
         // Speed and ETA describe this run only.
@@ -529,7 +698,7 @@ final class DownloadCoordinator: ObservableObject {
                     }
                     if Task.isCancelled { continue }
                     let desiredConcurrency = await MainActor.run {
-                        self.copyRecoveryProbeActive ? 1 : maxConcurrent
+                        self.copyRecoveryProbeActive ? 1 : (maxConcurrent ?? self.desiredChapterConcurrency())
                     }
                     while inFlightItemIDs.count < desiredConcurrency {
                         if let item = await MainActor.run(body: {
@@ -613,6 +782,8 @@ final class DownloadCoordinator: ObservableObject {
         masterTask?.cancel()
         Task { await pauseGate.resume() }
         Task { await copyHostBudget.wakeAll() }
+        autoResumeTask?.cancel()
+        autoResumeTask = nil
         progressRefreshTask?.cancel()
         progressRefreshTask = nil
 
@@ -654,6 +825,8 @@ final class DownloadCoordinator: ObservableObject {
         masterTask = nil
         Task { await pauseGate.resume() }
         Task { await copyHostBudget.wakeAll() }
+        autoResumeTask?.cancel()
+        autoResumeTask = nil
         progressRefreshTask?.cancel()
         progressRefreshTask = nil
         clearQueueState()
@@ -741,7 +914,8 @@ final class DownloadCoordinator: ObservableObject {
         updateProgress()
         updateCurrentTaskTitle()
         message = copySoftCircuit?.message ?? "拷贝漫画请求异常，已暂停当前批次。"
-        log("拷贝漫画软熔断：\(outcome.reason) host=\(host)，已保留后续队列")
+        log("拷贝漫画软熔断：\(outcome.reason) host=\(host)，已保留后续队列，冷却后自动继续")
+        scheduleAutoResume(after: outcome.cooldown + 1)
     }
 
     static func copyFailureOutcome(_ error: Error) -> (reason: String, cooldown: TimeInterval, immediate: Bool)? {
@@ -769,6 +943,8 @@ final class DownloadCoordinator: ObservableObject {
             return ("连续收到非预期网页", 5 * 60, false)
         case .allEndpoints404, .copyMirrorsUnavailable:
             return ("连续镜像或章节入口不可用", 5 * 60, false)
+        case .connectionReset:
+            return ("连续被站点断开连接（限流）", 10 * 60, false)
         default:
             return nil
         }
@@ -834,6 +1010,8 @@ final class DownloadCoordinator: ObservableObject {
         log("开始章节：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName)")
 
         do {
+            try await waitForChapterTurn(item)
+            guard shouldContinue(runID: runID, itemID: item.id) else { throw CancellationError() }
             let imageFetchStart = Date()
             let (imageURLs, reusedResolvedURLs) = try await resolveImageURLs(for: item)
             try Task.checkCancellation()
@@ -854,6 +1032,7 @@ final class DownloadCoordinator: ObservableObject {
             await MainActor.run {
                 guard self.currentRunID == runID else { return }
                 self.setState(.done, for: item.id)
+                self.connectionResetStreak[SiteFamily.of(item.comic.site)] = 0
                 self.lastCompletedOutputURL = self.chapterOutputFolder(for: item)
                 self.markChapterFinished(for: item.id, succeeded: true)
                 self.resetDownloadProtection(for: item.id)
@@ -879,6 +1058,9 @@ final class DownloadCoordinator: ObservableObject {
                 }
                 self.markChapterFinished(for: item.id, succeeded: false)
                 self.resetDownloadProtection(for: item.id)
+                if Self.isConnectionThrottle(error) {
+                    self.handleConnectionThrottle(for: item, error: error)
+                }
                 self.scheduleProgressRefresh(force: true)
             }
             await noteCopyChapterFailure(error, for: item)
@@ -907,7 +1089,8 @@ final class DownloadCoordinator: ObservableObject {
             try await copyHostBudget.acquire(
                 key: Self.copyBudgetKey,
                 kind: .chapter,
-                maxConcurrent: copyRecoveryProbeActive ? 1 : 3
+                maxConcurrent: copyRecoveryProbeActive ? 1 : pacingState(for: .copy).chapterConcurrency,
+                spacingMS: 200...400
             )
         }
 
@@ -1033,8 +1216,7 @@ final class DownloadCoordinator: ObservableObject {
 
         // Intra-chapter concurrency speeds up image downloading drastically
         // while the request pacer prevents API burst spikes and mitigates bans.
-        let isManhuaGui = item.comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true
-        let maxImageConcurrent = isManhuaGui ? 2 : 3
+        let maxImageConcurrent = pacingState(for: SiteFamily.of(item.comic.site)).pacing.imageConcurrencyPerChapter
         if isCopyFamily(item.comic.site) {
             log("拷贝漫画进入图片下载：[\(item.chapter.volumeName)] \(item.chapter.displayName)，\(imageURLs.count) 张，并发 \(maxImageConcurrent)")
         }
@@ -1281,7 +1463,8 @@ final class DownloadCoordinator: ObservableObject {
                         try await self.copyHostBudget.acquire(
                             key: Self.copyBudgetKey,
                             kind: .image,
-                            maxConcurrent: self.copyRecoveryProbeActive ? 1 : self.copyImageConcurrency
+                            maxConcurrent: self.copyRecoveryProbeActive ? 1 : self.pacingState(for: .copy).globalImageConcurrency,
+                            spacingMS: self.pacingState(for: .copy).pacing.imageSpacingMS
                         )
                     } else {
                         try await pacer.waitTurn()
@@ -1332,6 +1515,7 @@ final class DownloadCoordinator: ObservableObject {
                             self.log("ManhuaGui 图片请求失败：host=\(candidate.host ?? "-") status=\(http.statusCode) signed=\(hasSignature ? "是" : "否")")
                         }
                         if [403, 429, 503].contains(http.statusCode) {
+                            self.notePacingThrottle(site, reason: "HTTP \(http.statusCode)")
                             if site.webBase.host?.lowercased().contains("manhuagui.com") == true {
                                 self.triggerManhuaGuiSoftCircuitIfNeeded(
                                     statusCode: http.statusCode,
@@ -1370,6 +1554,9 @@ final class DownloadCoordinator: ObservableObject {
                         if isCopy {
                             await self.copyHostBudget.release(key: Self.copyBudgetKey, outcome: .throttled)
                         }
+                        if case DownloadIntegrityError.nonImagePayload = error {
+                            self.notePacingThrottle(site, reason: "返回非图片页面")
+                        }
                         throw error
                     }
                     if isCopy {
@@ -1378,6 +1565,7 @@ final class DownloadCoordinator: ObservableObject {
                         await pacer.markSuccess()
                     }
                     self.noteImageSuccess(itemID: itemID, host: candidate.host?.lowercased())
+                    self.notePacingSuccess(site)
                     self.noteNetworkPage(bytes: data.count)
                     let isHighResURL = candidate.absoluteString.localizedCaseInsensitiveContains("c1500x")
                     if isCopySite && isHighResURL { self.copyHighResMisses[comicKey] = 0 }
@@ -1415,6 +1603,7 @@ final class DownloadCoordinator: ObservableObject {
                     log("ManhuaGui 图片下载异常：host=\(candidate.host ?? "-") error=\(error.localizedDescription)")
                 }
                 if let urlError = error as? URLError, urlError.code == .timedOut {
+                    notePacingThrottle(site, reason: "请求超时")
                     if site.webBase.host?.lowercased().contains("manhuagui.com") != true {
                         await self.pacer(for: site).markThrottled()
                     }
@@ -2197,8 +2386,8 @@ private struct DownloadCircuitBreakError: LocalizedError {
 }
 
 actor RequestPacer {
-    private let minDelayMS: Int
-    private let maxDelayMS: Int
+    private var minDelayMS: Int
+    private var maxDelayMS: Int
     private let maxPenaltyMS: Int
     private let throttleStepMS: Int
     private let relaxStepMS: Int
@@ -2228,6 +2417,11 @@ actor RequestPacer {
 
     func markThrottled() {
         penaltyMS = min(maxPenaltyMS, penaltyMS + throttleStepMS)
+    }
+
+    func setDelayRange(_ range: ClosedRange<Int>) {
+        minDelayMS = range.lowerBound
+        maxDelayMS = max(range.upperBound, range.lowerBound)
     }
 
     func markSuccess() {

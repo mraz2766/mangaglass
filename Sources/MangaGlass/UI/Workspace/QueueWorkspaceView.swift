@@ -115,11 +115,16 @@ struct QueueWorkspaceView: View {
             header
             QueueSummaryCard(downloader: downloader, vm: vm)
             if let circuit = downloader.manhuaGuiSoftCircuit {
-                softCircuitNotice(circuit)
+                // Ticks once a second so the auto-resume countdown stays live while nothing else changes.
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    softCircuitNotice(circuit)
+                }
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
             if let circuit = downloader.copySoftCircuit {
-                copySoftCircuitNotice(circuit)
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    copySoftCircuitNotice(circuit)
+                }
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
             filters
@@ -286,17 +291,21 @@ struct QueueWorkspaceView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(MGTheme.warning)
             VStack(alignment: .leading, spacing: 2) {
-                Text("漫画柜可能触发风控")
+                Text(circuit.autoResumeAt != nil ? "漫画柜正在限流，冷却后自动继续" : "漫画柜可能触发风控")
                     .font(MGFont.bodyStrong)
-                Text("\(circuit.chapterTitle) · HTTP \(circuit.statusCode) · \(circuit.host)")
+                Text(circuit.autoResumeAt != nil
+                     ? "约 \(circuit.remainingSeconds) 秒后自动继续 · 已暂停新的漫画柜请求"
+                     : "\(circuit.chapterTitle) · HTTP \(circuit.statusCode) · \(circuit.host)")
                     .font(MGFont.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer()
-            Button("打开网页") { vm.openManhuaGuiWebCheck() }
-                .buttonStyle(MGActionButtonStyle(variant: .secondary))
-            Button("继续") { vm.continueManhuaGuiDownloadAfterCheck() }
+            if circuit.autoResumeAt == nil {
+                Button("打开网页") { vm.openManhuaGuiWebCheck() }
+                    .buttonStyle(MGActionButtonStyle(variant: .secondary))
+            }
+            Button(circuit.autoResumeAt != nil ? "立即继续" : "继续") { vm.continueManhuaGuiDownloadAfterCheck() }
                 .buttonStyle(MGActionButtonStyle(variant: .primary))
         }
         .padding(MGSpacing.sm)

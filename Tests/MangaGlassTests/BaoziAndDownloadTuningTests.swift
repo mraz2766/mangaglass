@@ -139,14 +139,13 @@ final class BaoziAndDownloadTuningTests: XCTestCase {
 
 @MainActor
 final class DownloadTuningViewModelTests: XCTestCase {
-    func testCopyConcurrencyDefaultsAndClamps() {
+    func testPacingDefaultsToSmartAndReachesTheCoordinator() {
         let vm = MainViewModel(persistsState: false)
-        XCTAssertEqual(vm.copyImageConcurrency, 4)
+        XCTAssertEqual(vm.downloadPacingMode, .smart)
         XCTAssertEqual(vm.copyImageQuality, .high)
-        XCTAssertEqual(vm.downloadConcurrent(for: .mangaCopy), 3)
-        vm.copyImageConcurrency = 99
-        XCTAssertEqual(vm.copyImageConcurrency, 8)
-        vm.copyImageConcurrency = 1
-        XCTAssertEqual(vm.copyImageConcurrency, 4)
+        XCTAssertEqual(vm.downloader.pacingMode, .smart)
+        vm.downloadPacingMode = .safe
+        XCTAssertEqual(vm.downloader.pacingMode, .safe)
+        XCTAssertEqual(vm.downloader.pacingState(for: .manhuaGui).chapterConcurrency, 1)
     }
 }

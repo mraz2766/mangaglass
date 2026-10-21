@@ -16,6 +16,9 @@ enum CopyMangaError: LocalizedError {
     case cooldown(Int)
     case htmlParse(String)
     case copyMirrorsUnavailable([String])
+    /// The site dropped or refused the connection (TLS reset, lost connection, timeout);
+    /// sites use this to rate-limit, so download pacing treats it as a throttle signal.
+    case connectionReset(String)
 
     var errorDescription: String? {
         switch self {
@@ -48,6 +51,8 @@ enum CopyMangaError: LocalizedError {
             return "页面解析失败：\(detail)"
         case .copyMirrorsUnavailable(let attempts):
             return "拷贝漫画镜像均未返回有效目录。已尝试：\(attempts.joined(separator: " | "))"
+        case .connectionReset(let detail):
+            return "站点断开了连接（通常是请求过于频繁被限流）：\(detail)"
         }
     }
 }
@@ -692,8 +697,8 @@ final class CopyMangaAPI: @unchecked Sendable {
         }
         if let urlError = error as? URLError {
             switch urlError.code {
-            case .timedOut:
-                return .htmlParse("\(site.displayName)\(phase)超时。")
+            case .secureConnectionFailed, .networkConnectionLost, .cannotConnectToHost, .timedOut:
+                return .connectionReset("\(site.displayName)\(phase)：\(urlError.localizedDescription)")
             case .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .networkConnectionLost:
                 return .htmlParse("\(site.displayName)\(phase)网络连接失败。")
             default:

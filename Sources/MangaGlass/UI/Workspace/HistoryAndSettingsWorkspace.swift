@@ -200,17 +200,18 @@ struct SettingsWorkspaceView: View {
                     }
                 }
 
-                settingsSection("下载性能", detail: "Copy 章节并发固定为 3；图片请求继续使用 80–180ms 错峰和动态降速。") {
-                    adaptiveSettingRow("Copy 图片并发") {
-                        Picker("Copy 图片并发", selection: $vm.copyImageConcurrency) {
-                            ForEach(4...8, id: \.self) { value in
-                                Text("\(value)").tag(value)
+                settingsSection("下载节奏", detail: vm.downloadPacingMode.detail + " 所有站点都会在限流时自动降速，并在冷却后自动继续。") {
+                    adaptiveSettingRow("节奏") {
+                        Picker("下载节奏", selection: $vm.downloadPacingMode) {
+                            ForEach(DownloadPacingMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
                             }
                         }
                         .labelsHidden()
                         .pickerStyle(.segmented)
                         .fixedSize()
                     }
+                    PacingSummary(mode: vm.downloadPacingMode)
                     adaptiveSettingRow("Copy 图片质量") {
                         Picker("Copy 图片质量", selection: $vm.copyImageQuality) {
                             ForEach(CopyImageQuality.allCases) { quality in
@@ -370,5 +371,26 @@ private struct ThemeCard: View {
         .animation(reduceMotion ? nil : MGMotion.regular, value: selected)
         .accessibilityLabel("主题：\(style.title)")
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Per-site numbers behind the selected pacing mode, so the choice isn't a black box.
+private struct PacingSummary: View {
+    let mode: DownloadPacingMode
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach([SiteFamily.manhuaGui, .copy, .other], id: \.self) { family in
+                let pacing = SitePacing.make(mode: mode, family: family)
+                Text("\(family.title)：\(Self.range(pacing.chapterConcurrency)) 话并发 · 图片间隔 \(pacing.imageSpacingMS.lowerBound)–\(pacing.imageSpacingMS.upperBound)ms · 每 \(pacing.restEveryChapters) 话休息约 \(pacing.restSeconds.lowerBound)s")
+                    .font(MGFont.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    private static func range(_ range: ClosedRange<Int>) -> String {
+        range.lowerBound == range.upperBound ? "\(range.lowerBound)" : "\(range.lowerBound)–\(range.upperBound)"
     }
 }
