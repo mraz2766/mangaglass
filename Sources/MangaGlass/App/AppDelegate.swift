@@ -46,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func configureIfNeeded(_ window: NSWindow) {
-        guard window.sheetParent == nil, !(window is NSPanel) else { return }
+        guard Self.isAppContentWindow(window) else { return }
         mainWindow = window
         window.delegate = self
 
@@ -65,6 +65,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.titlebarAppearsTransparent = false
         window.toolbarStyle = .automatic
         window.minSize = NSSize(width: 720, height: 540)
+    }
+
+    /// Only the app's own document window gets styled. `NSApp.windows` also lists AppKit-private
+    /// windows (on macOS 27 an alert brings an `_NSGlassEffectWindow`, plus `TUINSWindow` for text
+    /// input); changing their style mask trips an AppKit assertion and crashes the app at launch.
+    static func isAppContentWindow(_ window: NSWindow) -> Bool {
+        guard window.sheetParent == nil, !(window is NSPanel) else { return false }
+        // Swift classes are module-qualified ("AppKit._NSGlassEffectWindow"); check the bare name.
+        let className = NSStringFromClass(type(of: window)).split(separator: ".").last.map(String.init) ?? ""
+        return !className.hasPrefix("_") && !className.hasPrefix("TUI")
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
