@@ -466,7 +466,6 @@ private struct QueueSummaryCard: View {
     @ObservedObject var downloader: DownloadCoordinator
     let vm: MainViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var runStart: (date: Date, progress: Double)?
 
     var body: some View {
         let summary = downloader.progressSummary()
@@ -495,33 +494,17 @@ private struct QueueSummaryCard: View {
         }
         .padding(16)
         .mgPanel(radius: 14)
-        .onAppear { if downloader.isRunning { runStart = (Date(), downloader.progress) } }
-        .onChange(of: downloader.isRunning) { running in
-            runStart = running ? (Date(), downloader.progress) : nil
-        }
     }
 
     private func statusLine(counts: (queued: Int, running: Int, failed: Int, done: Int)) -> String {
         if downloader.isRunning {
             if downloader.isPaused { return "已暂停" }
-            var parts = [downloader.speedText.isEmpty ? "正在下载" : downloader.speedText]
-            if let eta = remainingText { parts.append(eta) }
-            return parts.joined(separator: " · ")
+            // speedText already carries the coordinator's own time-remaining estimate.
+            return downloader.speedText.isEmpty ? "正在下载" : downloader.speedText
         }
         if counts.queued > 0 { return "等待开始" }
         if downloader.taskItems.isEmpty { return "队列空闲" }
         return counts.failed > 0 ? "已结束，\(counts.failed) 话失败" : "全部完成"
-    }
-
-    /// Linear extrapolation from progress made since this run started.
-    private var remainingText: String? {
-        guard let runStart else { return nil }
-        let gained = downloader.progress - runStart.progress
-        let elapsed = Date().timeIntervalSince(runStart.date)
-        guard gained > 0.02, elapsed > 5 else { return nil }
-        let remaining = elapsed / gained * (1 - downloader.progress)
-        if remaining < 60 { return "剩余不到 1 分钟" }
-        return "剩余约 \(Int((remaining / 60).rounded())) 分钟"
     }
 
     @ViewBuilder private func controls(counts: (queued: Int, running: Int, failed: Int, done: Int)) -> some View {

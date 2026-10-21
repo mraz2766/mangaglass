@@ -875,7 +875,9 @@ final class DownloadCoordinator: ObservableObject {
 
         let chapterFolder = chapterOutputFolder(for: item)
         let recoverableFolder = await Self.recoverableChapterFolder(for: chapterFolder)
-        if let persisted = await Self.persistedImageURLs(in: recoverableFolder), !persisted.isEmpty {
+        // 漫画柜 image URLs carry an expiring signature (e=/m=); an old manifest would only earn 403s.
+        let maxManifestAge: TimeInterval? = isManhuaGuiItem(item) ? 20 * 60 : nil
+        if let persisted = await Self.persistedImageURLs(in: recoverableFolder, maxAge: maxManifestAge), !persisted.isEmpty {
             if let index = taskItems.firstIndex(where: { $0.id == item.id }) {
                 taskItems[index].resolvedImageURLs = persisted
             }
@@ -922,29 +924,12 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     private func updateProgress() {
-        let total = taskItems.reduce(0) { partial, item in
-            partial + max(1, chapterExpectedPages[item.id] ?? 1)
-        }
-
-        let completedWeighted = taskItems.reduce(0.0) { partial, item in
-            let expected = Double(max(1, chapterExpectedPages[item.id] ?? 1))
-            let done = Double(min(Int(expected), max(0, chapterCompletedPages[item.id] ?? 0)))
-
-            switch item.state {
-            case .queued:
-                return partial + 0
-            case .running:
-                // Show visible progress during "解析章节/获取图片列表" phase.
-                let baseline = min(0.12 * expected, max(0, expected - 0.1))
-                return partial + max(done, baseline)
-            case .done:
-                return partial + expected
-            case .failed, .canceled:
-                return partial + done
+        progress = Self.chapterWeightedProgress(
+            states: taskItems.map { item in
+                (item.state, chapterResolvedPageCounts.contains(item.id),
+                 chapterCompletedPages[item.id] ?? 0, chapterExpectedPages[item.id] ?? 1)
             }
-        }
-
-        progress = total == 0 ? 0 : min(1, completedWeighted / Double(total))
+        )
         updateCurrentTaskTitle()
         
         if isRunning && !isPaused, let start = downloadStartTime {
@@ -954,6 +939,35 @@ final class DownloadCoordinator: ObservableObject {
             }
             updateSpeedEstimate(elapsed: elapsed, currentCompleted: currentCompleted)
         }
+    }
+
+    /// Every chapter weighs the same, so the percent never jumps when a chapter's real page count
+    /// arrives. Failed chapters stay in the denominator at 0 (a run with failures can't read 100%);
+    /// canceled chapters leave it.
+    nonisolated static func chapterWeightedProgress(
+        states: [(state: DownloadTaskItem.State, resolved: Bool, completedPages: Int, expectedPages: Int)]
+    ) -> Double {
+        var weight = 0.0
+        var done = 0.0
+        for entry in states {
+            switch entry.state {
+            case .canceled:
+                continue
+            case .done:
+                weight += 1
+                done += 1
+            case .queued, .failed:
+                weight += 1
+            case .running:
+                weight += 1
+                // Small baseline while the image list is still being fetched.
+                let fraction = entry.resolved
+                    ? Double(min(entry.completedPages, max(1, entry.expectedPages))) / Double(max(1, entry.expectedPages))
+                    : 0
+                done += max(fraction, 0.03)
+            }
+        }
+        return weight == 0 ? 0 : min(1, done / weight)
     }
 
     private func setState(_ state: DownloadTaskItem.State, for id: UUID) {
@@ -1148,9 +1162,11 @@ final class DownloadCoordinator: ObservableObject {
         }.value
     }
 
-    nonisolated private static func persistedImageURLs(in folder: URL) async -> [URL]? {
+    nonisolated private static func persistedImageURLs(in folder: URL, maxAge: TimeInterval? = nil) async -> [URL]? {
         await Task.detached(priority: .utility) {
-            DownloadIntegrity.loadManifest(from: folder)?.imageURLs
+            guard let manifest = DownloadIntegrity.loadManifest(from: folder) else { return nil }
+            if let maxAge, Date().timeIntervalSince(manifest.updatedAt) > maxAge { return nil }
+            return manifest.imageURLs
         }.value
     }
 
@@ -1231,7 +1247,10 @@ final class DownloadCoordinator: ObservableObject {
                 throw DownloadCircuitBreakError(message: "图片 host 风控冷却中，已暂停该章节请求。")
             }
             do {
-                let page = try await retrying(times: 3) {
+                // Mirror hosts (漫画柜/包子) fail over on connection errors instead of retrying a dead host.
+                let hasMirrorFallback = index + 1 < candidates.count
+                    && (site == .baoziManga || site.webBase.host?.lowercased().contains("manhuagui.com") == true)
+                let page = try await retrying(times: 3, failFastOnConnectionError: hasMirrorFallback) {
                     try Task.checkCancellation()
                     guard self.shouldContinue(runID: runID, itemID: itemID) else { throw CancellationError() }
                     let isCopy = self.isCopyFamily(site)
@@ -1354,7 +1373,7 @@ final class DownloadCoordinator: ObservableObject {
                 continue
             } catch let error as URLError where Self.shouldTryNextBaoziImageHost(after: error) && index + 1 < candidates.count {
                 lastError = error
-                log("包子漫画图片连接异常，切换备用域名：\(candidate.host ?? "-") -> \(candidates[index + 1].host ?? "-")")
+                log("图片连接异常（\(error.code.rawValue)），切换备用域名：\(candidate.host ?? "-") -> \(candidates[index + 1].host ?? "-")")
                 continue
             } catch let error as DownloadCircuitBreakError {
                 throw error
@@ -1403,7 +1422,11 @@ final class DownloadCoordinator: ObservableObject {
         return comps.joined(separator: "_").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func retrying<T>(times: Int, operation: @escaping () async throws -> T) async throws -> T {
+    private func retrying<T>(
+        times: Int,
+        failFastOnConnectionError: Bool = false,
+        operation: @escaping () async throws -> T
+    ) async throws -> T {
         var lastError: Error?
         var backoffMS = 450
         for attempt in 1...times {
@@ -1425,6 +1448,10 @@ final class DownloadCoordinator: ObservableObject {
                 }
             } catch {
                 lastError = error
+                if failFastOnConnectionError, let urlError = error as? URLError,
+                   Self.shouldTryNextBaoziImageHost(after: urlError) {
+                    throw urlError
+                }
                 if attempt < times {
                     let timedOut = (error as? URLError)?.code == .timedOut
                     let extra = timedOut ? 900 : 0
@@ -1982,31 +2009,31 @@ final class DownloadCoordinator: ObservableObject {
         guard site.webBase.host?.lowercased().contains("manhuagui.com") == true else {
             return [original]
         }
+        return Self.manhuaGuiImageCandidates(for: original, preferredHost: manhuaGuiPreferredHost)
+    }
+
+    /// Image mirrors for 漫画柜. `cf` comes first: in user networks the older i/eu/us hosts can be
+    /// unreachable (TLS reset or timeout) while `cf` still serves the same signed paths.
+    nonisolated static let manhuaGuiImageHosts = [
+        "cf.hamreus.com", "i.hamreus.com", "eu.hamreus.com", "us.hamreus.com", "us2.hamreus.com", "eu2.hamreus.com"
+    ]
+
+    /// A host that already served images this session goes first, then the payload's own host, then mirrors.
+    nonisolated static func manhuaGuiImageCandidates(for original: URL, preferredHost: String?) -> [URL] {
         guard let host = original.host?.lowercased(), host.contains("hamreus.com") else {
             return [original]
         }
-
-        let fallbackHosts = ["i.hamreus.com", "eu.hamreus.com", "us.hamreus.com", "us2.hamreus.com", "eu2.hamreus.com"]
         var urls: [URL] = []
         var seen: Set<String> = []
-
-        if seen.insert(original.absoluteString).inserted {
-            urls.append(original)
+        func add(_ candidateHost: String) {
+            guard var components = URLComponents(url: original, resolvingAgainstBaseURL: false) else { return }
+            components.host = candidateHost
+            guard let url = components.url, seen.insert(url.absoluteString).inserted else { return }
+            urls.append(url)
         }
-
-        if let preferred = manhuaGuiPreferredHost,
-           preferred != host,
-           let preferredURL = replacingHost(of: original, with: preferred),
-           seen.insert(preferredURL.absoluteString).inserted {
-            urls.append(preferredURL)
-        }
-
-        for fallback in fallbackHosts where fallback != host {
-            guard let url = replacingHost(of: original, with: fallback) else { continue }
-            if seen.insert(url.absoluteString).inserted {
-                urls.append(url)
-            }
-        }
+        if let preferredHost { add(preferredHost) }
+        add(host)
+        manhuaGuiImageHosts.forEach(add)
         return urls
     }
 

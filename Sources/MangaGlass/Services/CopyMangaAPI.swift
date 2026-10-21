@@ -3063,7 +3063,7 @@ final class CopyMangaAPI: @unchecked Sendable {
 
     private func manhuaGuiFallbackHost(site: MangaSiteConfig, path: String) -> String? {
         guard isManhuaGui(site), !path.isEmpty else { return nil }
-        return "https://i.hamreus.com"
+        return "https://cf.hamreus.com"
     }
 
     private func scriptContents(from html: String) -> [String] {
