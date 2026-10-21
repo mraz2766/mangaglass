@@ -89,7 +89,6 @@ struct DownloadWorkspaceView: View {
             Task { await refreshDownloadedChapters() }
         }
         .onChange(of: vm.comic?.slug) { slug in
-            vm.collapsedVolumeIDs.removeAll()
             if slug != nil { MGRevealClock.mark() }
         }
         .onDisappear {
@@ -247,14 +246,14 @@ struct DownloadWorkspaceView: View {
     }
 
     /// Cover, title, meta and category chips in one band above the grid.
-    /// Banner: blurred cover backdrop, big cover, title, stats and the two quick actions.
+    /// Banner: white glass, big cover, title, status and the two quick actions.
     private var comicHeader: some View {
-        MGHeroBanner(coverURL: vm.comic?.coverURL) {
+        MGHeroBanner {
             HStack(alignment: .bottom, spacing: 20) {
                 Button { showCover = true } label: {
                     if vm.isLoading && vm.comic == nil {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.white.opacity(0.12))
+                            .fill(MGTheme.palette.cell)
                             .frame(width: 112, height: 155)
                     } else {
                         MGHeroCover(url: vm.comic?.coverURL, title: vm.comic?.name ?? "?")
@@ -275,9 +274,6 @@ struct DownloadWorkspaceView: View {
                         .font(MGFont.heroTitle)
                         .lineLimit(2)
                         .textSelection(.enabled)
-                    if vm.comic != nil {
-                        bannerStats
-                    }
                     parseStatus
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -313,21 +309,6 @@ struct DownloadWorkspaceView: View {
                 }
             }
         }
-    }
-
-    private var bannerStats: some View {
-        HStack(spacing: 6) {
-            ForEach(vm.displayVolumes.prefix(3)) { volume in
-                MGBannerStat(value: "\(volume.chapters.count)", label: volume.displayName)
-            }
-            if let latest = vm.latestChapterTitle {
-                MGBannerStat(value: latest, label: "最新")
-            }
-            if !downloadedChapterIDs.isEmpty {
-                MGBannerStat(value: "\(downloadedChapterIDs.count)", label: "已下载")
-            }
-        }
-        .lineLimit(1)
     }
 
     /// Categories on the left, search and sort on the right, below the banner.
@@ -697,7 +678,7 @@ struct DownloadWorkspaceView: View {
                 if dragStart == nil {
                     dragStart = value.startLocation
                     dragAdditive = NSEvent.modifierFlags.contains(.command)
-                    dragChapterOrder = vm.visibleChapters.map(\.id)
+                    dragChapterOrder = vm.expandedChapters.map(\.id)
                     dragChapterIDs = Set(dragChapterOrder)
                     dragStartChapterID = chapterID(at: value.startLocation)
                     dragLastChapterID = dragStartChapterID
@@ -738,7 +719,7 @@ struct DownloadWorkspaceView: View {
     }
 
     private func chapterRange(from startID: String, to endID: String) -> Set<String> {
-        let ids = dragChapterOrder.isEmpty ? vm.visibleChapters.map(\.id) : dragChapterOrder
+        let ids = dragChapterOrder.isEmpty ? vm.expandedChapters.map(\.id) : dragChapterOrder
         guard let start = ids.firstIndex(of: startID), let end = ids.firstIndex(of: endID) else { return [startID] }
         return Set(ids[min(start, end)...max(start, end)])
     }
@@ -771,7 +752,7 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
             ForEach(Array(sections.enumerated()), id: \.element.id) { sectionIndex, section in
                 Section {
                     if !collapsedVolumeIDs.contains(section.id) {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 8)], spacing: 8) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 60), spacing: 6)], spacing: 6) {
                             ForEach(Array(section.chapters.enumerated()), id: \.element.id) { index, chapter in
                                 chapterCell(chapter)
                                     .mgStaggerAppear(index: sectionIndex * 12 + index)

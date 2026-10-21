@@ -11,6 +11,7 @@ final class RestoredQueuePromptTests: XCTestCase {
         _ = NSApplication.shared
         let vm = MainViewModel(persistsState: false)
         vm.applyFetchedComic(SelectionTests.fixture(chapterCount: 55, groups: 2), final: true, sourceText: "test")
+        vm.collapsedVolumeIDs = []  // groups fold by default; this test clicks a tile
         vm.shouldOfferRestoredQueuePrompt = true
         let size = NSSize(width: 974, height: 740)
         let host = NSHostingView(rootView: ContentView(vm: vm))

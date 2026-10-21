@@ -60,7 +60,7 @@ struct HistoryWorkspaceView: View {
 
     /// The most recently opened comic, presented like the chapter page banner.
     private func recentBanner(_ record: RecentComicRecord) -> some View {
-        MGHeroBanner(coverURL: record.coverURL, height: 190) {
+        MGHeroBanner(height: 190) {
             HStack(alignment: .bottom, spacing: 20) {
                 MGHeroCover(url: record.coverURL, title: record.title, width: 104)
                 VStack(alignment: .leading, spacing: 8) {
@@ -70,10 +70,9 @@ struct HistoryWorkspaceView: View {
                     Text(record.title)
                         .font(MGFont.heroTitle)
                         .lineLimit(2)
-                    HStack(spacing: 6) {
-                        MGBannerStat(value: record.siteName, label: "来源")
-                        MGBannerStat(value: "\(records.count)", label: "书架共")
-                    }
+                    Text(record.siteName)
+                        .font(MGFont.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Button("继续") {

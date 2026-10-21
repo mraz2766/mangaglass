@@ -34,6 +34,7 @@ final class LayoutSnapshots: XCTestCase {
                 vm.applyFetchedComic(SelectionTests.fixture(chapterCount: 160, groups: 4), final: true, sourceText: "测试")
                 vm.selectedChapterIDs = ["0", "4", "8", "1"]
                 vm.catalogFetchedAt = Date().addingTimeInterval(-3 * 3600)
+                vm.collapsedVolumeIDs = []  // show the tiles; the "collapsed" scenario covers the default
                 let root = ContentView(vm: vm)
                     .environment(\.colorScheme, dark ? .dark : .light)
                 try await render(root, size: NSSize(width: width, height: height),

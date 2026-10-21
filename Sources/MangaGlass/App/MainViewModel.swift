@@ -239,8 +239,20 @@ final class MainViewModel: ObservableObject {
             }
     }
 
+    /// Chapters in the current category and search. Collapsing a group only hides its tiles, so
+    /// "全选可见 / 下载全部可见" still cover it.
     var visibleChapters: [ComicChapter] {
+        filteredVolumeSections.flatMap(\.chapters)
+    }
+
+    /// Chapters whose tiles are on screen (groups expanded): the order ⇧-click and drag ranges follow.
+    var expandedChapters: [ComicChapter] {
         filteredVolumeSections.filter { !collapsedVolumeIDs.contains($0.id) }.flatMap(\.chapters)
+    }
+
+    /// New comics open with every group folded, except a lone group (nothing else to show).
+    static func defaultCollapsedVolumeIDs(for volumes: [ComicVolume]) -> Set<String> {
+        volumes.count > 1 ? Set(volumes.map(\.id)) : []
     }
 
     var visibleChapterCount: Int {
@@ -495,10 +507,18 @@ final class MainViewModel: ObservableObject {
         if isNewComic {
             selectedVolumeIDs = Set(fetched.volumes.map(\.id))
             clearChapterSelection()
-            collapsedVolumeIDs.removeAll()
+            collapsedVolumeIDs = Self.defaultCollapsedVolumeIDs(for: fetched.volumes)
             chapterSearchQuery = ""
         } else {
-            selectedVolumeIDs.formUnion(Set(fetched.volumes.map(\.id)).subtracting(previousVolumeIDs))
+            let added = Set(fetched.volumes.map(\.id)).subtracting(previousVolumeIDs)
+            selectedVolumeIDs.formUnion(added)
+            if previousVolumeIDs.count <= 1 {
+                // A partial result with one group grew into several: fold them like a new comic.
+                collapsedVolumeIDs = Self.defaultCollapsedVolumeIDs(for: fetched.volumes)
+            } else {
+                // Keep what the user expanded; groups that newly appear start folded.
+                collapsedVolumeIDs.formUnion(added)
+            }
         }
         statusText = final
             ? "加载成功：\(fetched.name)（\(fetched.site.displayName)）"
@@ -550,7 +570,7 @@ final class MainViewModel: ObservableObject {
     }
 
     func selectChapter(_ chapter: ComicChapter, modifiers: NSEvent.ModifierFlags) {
-        let orderedIDs = visibleChapters.map(\.id)
+        let orderedIDs = expandedChapters.map(\.id)
 
         if modifiers.contains(.shift),
            let anchor = lastSelectedChapterID,
@@ -1082,6 +1102,7 @@ final class MainViewModel: ObservableObject {
         comic = loadCodable(ComicInfo.self, key: StorageKey.lastComic)
         if let comic {
             selectedVolumeIDs = Set(comic.volumes.map(\.id))
+            collapsedVolumeIDs = Self.defaultCollapsedVolumeIDs(for: comic.volumes)
             let stats = parsedStats(from: comic)
             statusText = "已恢复上次解析：\(comic.name)"
             let restored = comic

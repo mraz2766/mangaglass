@@ -1,71 +1,37 @@
 import SwiftUI
 
-/// Large header band. The backdrop is the comic's own cover, heavily blurred and darkened,
-/// so every comic brings its own tone; without a cover it falls back to a neutral graphite wash.
-/// Content is laid out in dark appearance (white text) regardless of the app theme.
+/// Large header band: frosted white glass (dark glass in dark mode) with a hairline edge and a soft
+/// shadow. Content uses the normal foreground colors, so it reads like the rest of the page.
 struct MGHeroBanner<Content: View>: View {
-    let coverURL: URL?
     var height: CGFloat = 210
     @ViewBuilder let content: () -> Content
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        // The backdrop lives in `.background` so a fill-scaled cover can never widen the layout
-        // (inside a ZStack it pushed the content out of the visible area).
+        let shape = RoundedRectangle(cornerRadius: MGRadius.hero, style: .continuous)
         content()
             .padding(20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-            .environment(\.colorScheme, .dark)
-            .foregroundStyle(.white)
             .frame(height: height)
             .frame(maxWidth: .infinity)
             .background {
                 ZStack {
-                    backdrop
-                    LinearGradient(
-                        colors: [Color.black.opacity(0.18), Color.black.opacity(0.58)],
-                        startPoint: .top, endPoint: .bottom
-                    )
+                    shape.fill(.regularMaterial)
+                    // Brightens the material toward white; barely there in dark mode.
+                    shape.fill(Color.white.opacity(colorScheme == .dark ? 0.04 : 0.55))
                 }
-                // The fill-scaled, enlarged cover overflows the banner; clipping hides it but does not
-                // stop it from taking clicks (it covered the sidebar), so the backdrop never hit-tests.
                 .allowsHitTesting(false)
             }
-            .clipShape(RoundedRectangle(cornerRadius: MGRadius.hero, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: MGRadius.hero, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: MGRadius.hero, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-        }
-        .shadow(color: .black.opacity(0.10), radius: 16, y: 6)
-    }
-
-    @ViewBuilder private var backdrop: some View {
-        let fallback = LinearGradient(
-            colors: [Color(white: 0.30), Color(white: 0.16)],
-            startPoint: .topLeading, endPoint: .bottomTrailing
-        )
-        if let coverURL, !CopyMangaMirror.isRetired(coverURL.host) {
-            CachedCoverImage(url: coverURL) { phase in
-                switch phase {
-                case .success(let image):
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .blur(radius: 48, opaque: true)
-                        .saturation(1.25)
-                        .scaleEffect(1.2)
-                        .transition(.opacity)
-                case .loading, .failure:
-                    fallback
-                }
+            .clipShape(shape)
+            .contentShape(shape)
+            .overlay {
+                shape.stroke(colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.06), lineWidth: 0.5)
             }
-        } else {
-            fallback
-        }
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.25 : 0.06), radius: 14, y: 4)
     }
 }
 
-/// Cover as it sits on a banner: white hairline, soft shadow.
+/// Cover as it sits on a banner: hairline edge, soft shadow.
 struct MGHeroCover: View {
     let url: URL?
     let title: String
@@ -74,15 +40,11 @@ struct MGHeroCover: View {
     var body: some View {
         MGBookCover(url: url, title: title)
             .frame(width: width, height: width * 1.38)
-            .overlay {
-                RoundedRectangle(cornerRadius: MGRadius.small, style: .continuous)
-                    .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
-            }
-            .shadow(color: .black.opacity(0.35), radius: 14, y: 8)
+            .shadow(color: .black.opacity(0.18), radius: 10, y: 5)
     }
 }
 
-/// Pill buttons for use on a banner: white primary, translucent secondary.
+/// Pill buttons for use on a banner: accent primary, quiet gray secondary.
 struct MGBannerButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary }
     var kind: Kind = .primary
@@ -102,7 +64,7 @@ private struct MGBannerButtonBody: View {
     var body: some View {
         configuration.label
             .font(MGFont.body.weight(.semibold))
-            .foregroundStyle(kind == .primary ? Color.black : Color.white)
+            .foregroundStyle(kind == .primary ? Color.white : Color.primary)
             .padding(.horizontal, 16)
             .frame(height: 32)
             .background(fill, in: Capsule())
@@ -115,8 +77,8 @@ private struct MGBannerButtonBody: View {
 
     private var fill: Color {
         switch kind {
-        case .primary: return Color.white.opacity(hovering ? 0.88 : 1)
-        case .secondary: return Color.white.opacity(hovering ? 0.28 : 0.18)
+        case .primary: return MGTheme.accent.opacity(hovering ? 0.88 : 1)
+        case .secondary: return Color.primary.opacity(hovering ? 0.10 : 0.06)
         }
     }
 }
@@ -133,7 +95,7 @@ struct MGBannerStat: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 24)
-        .background(Color.white.opacity(0.14), in: Capsule())
+        .background(Color.primary.opacity(0.06), in: Capsule())
     }
 }
 
@@ -150,10 +112,10 @@ struct MGChapterTile: View {
     var body: some View {
         let palette = MGTheme.palette
         Button(action: action) {
-            VStack(spacing: 3) {
+            VStack(spacing: 1) {
                 if let parts = MGChapterTitleParts(title) {
                     Text(parts.number)
-                        .font(.title2.weight(.semibold))
+                        .font(MGFont.section)
                         .monospacedDigit()
                     Text(parts.rest.isEmpty ? parts.unit : "\(parts.unit) \(parts.rest)")
                         .font(MGFont.micro)
@@ -168,19 +130,19 @@ struct MGChapterTile: View {
                 }
             }
             .foregroundStyle(selected ? palette.selectedText : Color.primary)
-            .frame(maxWidth: .infinity, minHeight: 58)
+            .frame(maxWidth: .infinity, minHeight: 42)
             .background(selected ? palette.selectedFill : (hovering ? palette.cellHover : palette.cell),
-                        in: RoundedRectangle(cornerRadius: MGRadius.card, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: MGRadius.small, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: MGRadius.card, style: .continuous)
+                RoundedRectangle(cornerRadius: MGRadius.small, style: .continuous)
                     .stroke(selected ? palette.selectedStroke : (palette.glass ? palette.cellStroke : .clear), lineWidth: 1)
             }
             .overlay(alignment: .topLeading) {
                 if selected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(palette.selectedText)
-                        .padding(6)
+                        .padding(4)
                         .transition(.scale.combined(with: .opacity))
                 }
             }
@@ -188,12 +150,12 @@ struct MGChapterTile: View {
                 if downloaded {
                     Circle()
                         .fill(MGTheme.success)
-                        .frame(width: 6, height: 6)
-                        .padding(8)
+                        .frame(width: 5, height: 5)
+                        .padding(5)
                         .help("已下载")
                 }
             }
-            .contentShape(RoundedRectangle(cornerRadius: MGRadius.card, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: MGRadius.small, style: .continuous))
         }
         .buttonStyle(MGTilePressStyle())
         .onHover { hovering = $0 }

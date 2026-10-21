@@ -3,7 +3,7 @@ import SwiftUI
 import XCTest
 @testable import MangaGlass
 
-/// Regression: the banner's fill-scaled, enlarged cover overflowed its clip and swallowed clicks
+/// Regression: a fill-scaled cover inside the banner once overflowed its clip and swallowed clicks
 /// on the sidebar next to it (only with a real cover loaded, so earlier probes never saw it).
 @MainActor
 final class BannerHitTestTests: XCTestCase {
@@ -21,7 +21,7 @@ final class BannerHitTestTests: XCTestCase {
                 Color.gray.opacity(0.2).frame(width: 72, height: 400)
             }
             .buttonStyle(.plain)
-            MGHeroBanner(coverURL: coverURL) { Text("Banner") }
+            MGHeroBanner { MGHeroCover(url: coverURL, title: "封面") }
                 .padding(16)
         }
         .frame(width: size.width, height: size.height)

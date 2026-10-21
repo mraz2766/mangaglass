@@ -12,6 +12,7 @@ final class GlassHitTestTests: XCTestCase {
         vm.themeStyle = .classic
         defer { vm.themeStyle = .ink }
         vm.applyFetchedComic(SelectionTests.fixture(chapterCount: 55, groups: 2), final: true, sourceText: "probe")
+        vm.collapsedVolumeIDs = []  // groups fold by default; this test clicks a tile
         let size = NSSize(width: 974, height: 740)
         let host = NSHostingView(rootView: ContentView(vm: vm))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)

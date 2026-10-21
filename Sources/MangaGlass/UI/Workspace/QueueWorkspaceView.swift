@@ -575,7 +575,7 @@ private struct QueueSummaryCard: View {
         let counts = downloader.countsSummary()
         let percent = Int((downloader.progress * 100).rounded())
         let featured = featuredComic
-        MGHeroBanner(coverURL: featured?.coverURL, height: 190) {
+        MGHeroBanner(height: 190) {
             HStack(alignment: .bottom, spacing: 20) {
                 if let featured {
                     MGHeroCover(url: featured.coverURL, title: featured.name, width: 96)
@@ -680,8 +680,8 @@ struct MGBannerProgress: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.22))
-                Capsule().fill(Color.white)
+                Capsule().fill(Color.primary.opacity(0.10))
+                Capsule().fill(MGTheme.accent)
                     .frame(width: max(value > 0 ? 6 : 0, proxy.size.width * min(1, max(0, value))))
             }
         }

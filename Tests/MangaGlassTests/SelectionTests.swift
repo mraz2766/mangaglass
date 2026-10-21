@@ -52,17 +52,19 @@ final class SelectionTests: XCTestCase {
         let vm = model()
         vm.selectedChapterIDs = ["0", "1"]
         vm.collapsedVolumeIDs = ["g0"]
-        XCTAssertEqual(vm.hiddenSelectedChapterCount, 1)
+        // Folding only hides tiles: the selection still counts as visible.
+        XCTAssertEqual(vm.hiddenSelectedChapterCount, 0)
         vm.collapsedVolumeIDs = ["g0", "g1"]
         XCTAssertTrue(vm.hasAnyMatchingChapters, "全部折叠后仍须显示可展开的分组标题")
-        XCTAssertEqual(vm.visibleChapterCount, 0)
+        XCTAssertEqual(vm.visibleChapterCount, 34, "折叠后「下载全部可见」仍覆盖当前分类")
+        XCTAssertTrue(vm.expandedChapters.isEmpty)
         vm.collapsedVolumeIDs = ["g0"]
         vm.chapterSortDirection = .descending
         vm.deselectAllVolumes()
         XCTAssertEqual(vm.selectedChapterIDs, ["0", "1"])
         vm.selectAllVolumes()
         vm.selectAllVisible()
-        XCTAssertEqual(vm.selectedChapters.count, 18)
+        XCTAssertEqual(vm.selectedChapters.count, 34)
         XCTAssertTrue(vm.selectedChapterIDs.contains("0"))
     }
 
@@ -84,9 +86,20 @@ final class SelectionTests: XCTestCase {
         XCTAssertEqual(vm.selectedChapterIDs, ["0"])
     }
 
+    func testNewComicFoldsGroupsExceptALoneOne() async {
+        let vm = model()
+        XCTAssertEqual(vm.collapsedVolumeIDs, ["g0", "g1"])
+        let single = Self.fixture(chapterCount: 10, groups: 1)
+        let lone = ComicInfo(slug: "lone", name: "单组", coverURL: nil, volumes: single.volumes,
+                             site: single.site, apiPathPrefix: "", apiBaseURL: single.apiBaseURL)
+        vm.applyFetchedComic(lone, final: true, sourceText: "测试")
+        XCTAssertTrue(vm.collapsedVolumeIDs.isEmpty)
+    }
+
     func testClickShiftCommandAndDrag() async {
         let vm = model()
-        let chapters = vm.visibleChapters
+        vm.collapsedVolumeIDs = []
+        let chapters = vm.expandedChapters
         vm.selectChapter(chapters[0], modifiers: [])
         vm.selectChapter(chapters[2], modifiers: .shift)
         XCTAssertEqual(vm.selectedChapterIDs, Set(chapters[0...2].map(\.id)))
@@ -133,7 +146,7 @@ final class SelectionTests: XCTestCase {
                              site: previous.site, apiPathPrefix: "", apiBaseURL: previous.apiBaseURL)
         vm.applyFetchedComic(next, final: true, sourceText: "测试")
         XCTAssertTrue(vm.selectedChapterIDs.isEmpty)
-        XCTAssertTrue(vm.collapsedVolumeIDs.isEmpty)
+        XCTAssertEqual(vm.collapsedVolumeIDs, ["g0", "g1"], "新漫画默认折叠全部分组")
     }
 
     func testClearHomeResetsOnlyCurrentWorkspace() async {

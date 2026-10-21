@@ -10,7 +10,7 @@ A native macOS manga downloader built with SwiftUI.
 
 English · [简体中文](./README.zh-CN.md)
 
-![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple) ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white) ![Version](https://img.shields.io/badge/version-1.17.0-2C78F2)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple) ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white) ![Version](https://img.shields.io/badge/version-1.17.1-2C78F2)
 
 <img src="./assets/screenshots/home-ink.png" alt="Chapter selection after parsing" width="900">
 
