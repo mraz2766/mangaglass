@@ -209,6 +209,17 @@ enum CopyImageQuality: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 struct DownloadTaskItem: Identifiable, Codable, Sendable {
+    /// Same task with a different Cookie (queue files don't store credentials).
+    func withCookie(_ cookie: String?) -> DownloadTaskItem {
+        var copy = DownloadTaskItem(
+            id: id, comic: comic, chapter: chapter, state: state, destination: destination, cookie: cookie,
+            startedAt: startedAt, finishedAt: finishedAt, existingFilePolicy: existingFilePolicy,
+            usesGroupFolder: usesGroupFolder, copyImageQuality: copyImageQuality
+        )
+        copy.resolvedImageURLs = resolvedImageURLs
+        return copy
+    }
+
     enum State: Equatable, Codable, Sendable {
         case queued
         case running

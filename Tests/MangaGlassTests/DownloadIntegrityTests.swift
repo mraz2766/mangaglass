@@ -32,7 +32,7 @@ final class DownloadIntegrityTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: corrupt.path))
 
         let legacyExtension = folder.appendingPathComponent("page-0001.jpg")
-        try payload([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).write(to: legacyExtension)
+        try ImageFixtures.png(width: 200, height: 300).write(to: legacyExtension)
         let page = try XCTUnwrap(DownloadIntegrity.existingPage(in: folder, baseName: "page-0001", index: 1))
         XCTAssertEqual(page.format, .png)
         XCTAssertEqual(page.fileName, "page-0001.jpg")

@@ -237,16 +237,30 @@ final class DownloadCoordinator: ObservableObject {
     }
     /// Views read these on every progress tick; recompute only after the inputs change.
     private var cachedCounts: (queued: Int, running: Int, failed: Int, done: Int)?
-    private var cachedProgressSummary: (completedPages: Int, totalPages: Int, completedTasks: Int, totalTasks: Int)?
+    private var cachedProgressSummary: (completedPages: Int, totalPages: Int, completedTasks: Int, totalTasks: Int, pagesKnown: Bool)?
     private var chapterResolvedPageCounts: Set<UUID> = []
     private var explicitlyCanceledItemIDs: Set<UUID> = []
     private var shouldUseGroupFolder = true
     private var sleepActivity: NSObjectProtocol?
     private var downloadStartTime: Date?
+    /// Pages and bytes actually fetched from the network this run (reused files don't count),
+    /// so speed reflects real transfer and never resets when a chapter finishes.
+    private(set) var networkPagesThisRun = 0
+    private var networkBytesThisRun = 0
+    private var lastNetworkPageAt: Date?
     private var lastSpeedSampleTime: Date?
-    private var lastSpeedSampleCompletedPages = 0
+    private var lastSpeedSamplePages = 0
+    private var lastSpeedSampleBytes = 0
     private var smoothedPagesPerSecond: Double?
+    private var smoothedBytesPerSecond: Double?
     private var lastSpeedDiagnosticTime: Date?
+    private var speedTicker: Task<Void, Never>?
+    /// Copy comics whose c1500x images keep returning 404; they go straight to standard images.
+    private var copyHighResMisses: [String: Int] = [:]
+    private var copyHighResUnavailable: Set<String> = []
+    private let copyHighResMissThreshold = 3
+    /// Pages per finished chapter that fell back to standard quality.
+    private var standardQualityPages: [UUID: Int] = [:]
     private var currentRunID = UUID()
     private var progressRefreshTask: Task<Void, Never>?
     private var isCancelling = false
@@ -258,7 +272,7 @@ final class DownloadCoordinator: ObservableObject {
     private let etaKnownPageThreshold = 60
     private let speedSmoothingFactor = 0.3
     private let manhuaGuiSpeedSmoothingFactor = 0.18
-    private let manhuaGuiDisplayRateCap = 4.0
+    private let stallThreshold: TimeInterval = 5
     private let chapter404StopThreshold = 4
     private let chapterThrottleStopThreshold = 3
     private let chapterTimeoutStopThreshold = 3
@@ -414,6 +428,7 @@ final class DownloadCoordinator: ObservableObject {
         progressRefreshTask?.cancel()
         progressRefreshTask = nil
         isCancelling = false
+        stopSpeedTicker()
         protectionState.clear()
         copySuspiciousChapterFailures = 0
         copyRecoveryProbeActive = false
@@ -478,11 +493,10 @@ final class DownloadCoordinator: ObservableObject {
             log("拷贝漫画保护：章节并发 3，全局图片并发 \(copyImageConcurrency)，图片错峰 80-180ms，连续异常自动暂停")
         }
         applySleepAssertion(active: true)
-        
-        if progress == 0 || downloadStartTime == nil {
-            downloadStartTime = Date()
-            resetSpeedEstimateState(placeholder: "计算中...")
-        }
+        // Speed and ETA describe this run only.
+        downloadStartTime = Date()
+        resetSpeedEstimateState(placeholder: "计算中...")
+        startSpeedTicker()
 
         let runID = currentRunID
         masterTask = Task { [weak self] in
@@ -541,6 +555,7 @@ final class DownloadCoordinator: ObservableObject {
                 self.isPaused = false
                 self.isCancelling = false
                 self.applySleepAssertion(active: false)
+                self.stopSpeedTicker()
                 self.resetSpeedEstimateState()
                 self.updateCurrentTaskTitle()
                 if let circuit = self.manhuaGuiSoftCircuit {
@@ -597,6 +612,7 @@ final class DownloadCoordinator: ObservableObject {
         currentRunID = UUID()
         masterTask?.cancel()
         Task { await pauseGate.resume() }
+        Task { await copyHostBudget.wakeAll() }
         progressRefreshTask?.cancel()
         progressRefreshTask = nil
 
@@ -622,6 +638,7 @@ final class DownloadCoordinator: ObservableObject {
         isRunning = false
         isPaused = false
         message = "已取消。"
+        stopSpeedTicker()
         resetSpeedEstimateState()
         updateProgress()
         updateCurrentTaskTitle()
@@ -636,6 +653,7 @@ final class DownloadCoordinator: ObservableObject {
         masterTask?.cancel()
         masterTask = nil
         Task { await pauseGate.resume() }
+        Task { await copyHostBudget.wakeAll() }
         progressRefreshTask?.cancel()
         progressRefreshTask = nil
         clearQueueState()
@@ -731,7 +749,7 @@ final class DownloadCoordinator: ObservableObject {
             switch integrity {
             case .nonImagePayload:
                 return ("连续收到非图片风控页面", 5 * 60, false)
-            case .emptyPayload, .unsupportedImage, .incompleteChapter:
+            case .emptyPayload, .unsupportedImage, .incompleteChapter, .truncatedImage, .placeholderImage:
                 return ("连续收到损坏或不完整页面", 5 * 60, false)
             }
         }
@@ -932,13 +950,7 @@ final class DownloadCoordinator: ObservableObject {
         )
         updateCurrentTaskTitle()
         
-        if isRunning && !isPaused, let start = downloadStartTime {
-            let elapsed = Date().timeIntervalSince(start)
-            let currentCompleted = taskItems.reduce(0) { sum, item in
-                sum + (chapterCompletedPages[item.id] ?? 0)
-            }
-            updateSpeedEstimate(elapsed: elapsed, currentCompleted: currentCompleted)
-        }
+        updateSpeedEstimate()
     }
 
     /// Every chapter weighs the same, so the percent never jumps when a chapter's real page count
@@ -1053,6 +1065,7 @@ final class DownloadCoordinator: ObservableObject {
                             refererURL: self.api.imageRefererURL(slug: item.comic.slug, chapterUUID: item.chapter.uuid, site: item.comic.site),
                             site: item.comic.site,
                             copyImageQuality: item.copyImageQuality ?? .high,
+                            comicKey: item.comic.slug,
                             cookie: item.cookie,
                             runID: runID,
                             itemID: item.id
@@ -1108,6 +1121,7 @@ final class DownloadCoordinator: ObservableObject {
                             refererURL: self.api.imageRefererURL(slug: item.comic.slug, chapterUUID: item.chapter.uuid, site: item.comic.site),
                             site: item.comic.site,
                             copyImageQuality: item.copyImageQuality ?? .high,
+                            comicKey: item.comic.slug,
                             cookie: item.cookie,
                             runID: runID,
                             itemID: item.id
@@ -1129,6 +1143,11 @@ final class DownloadCoordinator: ObservableObject {
                 folder: chapterFolder
             )
             try await Self.publishStagingFolder(chapterFolder, as: finalChapterFolder)
+            let standardCount = verifiedPages.filter { $0.standardQuality == true }.count
+            standardQualityPages[item.id] = standardCount
+            if standardCount > 0 {
+                log("画质：[\(item.chapter.volumeName)] \(item.chapter.displayName) 有 \(standardCount)/\(imageURLs.count) 页为标准画质（高清不可用）")
+            }
         } catch {
             try? await Self.writeChapterManifest(
                 item: item,
@@ -1211,11 +1230,14 @@ final class DownloadCoordinator: ObservableObject {
         pageIndex: Int,
         refererURL: URL?,
         site: MangaSiteConfig,
-        copyImageQuality: CopyImageQuality,
+        copyImageQuality requestedQuality: CopyImageQuality,
+        comicKey: String,
         cookie: String?,
         runID: UUID,
         itemID: UUID
     ) async throws -> VerifiedDownloadPage {
+        let isCopySite = isCopyFamily(site)
+        let copyImageQuality: CopyImageQuality = isCopySite && copyHighResUnavailable.contains(comicKey) ? .standard : requestedQuality
         let baseName = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
         if let existing = await Task.detached(priority: .utility, operation: {
             DownloadIntegrity.existingPage(in: folder, baseName: baseName, index: pageIndex)
@@ -1338,10 +1360,12 @@ final class DownloadCoordinator: ObservableObject {
                     }
                     let format: DownloadImageFormat
                     do {
-                        format = try DownloadIntegrity.detectFormat(
-                            data: data,
-                            mimeType: http.value(forHTTPHeaderField: "Content-Type")
-                        )
+                        // Decode-level validation runs off the main actor.
+                        let mimeType = http.value(forHTTPHeaderField: "Content-Type")
+                        let expectedLength = http.expectedContentLength
+                        format = try await Task.detached(priority: .utility) {
+                            try DownloadIntegrity.verify(data: data, mimeType: mimeType, expectedLength: expectedLength)
+                        }.value
                     } catch {
                         if isCopy {
                             await self.copyHostBudget.release(key: Self.copyBudgetKey, outcome: .throttled)
@@ -1354,21 +1378,30 @@ final class DownloadCoordinator: ObservableObject {
                         await pacer.markSuccess()
                     }
                     self.noteImageSuccess(itemID: itemID, host: candidate.host?.lowercased())
+                    self.noteNetworkPage(bytes: data.count)
+                    let isHighResURL = candidate.absoluteString.localizedCaseInsensitiveContains("c1500x")
+                    if isCopySite && isHighResURL { self.copyHighResMisses[comicKey] = 0 }
                     let outputURL = folder.appendingPathComponent("\(baseName).\(format.fileExtension)")
                     try await Task.detached(priority: .utility) {
                         try data.write(to: outputURL, options: .atomic)
                     }.value
                     self.rememberPreferredHost(from: candidate, site: site)
+                    let fellBackToStandard = isCopySite && requestedQuality == .high
+                        && !isHighResURL && url.absoluteString.localizedCaseInsensitiveContains("c800x")
                     return VerifiedDownloadPage(
                         index: pageIndex,
                         fileName: outputURL.lastPathComponent,
                         byteCount: data.count,
-                        format: format
+                        format: format,
+                        standardQuality: fellBackToStandard ? true : nil
                     )
                 }
                 return page
             } catch let error as DownloadRequestError where error.statusCode == 404 && index + 1 < candidates.count {
                 lastError = error
+                if isCopySite, candidate.absoluteString.localizedCaseInsensitiveContains("c1500x") {
+                    noteCopyHighResMiss(comicKey: comicKey)
+                }
                 log("图片 404，切换备用域名重试：\(candidate.host ?? "-") -> \(candidates[index + 1].host ?? "-")")
                 continue
             } catch let error as URLError where Self.shouldTryNextBaoziImageHost(after: error) && index + 1 < candidates.count {
@@ -1396,6 +1429,18 @@ final class DownloadCoordinator: ObservableObject {
 
         throw lastError ?? DownloadRequestError.httpStatus(404, retryAfter: nil)
     }
+    private func noteCopyHighResMiss(comicKey: String) {
+        let misses = (copyHighResMisses[comicKey] ?? 0) + 1
+        copyHighResMisses[comicKey] = misses
+        if misses >= copyHighResMissThreshold, copyHighResUnavailable.insert(comicKey).inserted {
+            log("拷贝漫画高清图不可用：\(comicKey) 连续 \(misses) 页 c1500x 返回 404，后续直接请求标准图")
+        }
+    }
+
+    func standardQualityPageCount(for itemID: UUID) -> Int {
+        standardQualityPages[itemID] ?? 0
+    }
+
     private func fileName(comic: String, volume: String, chapter: String, index: Int) -> String {
         let cleanComic = sanitize(comic)
         let cleanVolume = sanitize(volume)
@@ -1439,7 +1484,8 @@ final class DownloadCoordinator: ObservableObject {
                     throw error
                 }
                 lastError = error
-                if attempt < times {
+                guard attempt < Self.retryLimit(for: error, default: times) else { throw error }
+                do {
                     let serverWait = (error.retryAfter ?? 0) * 1000
                     let waitMS = max(Int(serverWait), backoffMS + Int.random(in: 120...420))
                     log("下载请求重试：第 \(attempt) 次失败（HTTP \(error.statusCode)），\(waitMS)ms 后重试")
@@ -1452,6 +1498,9 @@ final class DownloadCoordinator: ObservableObject {
                    Self.shouldTryNextBaoziImageHost(after: urlError) {
                     throw urlError
                 }
+                if attempt >= Self.retryLimit(for: error, default: times) {
+                    throw error
+                }
                 if attempt < times {
                     let timedOut = (error as? URLError)?.code == .timedOut
                     let extra = timedOut ? 900 : 0
@@ -1462,6 +1511,22 @@ final class DownloadCoordinator: ObservableObject {
             }
         }
         throw lastError ?? URLError(.cannotLoadFromNetwork)
+    }
+
+    /// Retry budget per failure kind. A 403 is a block, not a glitch: retrying only deepens it.
+    /// Rate limits and non-image (challenge) pages get one more try; everything else keeps `times`.
+    nonisolated static func retryLimit(for error: Error, default times: Int) -> Int {
+        if let request = error as? DownloadRequestError {
+            switch request.statusCode {
+            case 403: return 1
+            case 429, 503: return min(times, 2)
+            default: return times
+            }
+        }
+        if let integrity = error as? DownloadIntegrityError, case .nonImagePayload = integrity {
+            return min(times, 2)
+        }
+        return times
     }
 
     private func retryAfter(from response: HTTPURLResponse) -> TimeInterval? {
@@ -1510,10 +1575,38 @@ final class DownloadCoordinator: ObservableObject {
 
     private func resetSpeedEstimateState(placeholder: String = "") {
         speedText = placeholder
+        networkPagesThisRun = 0
+        networkBytesThisRun = 0
+        lastNetworkPageAt = nil
         lastSpeedSampleTime = nil
-        lastSpeedSampleCompletedPages = 0
+        lastSpeedSamplePages = 0
+        lastSpeedSampleBytes = 0
         smoothedPagesPerSecond = nil
+        smoothedBytesPerSecond = nil
         lastSpeedDiagnosticTime = nil
+    }
+
+    private func noteNetworkPage(bytes: Int) {
+        networkPagesThisRun += 1
+        networkBytesThisRun += bytes
+        lastNetworkPageAt = Date()
+    }
+
+    /// Refreshes speed once a second even when no page completes, so stalls become visible.
+    private func startSpeedTicker() {
+        speedTicker?.cancel()
+        speedTicker = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, !Task.isCancelled else { return }
+                self.updateSpeedEstimate()
+            }
+        }
+    }
+
+    private func stopSpeedTicker() {
+        speedTicker?.cancel()
+        speedTicker = nil
     }
 
     private func scheduleProgressRefresh(force: Bool = false) {
@@ -1573,93 +1666,83 @@ final class DownloadCoordinator: ObservableObject {
         item.comic.site.webBase.host?.lowercased().contains("manhuagui.com") == true
     }
 
-    private func updateSpeedEstimate(elapsed: TimeInterval, currentCompleted: Int) {
+    private func updateSpeedEstimate() {
+        guard isRunning, !isPaused, let start = downloadStartTime else { return }
         let now = Date()
+        let elapsed = now.timeIntervalSince(start)
         let manhuaGuiActive = hasActiveManhuaGuiDownloads()
-        let copyStats = copySpeedEstimateStats()
-        let sampleInterval = manhuaGuiActive ? manhuaGuiSpeedSampleInterval : speedSampleInterval
-        let smoothingFactor = manhuaGuiActive ? manhuaGuiSpeedSmoothingFactor : speedSmoothingFactor
-        let samplingCompletedPages = manhuaGuiActive ? currentCompleted : copyStats.activeCompletedPages
-        if lastSpeedSampleTime == nil {
-            lastSpeedSampleTime = now
-            lastSpeedSampleCompletedPages = samplingCompletedPages
-        } else if !manhuaGuiActive && samplingCompletedPages < lastSpeedSampleCompletedPages {
-            lastSpeedSampleTime = now
-            lastSpeedSampleCompletedPages = samplingCompletedPages
-        } else if let lastSampleTime = lastSpeedSampleTime,
-                  now.timeIntervalSince(lastSampleTime) >= sampleInterval {
-            let deltaTime = now.timeIntervalSince(lastSampleTime)
-            let deltaPages = max(0, samplingCompletedPages - lastSpeedSampleCompletedPages)
-            if deltaTime > 0, deltaPages > 0 {
-                let instantRate = Double(deltaPages) / deltaTime
-                let sustainableRate = Double(max(1, samplingCompletedPages)) / max(elapsed, 1)
-                let cappedInstantRate: Double
-                if manhuaGuiActive {
-                    // 漫画柜的共享 pacer 会把真实请求频率限制在低单页/秒级别，
-                    // 这里收掉并发完成带来的显示尖峰，避免误导成“爆速”。
-                    cappedInstantRate = min(instantRate, sustainableRate * 1.35, manhuaGuiDisplayRateCap)
-                } else {
-                    cappedInstantRate = instantRate
-                }
-                if let previous = smoothedPagesPerSecond {
-                    smoothedPagesPerSecond = previous * (1 - smoothingFactor) + cappedInstantRate * smoothingFactor
-                } else {
-                    smoothedPagesPerSecond = cappedInstantRate
-                }
+        let interval = manhuaGuiActive ? manhuaGuiSpeedSampleInterval : speedSampleInterval
+        let alpha = manhuaGuiActive ? manhuaGuiSpeedSmoothingFactor : speedSmoothingFactor
+
+        if let last = lastSpeedSampleTime {
+            let dt = now.timeIntervalSince(last)
+            if dt >= interval {
+                let pageRate = Double(networkPagesThisRun - lastSpeedSamplePages) / dt
+                let byteRate = Double(networkBytesThisRun - lastSpeedSampleBytes) / dt
+                // Zero-progress samples are kept on purpose: the rate decays during stalls.
+                smoothedPagesPerSecond = Self.ema(smoothedPagesPerSecond, pageRate, alpha: alpha)
+                smoothedBytesPerSecond = Self.ema(smoothedBytesPerSecond, byteRate, alpha: alpha)
+                lastSpeedSampleTime = now
+                lastSpeedSamplePages = networkPagesThisRun
+                lastSpeedSampleBytes = networkBytesThisRun
             }
+        } else {
             lastSpeedSampleTime = now
-            lastSpeedSampleCompletedPages = samplingCompletedPages
+            lastSpeedSamplePages = networkPagesThisRun
+            lastSpeedSampleBytes = networkBytesThisRun
         }
 
-        emitCopySpeedDiagnosticsIfNeeded(
-            now: now,
-            elapsed: elapsed,
-            stats: copyStats,
-            rate: smoothedPagesPerSecond,
-            manhuaGuiActive: manhuaGuiActive
-        )
-
-        if !manhuaGuiActive {
-            if copyStats.activeResolvedRunningCount == 0 {
-                if copyStats.activeUnresolvedRunningCount > 0 {
-                    speedText = "解析中"
-                    return
-                }
-                if taskItems.contains(where: { $0.state == .queued || $0.state == .running }) {
-                    speedText = "准备下载中"
-                    return
-                }
-            }
+        if lastSpeedDiagnosticTime.map({ now.timeIntervalSince($0) >= 10 }) ?? true, networkPagesThisRun > 0 {
+            lastSpeedDiagnosticTime = now
+            log(String(format: "速度：%@，%.2f 页/秒，本次网络下载 %d 页，已运行 %ds",
+                       Self.formatByteRate(smoothedBytesPerSecond ?? 0), smoothedPagesPerSecond ?? 0,
+                       networkPagesThisRun, Int(elapsed)))
         }
 
-        guard let rate = smoothedPagesPerSecond, rate > 0 else {
-            speedText = elapsed >= etaWarmupDuration ? "剩余时间预估中" : "计算中..."
+        guard networkPagesThisRun > 0, let pageRate = smoothedPagesPerSecond else {
+            let resolvingOnly = !taskItems.contains { $0.state == .running && chapterResolvedPageCounts.contains($0.id) }
+            speedText = resolvingOnly && taskItems.contains { $0.state == .running } ? "解析中" : "计算中..."
+            return
+        }
+        if let lastPage = lastNetworkPageAt, now.timeIntervalSince(lastPage) >= stallThreshold {
+            speedText = "等待中 · \(Int(now.timeIntervalSince(lastPage)))s 无新页面"
             return
         }
 
+        var parts = [Self.formatByteRate(smoothedBytesPerSecond ?? 0), String(format: "%.1f 页/秒", pageRate)]
         let (knownExpectedPages, completedKnownPages, unresolvedChapters, resolvedCount) = estimateInputs()
-
-        guard elapsed >= etaWarmupDuration, currentCompleted >= etaMinimumCompletedPages else {
-            speedText = String(format: "约 %.1f 页/秒 · 剩余时间预估中", rate)
-            return
+        let canShowETA = elapsed >= etaWarmupDuration
+            && networkPagesThisRun >= etaMinimumCompletedPages
+            && pageRate > 0.05
+            && knownExpectedPages > 0
+            && (unresolvedChapters == 0 || resolvedCount >= etaResolvedChapterThreshold || knownExpectedPages >= etaKnownPageThreshold)
+        if canShowETA {
+            let averagePages = Double(knownExpectedPages) / Double(max(1, resolvedCount))
+            let estimatedTotal = Double(knownExpectedPages) + averagePages * Double(unresolvedChapters)
+            let remaining = max(0, estimatedTotal - Double(completedKnownPages)) / pageRate
+            parts.append("剩余 " + Self.formatRemaining(remaining))
         }
+        speedText = parts.joined(separator: " · ")
+    }
 
-        let canShowETA = unresolvedChapters == 0
-            || resolvedCount >= etaResolvedChapterThreshold
-            || knownExpectedPages >= etaKnownPageThreshold
+    nonisolated static func ema(_ previous: Double?, _ value: Double, alpha: Double) -> Double {
+        guard let previous else { return value }
+        return previous * (1 - alpha) + value * alpha
+    }
 
-        guard canShowETA, knownExpectedPages > 0 else {
-            speedText = String(format: "约 %.1f 页/秒 · 剩余时间预估中", rate)
-            return
+    nonisolated static func formatByteRate(_ bytesPerSecond: Double) -> String {
+        if bytesPerSecond >= 1_048_576 {
+            return String(format: "%.1f MB/s", bytesPerSecond / 1_048_576)
         }
+        return String(format: "%.0f KB/s", bytesPerSecond / 1024)
+    }
 
-        let averagePagesPerResolvedChapter = Double(knownExpectedPages) / Double(max(1, resolvedCount))
-        let estimatedTotalPages = Double(knownExpectedPages) + averagePagesPerResolvedChapter * Double(unresolvedChapters)
-        let remainingPages = max(0, estimatedTotalPages - Double(completedKnownPages))
-        let remaining = remainingPages / rate
-        let remMin = Int(remaining) / 60
-        let remSec = Int(remaining) % 60
-        speedText = String(format: "约 %.1f 页/秒 · 剩余 %02d:%02d", rate, remMin, remSec)
+    nonisolated static func formatRemaining(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        if total >= 3600 {
+            return String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
+        }
+        return String(format: "%02d:%02d", total / 60, total % 60)
     }
 
     private func hasActiveManhuaGuiDownloads() -> Bool {
@@ -1677,66 +1760,6 @@ final class DownloadCoordinator: ObservableObject {
     private func isCopyFamily(_ site: MangaSiteConfig) -> Bool {
         guard let host = site.webBase.host?.lowercased() else { return false }
         return CopyMangaMirror.mirror(for: host) != nil
-    }
-
-    private func copySpeedEstimateStats() -> (
-        activeResolvedRunningCount: Int,
-        activeUnresolvedRunningCount: Int,
-        activeCompletedPages: Int,
-        activeExpectedPages: Int,
-        failedOrCanceledCount: Int
-    ) {
-        let runningItems = taskItems.filter { $0.state == .running && isCopyFamily($0.comic.site) }
-        let resolvedRunning = runningItems.filter { chapterResolvedPageCounts.contains($0.id) }
-        let unresolvedRunning = runningItems.filter { !chapterResolvedPageCounts.contains($0.id) }
-
-        let activeCompletedPages = resolvedRunning.reduce(0) { partial, item in
-            partial + max(0, chapterCompletedPages[item.id] ?? 0)
-        }
-        let activeExpectedPages = resolvedRunning.reduce(0) { partial, item in
-            partial + max(1, chapterExpectedPages[item.id] ?? 1)
-        }
-        let failedOrCanceledCount = taskItems.reduce(0) { partial, item in
-            guard isCopyFamily(item.comic.site) else { return partial }
-            switch item.state {
-            case .failed, .canceled:
-                return partial + 1
-            case .queued, .running, .done:
-                return partial
-            }
-        }
-
-        return (
-            activeResolvedRunningCount: resolvedRunning.count,
-            activeUnresolvedRunningCount: unresolvedRunning.count,
-            activeCompletedPages: activeCompletedPages,
-            activeExpectedPages: activeExpectedPages,
-            failedOrCanceledCount: failedOrCanceledCount
-        )
-    }
-
-    private func emitCopySpeedDiagnosticsIfNeeded(
-        now: Date,
-        elapsed: TimeInterval,
-        stats: (
-            activeResolvedRunningCount: Int,
-            activeUnresolvedRunningCount: Int,
-            activeCompletedPages: Int,
-            activeExpectedPages: Int,
-            failedOrCanceledCount: Int
-        ),
-        rate: Double?,
-        manhuaGuiActive: Bool
-    ) {
-        guard !manhuaGuiActive else { return }
-        guard stats.activeResolvedRunningCount > 0 || stats.activeUnresolvedRunningCount > 0 else { return }
-        if let last = lastSpeedDiagnosticTime, now.timeIntervalSince(last) < 6 {
-            return
-        }
-        lastSpeedDiagnosticTime = now
-        let stateText = stats.activeResolvedRunningCount > 0 ? "图片下载阶段" : "解析阶段"
-        let rateText = rate.map { String(format: "%.2f", $0) } ?? "-"
-        log("拷贝漫画速度估算：\(stateText)，活跃下载章节 \(stats.activeResolvedRunningCount)，解析中章节 \(stats.activeUnresolvedRunningCount)，活跃完成 \(stats.activeCompletedPages)/\(stats.activeExpectedPages)，平滑速率 \(rateText) 页/秒，失败/取消 \(stats.failedOrCanceledCount)，已运行 \(Int(elapsed))s")
     }
 
     private func estimateInputs() -> (knownExpectedPages: Int, completedKnownPages: Int, unresolvedChapters: Int, resolvedCount: Int) {
@@ -1883,7 +1906,9 @@ final class DownloadCoordinator: ObservableObject {
         return counts
     }
 
-    func progressSummary() -> (completedPages: Int, totalPages: Int, completedTasks: Int, totalTasks: Int) {
+    /// `pagesKnown` is false until every chapter that still counts has a real page count;
+    /// before that `totalPages` would only be a chapter count and must not be shown as pages.
+    func progressSummary() -> (completedPages: Int, totalPages: Int, completedTasks: Int, totalTasks: Int, pagesKnown: Bool) {
         if let cachedProgressSummary { return cachedProgressSummary }
         let totalTasks = taskItems.count
         let completedTasks = taskItems.reduce(0) { partial, item in
@@ -1909,7 +1934,14 @@ final class DownloadCoordinator: ObservableObject {
                 return partial + done
             }
         }
-        let summary = (completedPages: completedPages, totalPages: totalPages, completedTasks: completedTasks, totalTasks: totalTasks)
+        let pagesKnown = taskItems.allSatisfy { item in
+            switch item.state {
+            case .failed, .canceled: return true
+            default: return chapterResolvedPageCounts.contains(item.id)
+            }
+        }
+        let summary = (completedPages: completedPages, totalPages: totalPages, completedTasks: completedTasks,
+                       totalTasks: totalTasks, pagesKnown: pagesKnown)
         cachedProgressSummary = summary
         return summary
     }
@@ -2127,7 +2159,7 @@ final class DownloadCoordinator: ObservableObject {
     }
 }
 
-private struct DownloadRequestError: LocalizedError {
+struct DownloadRequestError: LocalizedError {
     let statusCode: Int
     let retryAfter: TimeInterval?
 

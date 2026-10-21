@@ -408,7 +408,8 @@ private struct QueueTaskRow: View {
                 .help("重试任务")
                 .accessibilityLabel("重试任务")
         }
-        if failureReason != nil || downloader.durationText(for: item) != nil {
+        if failureReason != nil || downloader.durationText(for: item) != nil
+            || downloader.standardQualityPageCount(for: item.id) > 0 {
             Button(action: onToggleDetails) {
                 Image(systemName: "chevron.down").rotationEffect(.degrees(expanded ? 180 : 0))
             }
@@ -430,6 +431,12 @@ private struct QueueTaskRow: View {
                 Text("该话耗时 \(duration)")
                     .font(MGFont.caption)
                     .foregroundStyle(.secondary)
+            }
+            let standardPages = downloader.standardQualityPageCount(for: item.id)
+            if standardPages > 0 {
+                Text("\(standardPages) 页为标准画质（站点没有提供高清图）")
+                    .font(MGFont.caption)
+                    .foregroundStyle(MGTheme.warning)
             }
             Text(item.destination.path)
                 .font(MGFont.mono)
@@ -483,7 +490,7 @@ private struct QueueSummaryCard: View {
                 HStack(spacing: 6) {
                     Text(statusLine(counts: counts))
                     Text("·")
-                    Text("\(summary.completedTasks) / \(summary.totalTasks) 话 · \(summary.completedPages) / \(summary.totalPages) 页")
+                    Text("\(summary.completedTasks) / \(summary.totalTasks) 话 · " + pagesText(summary))
                         .monospacedDigit()
                 }
                 .font(MGFont.caption)
@@ -505,6 +512,14 @@ private struct QueueSummaryCard: View {
         if counts.queued > 0 { return "等待开始" }
         if downloader.taskItems.isEmpty { return "队列空闲" }
         return counts.failed > 0 ? "已结束，\(counts.failed) 话失败" : "全部完成"
+    }
+
+    /// Real page totals only once every chapter's page count is known.
+    private func pagesText(_ summary: (completedPages: Int, totalPages: Int, completedTasks: Int, totalTasks: Int, pagesKnown: Bool)) -> String {
+        if summary.pagesKnown {
+            return "\(summary.completedPages) / \(summary.totalPages) 页"
+        }
+        return downloader.networkPagesThisRun > 0 ? "本次已下载 \(downloader.networkPagesThisRun) 页" : "页数统计中"
     }
 
     @ViewBuilder private func controls(counts: (queued: Int, running: Int, failed: Int, done: Int)) -> some View {

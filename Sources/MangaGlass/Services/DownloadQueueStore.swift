@@ -48,7 +48,8 @@ struct DownloadQueueSnapshot: Codable, Sendable {
                 chapter: task.chapter,
                 state: task.state,
                 destination: task.destination,
-                cookie: task.cookie,
+                // Credentials stay out of the queue file; the current Cookie setting is applied on restore.
+                cookie: nil,
                 startedAt: task.startedAt,
                 finishedAt: task.finishedAt,
                 existingFilePolicy: task.existingFilePolicy,
@@ -137,9 +138,11 @@ final class DownloadQueueStore: @unchecked Sendable {
                 withIntermediateDirectories: true
             )
 
-            if decodeItems(at: fileURL) != nil {
+            // The previous snapshot becomes the backup. Writes are atomic, so it is always whole;
+            // no need to decode it first.
+            if manager.fileExists(atPath: fileURL.path) {
                 try? manager.removeItem(at: backupURL)
-                try? manager.copyItem(at: fileURL, to: backupURL)
+                try? manager.moveItem(at: fileURL, to: backupURL)
             }
 
             let encoder = JSONEncoder()

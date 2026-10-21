@@ -30,7 +30,7 @@ final class DownloadQueueStoreTests: XCTestCase {
         XCTAssertEqual(restored.count, tasks.count)
         XCTAssertEqual(restored.map(\.queueIdentity), tasks.map(\.queueIdentity))
         XCTAssertEqual(restored.first?.state, .running)
-        XCTAssertEqual(restored.first?.cookie, "test-cookie")
+        XCTAssertNil(restored.first?.cookie, "credentials are not written to the queue file")
         XCTAssertEqual(restored.first?.existingFilePolicy, .overwrite)
         XCTAssertEqual(restored.first?.usesGroupFolder, true)
         XCTAssertNil(restored.first?.resolvedImageURLs)

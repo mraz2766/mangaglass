@@ -768,7 +768,12 @@ final class CopyMangaAPI: @unchecked Sendable {
         var fallbackResult: CopyWebFetchResult?
         var attemptMessages: [String] = []
 
-        for candidate in candidates {
+        // Each attempt is a full parse; cap the walk and space it out so one failure
+        // doesn't fan out into a burst across every mirror.
+        for (attempt, candidate) in candidates.prefix(Self.maxCopyMirrorAttempts).enumerated() {
+            if attempt > 0 {
+                try await Task.sleep(for: .milliseconds(Int.random(in: 1500...2500)))
+            }
             let host = describeCopySite(candidate)
             if host == requestedHost {
                 log("Copy 镜像尝试：主镜像 \(host)")
@@ -813,6 +818,8 @@ final class CopyMangaAPI: @unchecked Sendable {
 
         throw CopyMangaError.copyMirrorsUnavailable(attemptMessages)
     }
+
+    static let maxCopyMirrorAttempts = 3
 
     private func copyMirrorCooldown(for evaluation: CopyCatalogEvaluation) -> Int {
         if evaluation.canUseAsLastResort {
@@ -1059,7 +1066,11 @@ final class CopyMangaAPI: @unchecked Sendable {
         // Only run next-link scan when current list is obviously incomplete.
         if let shareEntry = parseCopyShareEntryChapter(html: html, slug: slug, site: site),
            let entryURL = URL(string: String(shareEntry.id.dropFirst(5))),
-           volumes.reduce(0, { $0 + $1.chapters.count }) < 20 {
+           Self.shouldCrawlCopyNextLinks(
+               currentCount: volumes.reduce(0, { $0 + $1.chapters.count }),
+               expectedChapters: expectedChapters,
+               detailProvidedChapters: detailCandidate?.isEmpty == false
+           ) {
             if !usedPaths.contains("next-links") {
                 usedPaths.append("next-links")
                 probeRequestCount += 1
@@ -3479,6 +3490,11 @@ final class CopyMangaAPI: @unchecked Sendable {
             guard let text = self.decodeResponseText(data) else {
                 throw CopyMangaError.unexpectedPayload
             }
+            if let wait = Self.copyThrottleSeconds(inText: text) {
+                await self.antiBanGuard.block(site: site, seconds: wait)
+                self.log("拷贝漫画限流：站点要求约 \(wait) 秒后再请求，停止本次解析")
+                throw CopyMangaError.cooldown(wait)
+            }
             if let blockedReason = self.banReason(in: text) {
                 await self.antiBanGuard.block(site: site, seconds: self.banCooldownSeconds(for: site))
                 throw CopyMangaError.parseBlocked(blockedReason)
@@ -3516,6 +3532,11 @@ final class CopyMangaAPI: @unchecked Sendable {
             }
             guard let text = self.decodeResponseText(data) else {
                 throw CopyMangaError.unexpectedPayload
+            }
+            if let wait = Self.copyThrottleSeconds(inText: text) {
+                await self.antiBanGuard.block(site: site, seconds: wait)
+                self.log("拷贝漫画限流：站点要求约 \(wait) 秒后再请求，停止本次解析")
+                throw CopyMangaError.cooldown(wait)
             }
             if let blockedReason = self.banReason(in: text) {
                 await self.antiBanGuard.block(site: site, seconds: self.banCooldownSeconds(for: site))
@@ -3738,6 +3759,36 @@ final class CopyMangaAPI: @unchecked Sendable {
         return nil
     }
 
+    /// CopyManga signals rate limits with HTTP 200 and a JSON body such as
+    /// `{"code":210,"message":"Request was throttled. Expected available in 46 seconds."}`.
+    /// Returns the wait in seconds (at least 30), or nil for a normal response.
+    static func copyThrottleSeconds(inText text: String) -> Int? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("{"), trimmed.count < 4000,
+              let data = trimmed.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let code = (root["code"] as? Int) ?? (root["code"] as? String).flatMap(Int.init)
+        let message = (root["message"] as? String) ?? (root["detail"] as? String) ?? ""
+        let lowered = message.lowercased()
+        let throttled = code == 210 || lowered.contains("throttled")
+            || (code.map { $0 != 200 } == true && (message.contains("频繁") || message.contains("頻繁")))
+        guard throttled else { return nil }
+        let pattern = try? NSRegularExpression(pattern: #"(\d+)\s*(?:second|秒)"#, options: [.caseInsensitive])
+        let range = NSRange(message.startIndex..., in: message)
+        let seconds = pattern?.firstMatch(in: message, range: range)
+            .flatMap { Range($0.range(at: 1), in: message) }
+            .flatMap { Int(message[$0]) }
+        return max(30, seconds ?? 60)
+    }
+
+    /// The "下一话" crawl requests every chapter page, so it only runs when nothing better exists:
+    /// no catalog at all, or no API result and the page clearly lists more chapters than we have.
+    static func shouldCrawlCopyNextLinks(currentCount: Int, expectedChapters: Int, detailProvidedChapters: Bool) -> Bool {
+        if currentCount == 0 { return true }
+        if detailProvidedChapters { return false }
+        return expectedChapters > currentCount + 3
+    }
+
     private func isBanDetail(_ detail: String) -> Bool {
         let text = detail.lowercased()
         let keywords = [
@@ -3878,32 +3929,41 @@ actor EndpointCache {
     }
 }
 
+/// Remembers hosts where the rendered-DOM fallback helped. Entries expire after a day: a rendered
+/// page pulls in the site's scripts, images and ads, so it must not become the permanent default.
 actor SiteHeuristicsCache {
-    private var preferRenderedDOMHosts: Set<String> = []
+    private var preferRenderedDOMUntil: [String: Date] = [:]
     private let defaults = UserDefaults.standard
-    private let key = "mg.preferRenderedDOMHosts"
+    private let key = "mg.preferRenderedDOMUntil"
+    private let legacyKey = "mg.preferRenderedDOMHosts"
+    private let lifetime: TimeInterval = 24 * 60 * 60
 
     init() {
-        if let list = defaults.array(forKey: key) as? [String] {
-            preferRenderedDOMHosts = Set(list)
+        defaults.removeObject(forKey: legacyKey)
+        if let saved = defaults.dictionary(forKey: key) as? [String: Double] {
+            let now = Date()
+            preferRenderedDOMUntil = saved.reduce(into: [:]) { partial, item in
+                let until = Date(timeIntervalSince1970: item.value)
+                if until > now { partial[item.key] = until }
+            }
         }
     }
 
     func preferRenderedDOM(for site: MangaSiteConfig) -> Bool {
         let host = site.webBase.host?.lowercased() ?? site.displayName.lowercased()
-        return preferRenderedDOMHosts.contains(host)
+        return (preferRenderedDOMUntil[host] ?? .distantPast) > Date()
     }
 
     func markPreferRenderedDOM(for site: MangaSiteConfig) {
         let host = site.webBase.host?.lowercased() ?? site.displayName.lowercased()
-        if preferRenderedDOMHosts.insert(host).inserted {
-            defaults.set(Array(preferRenderedDOMHosts).sorted(), forKey: key)
-        }
+        preferRenderedDOMUntil[host] = Date().addingTimeInterval(lifetime)
+        defaults.set(preferRenderedDOMUntil.mapValues(\.timeIntervalSince1970), forKey: key)
     }
 
     func clear() {
-        preferRenderedDOMHosts.removeAll()
+        preferRenderedDOMUntil.removeAll()
         defaults.removeObject(forKey: key)
+        defaults.removeObject(forKey: legacyKey)
     }
 }
 

@@ -393,7 +393,8 @@ final class MainViewModel: ObservableObject {
                 if let fetch {
                     fetched = try await fetch(target.slug, target.site, cookie)
                 } else {
-                    fetched = try await api.fetchComic(slug: target.slug, site: target.site, cookie: cookie, preferCache: false)
+                    // Reopening the same comic within 15 minutes reuses the catalog instead of re-crawling the site.
+                    fetched = try await api.fetchComic(slug: target.slug, site: target.site, cookie: cookie, preferCache: true)
                 }
                 guard parsingRequestID == requestID, !Task.isCancelled else { return }
                 applyFetchedComic(fetched, final: true, sourceText: fetched.site.displayName)
@@ -998,7 +999,10 @@ final class MainViewModel: ObservableObject {
     }
 
     private func bindPersistence() {
+        // Coalesce bursts of state changes into at most one write per second;
+        // quitting still saves synchronously through `checkpointDownloadQueue`.
         downloader.$taskItems
+            .debounce(for: .seconds(1), scheduler: RunLoop.main)
             .sink { [weak self] items in
                 self?.queueStore?.save(items)
             }
@@ -1034,7 +1038,8 @@ final class MainViewModel: ObservableObject {
             ? loadCodable([DownloadTaskItem].self, key: StorageKey.downloadQueue)
             : nil
         if let restoredItems = durableItems ?? legacyItems, !restoredItems.isEmpty {
-            downloader.restoreQueue(restoredItems)
+            let cookie = normalizedCookie
+            downloader.restoreQueue(restoredItems.map { $0.withCookie(cookie) })
             let counts = downloader.countsSummary()
             shouldOfferRestoredQueuePrompt = counts.queued > 0 || counts.failed > 0
         }
