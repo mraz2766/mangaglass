@@ -488,6 +488,7 @@ final class DownloadCoordinator: ObservableObject {
         copyRecoveryProbeActive = true
         copyRecoverySuccessfulChapters = 0
         Task { await copyHostBudget.resetPenalty(key: Self.copyBudgetKey) }
+        Task { await api.clearCopyCooldown() }
         log("用户在冷却结束前继续拷贝漫画下载（剩余约 \(circuit.remainingSeconds) 秒），以单话探测速度恢复")
         updateCurrentTaskTitle()
     }
@@ -934,7 +935,7 @@ final class DownloadCoordinator: ObservableObject {
     private func noteCopyChapterFailure(_ error: Error, for item: DownloadTaskItem) async {
         guard isCopyFamily(item.comic.site), let outcome = Self.copyFailureOutcome(error) else { return }
         copySuspiciousChapterFailures += 1
-        let threshold = outcome.immediate ? 1 : 3
+        let threshold = outcome.immediate ? 1 : Self.copySuspiciousFailureThreshold
         guard copySuspiciousChapterFailures >= threshold, copySoftCircuit == nil else { return }
 
         let host = item.comic.site.webBase.host?.lowercased() ?? "-"
@@ -958,6 +959,7 @@ final class DownloadCoordinator: ObservableObject {
         updateCurrentTaskTitle()
         message = copySoftCircuit?.message ?? "拷贝漫画请求异常，已暂停当前批次。"
         log("拷贝漫画软熔断：\(outcome.reason) host=\(host)，已保留后续队列，冷却后自动继续")
+        await api.noteCopyCooldown(seconds: Int(outcome.cooldown))
         scheduleAutoResume(after: outcome.cooldown + 1)
     }
 
@@ -981,7 +983,9 @@ final class DownloadCoordinator: ObservableObject {
         case .httpStatus(let code, let body) where code == 404 && (body.localizedCaseInsensitiveContains("<html") || body.localizedCaseInsensitiveContains("<!doctype")):
             return ("连续收到 HTML 404 页面", 5 * 60, false)
         case .noImageInChapter:
-            return ("连续未解析到章节图片", 5 * 60, false)
+            // Copy hides chapter data from a client it is throttling (like its empty catalogs), so treat
+            // this as rate limiting; `noteCopyChapterFailure` trips after 2 in a row.
+            return ("连续未解析到章节图片（疑似限流）", 20 * 60, false)
         case .invalidJSON(_, let snippet) where snippet.localizedCaseInsensitiveContains("<html"):
             return ("连续收到非预期网页", 5 * 60, false)
         case .allEndpoints404, .copyMirrorsUnavailable:
@@ -994,6 +998,8 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     private static let copyBudgetKey = "copy-family"
+    /// Consecutive non-immediate suspicious Copy chapter failures before the soft circuit trips.
+    static let copySuspiciousFailureThreshold = 2
 
     private func triggerManhuaGuiSoftCircuitIfNeeded(statusCode: Int, host: String?, itemID: UUID) {
         guard let idx = taskItems.firstIndex(where: { $0.id == itemID }) else { return }

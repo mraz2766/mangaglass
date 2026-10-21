@@ -10,7 +10,7 @@
 
 [English](./README.md) · 简体中文
 
-![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple) ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white) ![Version](https://img.shields.io/badge/version-1.16.1-2C78F2)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple) ![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white) ![Version](https://img.shields.io/badge/version-1.17.0-2C78F2)
 
 <img src="./assets/screenshots/home-ink.png" alt="解析后的章节选择界面" width="900">
 
@@ -23,6 +23,7 @@
 - **下得稳**：并发、错峰和自动降速都有限制；每话先写入临时目录，校验完整后才落盘。
 - **看得清**：总进度、速度和剩余时间一目了然，任务按漫画分组，失败原因随时可查。
 - **随时接上**：书架记住看过的漫画；未完成的队列重启后会提示继续。
+- **对站点友好**：解析过的目录保存 12 小时，再次打开不发请求（需要最新目录点「刷新」）；一次正常解析约 2 个请求，连续解析会自动间隔。
 - **三套主题**：经典（白蓝，磨砂侧栏）、墨与纸、石墨，各自带浅色与深色。
 
 ## 支持站点

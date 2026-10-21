@@ -161,6 +161,8 @@ final class MainViewModel: ObservableObject {
     @Published var errorText = ""
     let logStore = ActivityLogStore()
     @Published var showParseDone = false
+    /// When the shown catalog was fetched from the site (nil when unknown, e.g. a restored session).
+    @Published var catalogFetchedAt: Date?
     @Published var parseDoneText = ""
     @Published var parseLiveText = ""
     @Published var recentRecords: [RecentComicRecord] = []
@@ -184,7 +186,7 @@ final class MainViewModel: ObservableObject {
     init(persistsState: Bool = true, queueStore: DownloadQueueStore? = nil) {
         self.persistsState = persistsState
         self.queueStore = persistsState ? (queueStore ?? DownloadQueueStore()) : nil
-        let api = CopyMangaAPI()
+        let api = CopyMangaAPI(catalogCacheURL: persistsState ? ComicInfoCache.defaultFileURL : nil)
         self.api = api
         self.downloader = DownloadCoordinator(api: api)
         downloader.configure(pacingMode: downloadPacingMode)
@@ -361,6 +363,7 @@ final class MainViewModel: ObservableObject {
         loadingComicKey = nil
         inputURL = ""
         comic = nil
+        catalogFetchedAt = nil
         selectedVolumeIDs.removeAll()
         clearChapterSelection()
         collapsedVolumeIDs.removeAll()
@@ -376,7 +379,16 @@ final class MainViewModel: ObservableObject {
         statusText = "输入漫画链接后点击解析。"
     }
 
-    func loadComic(fetch: ((String, MangaSiteConfig, String?) async throws -> ComicInfo)? = nil) {
+    /// Re-fetches the shown comic from the site, bypassing the catalog cache.
+    func refreshComic() {
+        loadComic(forceRefresh: true)
+    }
+
+    /// Minimum quiet time between two Copy catalog fetches (Copy rate-limits per IP).
+    static let copyParseSpacing: TimeInterval = 12
+    private var lastCopyNetworkParseEndedAt: Date?
+
+    func loadComic(forceRefresh: Bool = false, fetch: ((String, MangaSiteConfig, String?) async throws -> ComicInfo)? = nil) {
         guard !isLoading else { return }
         guard !CopyMangaMirror.isRetired(inputURL) else {
             presentRetiredSiteMessage()
@@ -414,14 +426,26 @@ final class MainViewModel: ObservableObject {
                 let target = try api.resolveTarget(from: normalizedInput)
                 loadingComicKey = comicKey(slug: target.slug, site: target.site)
                 let fetched: ComicInfo
+                var fetchedAt = Date()
                 if let fetch {
                     fetched = try await fetch(target.slug, target.site, cookie)
+                } else if !forceRefresh, let cached = await api.cachedCatalog(slug: target.slug, site: target.site) {
+                    // Catalogs parsed in the last 12 hours open from disk; 刷新 fetches a fresh one.
+                    fetched = cached.info
+                    fetchedAt = cached.fetchedAt
+                    appendLog("使用本地缓存目录（\(Self.relativeAge(of: cached.fetchedAt))获取），未请求站点")
                 } else {
-                    // Reopening the same comic within 15 minutes reuses the catalog instead of re-crawling the site.
-                    fetched = try await api.fetchComic(slug: target.slug, site: target.site, cookie: cookie, preferCache: true)
+                    let isCopy = CopyMangaMirror.mirror(for: target.site.webBase.host) != nil
+                    if isCopy {
+                        try await waitForCopyParseSlot(requestID: requestID)
+                    }
+                    defer { if isCopy { lastCopyNetworkParseEndedAt = Date() } }
+                    parseLiveText = "阶段 1/3：读取页面结构..."
+                    fetched = try await api.fetchComic(slug: target.slug, site: target.site, cookie: cookie, preferCache: false)
                 }
                 guard parsingRequestID == requestID, !Task.isCancelled else { return }
                 applyFetchedComic(fetched, final: true, sourceText: fetched.site.displayName)
+                catalogFetchedAt = fetchedAt
             } catch {
                 guard parsingRequestID == requestID, !Task.isCancelled else { return }
                 let message = error.localizedDescription
@@ -437,6 +461,26 @@ final class MainViewModel: ObservableObject {
             loadingTask = nil
             isLoading = false
         }
+    }
+
+    /// Holds a Copy fetch until `copyParseSpacing` has passed since the previous one, with a countdown.
+    private func waitForCopyParseSlot(requestID: UUID) async throws {
+        guard let last = lastCopyNetworkParseEndedAt else { return }
+        var remaining = Self.copyParseSpacing - Date().timeIntervalSince(last)
+        while remaining > 0 {
+            guard parsingRequestID == requestID else { throw CancellationError() }
+            parseLiveText = "为避免触发限流，\(Int(remaining.rounded(.up))) 秒后开始解析..."
+            try await Task.sleep(for: .seconds(min(1, remaining)))
+            remaining = Self.copyParseSpacing - Date().timeIntervalSince(last)
+        }
+    }
+
+    static func relativeAge(of date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, now.timeIntervalSince(date))
+        if seconds < 60 { return "刚刚" }
+        if seconds < 3600 { return "\(Int(seconds / 60)) 分钟前" }
+        if seconds < 86400 { return "\(Int(seconds / 3600)) 小时前" }
+        return "\(Int(seconds / 86400)) 天前"
     }
 
     private func comicKey(slug: String, site: MangaSiteConfig) -> String {
@@ -923,6 +967,7 @@ final class MainViewModel: ObservableObject {
             await MainActor.run {
                 inputURL = ""
                 comic = nil
+                catalogFetchedAt = nil
                 selectedVolumeIDs = []
                 selectedChapterIDs = []
                 lastSelectedChapterID = nil
@@ -1039,6 +1084,14 @@ final class MainViewModel: ObservableObject {
             selectedVolumeIDs = Set(comic.volumes.map(\.id))
             let stats = parsedStats(from: comic)
             statusText = "已恢复上次解析：\(comic.name)"
+            let restored = comic
+            Task { [weak self] in
+                guard let cached = await self?.api.cachedCatalog(slug: restored.slug, site: restored.site) else { return }
+                await MainActor.run {
+                    guard let self, self.comic?.slug == restored.slug else { return }
+                    self.catalogFetchedAt = cached.fetchedAt
+                }
+            }
             parseDoneText = "已恢复 · 分类 \(stats.groups) · 章节 \(stats.chapters)"
             showParseDone = true
         }

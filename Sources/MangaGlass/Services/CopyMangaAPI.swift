@@ -91,7 +91,7 @@ private struct SiteParserAdapter {
 final class CopyMangaAPI: @unchecked Sendable {
     private var session: URLSession
     private let endpointCache = EndpointCache()
-    private let comicInfoCache = ComicInfoCache()
+    private let comicInfoCache: ComicInfoCache
     private let siteHeuristics = SiteHeuristicsCache()
     private let copyMirrorCache = CopyMirrorHealthCache()
     private let copyScriptCache = TextAssetCache(ttl: 6 * 60 * 60)
@@ -108,7 +108,9 @@ final class CopyMangaAPI: @unchecked Sendable {
     private var logger: ((String) -> Void)?
     private var intermediateComicHandler: ((ComicInfo) -> Void)?
 
-    init(session: URLSession? = nil) {
+    /// `catalogCacheURL`: where parsed catalogs persist; `nil` keeps them in memory only.
+    init(session: URLSession? = nil, catalogCacheURL: URL? = nil) {
+        self.comicInfoCache = ComicInfoCache(fileURL: catalogCacheURL)
         if let session {
             self.session = session
         } else {
@@ -159,6 +161,22 @@ final class CopyMangaAPI: @unchecked Sendable {
 
     func cachedComic(slug: String, site: MangaSiteConfig) async -> ComicInfo? {
         await comicInfoCache.get(slug: slug, site: site)
+    }
+
+    /// Downloads and parsing share Copy's per-IP limit: a download cooldown also holds parsing.
+    func noteCopyCooldown(seconds: Int) async {
+        await antiBanGuard.block(site: CopyMangaMirror.mangacopy.siteConfig(), seconds: seconds)
+    }
+
+    /// The user chose to continue early; lift the shared Copy cooldown too.
+    func clearCopyCooldown() async {
+        await antiBanGuard.unblock(site: CopyMangaMirror.mangacopy.siteConfig())
+    }
+
+    /// Cached catalog plus when it was fetched, for "目录更新于…".
+    func cachedCatalog(slug: String, site: MangaSiteConfig) async -> (info: ComicInfo, fetchedAt: Date)? {
+        guard let entry = await comicInfoCache.entry(slug: slug, site: site) else { return nil }
+        return (entry.value, entry.fetchedAt)
     }
 
     func clearCaches() async {
@@ -800,10 +818,13 @@ final class CopyMangaAPI: @unchecked Sendable {
 
                 attemptMessages.append("\(host) \(evaluation.reason)")
                 await copyMirrorCache.markFailure(site: candidate, seconds: copyMirrorCooldown(for: evaluation))
-                log("Copy 镜像回退：\(host) \(evaluation.reason)")
                 if evaluation.canUseAsLastResort, fallbackResult == nil {
                     fallbackResult = result
                 }
+                // The mirrors are one site: a thin catalog here would be thin everywhere (usually rate
+                // limiting), so trying the next mirror only adds load.
+                log("Copy 镜像停止探测：\(host) \(evaluation.reason)，不再轮换镜像")
+                break
             } catch let error as CopyMangaError where isBlockingCopyError(error) {
                 attemptMessages.append("\(host) \(error.localizedDescription)")
                 await copyMirrorCache.markFailure(site: candidate, seconds: copyMirrorCooldown(for: error))
@@ -812,7 +833,11 @@ final class CopyMangaAPI: @unchecked Sendable {
             } catch {
                 attemptMessages.append("\(host) \(error.localizedDescription)")
                 await copyMirrorCache.markFailure(site: candidate, seconds: copyMirrorCooldown(for: error))
-                log("Copy 镜像回退：\(host) 请求失败 \(error.localizedDescription)")
+                guard Self.isMirrorReachabilityFailure(error) else {
+                    log("Copy 镜像停止探测：\(host) \(error.localizedDescription)")
+                    throw error
+                }
+                log("Copy 镜像回退：\(host) 无法访问 \(error.localizedDescription)")
             }
         }
 
@@ -826,6 +851,33 @@ final class CopyMangaAPI: @unchecked Sendable {
     }
 
     static let maxCopyMirrorAttempts = 3
+
+    /// Errors that mean "this domain can't be reached" (DNS, connect, TLS, timeout, 5xx gateway),
+    /// the only case where another mirror can help.
+    static func isMirrorReachabilityFailure(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            // Not .secureConnectionFailed / .networkConnectionLost: sites reset connections to throttle.
+            case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .timedOut,
+                 .serverCertificateUntrusted, .serverCertificateHasBadDate,
+                 .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .badServerResponse:
+                return true
+            default:
+                return false
+            }
+        }
+        if let error = error as? CopyMangaError {
+            switch error {
+            case .httpStatus(let code, _):
+                return [500, 502, 504, 520, 521, 522, 523, 524, 525, 526].contains(code)
+            case .allEndpoints404:
+                return true
+            default:
+                return false
+            }
+        }
+        return false
+    }
 
     private func copyMirrorCooldown(for evaluation: CopyCatalogEvaluation) -> Int {
         if evaluation.canUseAsLastResort {
@@ -994,7 +1046,10 @@ final class CopyMangaAPI: @unchecked Sendable {
             staticAnchorCount < 20 ||
             renderedBaseline <= max(1, staticAnchorCount)
         let skipRenderedDOM = enoughChapters || (groupedEnough && staticAnchorCount >= 20)
-        let shouldUseRenderedDOM = !skipRenderedDOM && !detailLooksSufficient && renderedDOMSignals
+        // Rendering loads the whole page (scripts, ads, the same chapters call) — a dozen requests.
+        // Only fall back to it when the chapters endpoint gave nothing usable (format change).
+        let detailUnavailable = detailCandidate?.isEmpty != false
+        let shouldUseRenderedDOM = !skipRenderedDOM && detailUnavailable && renderedDOMSignals
         if skipRenderedDOM {
             log("Copy 网页解析：当前分类/章节已足够，跳过渲染 DOM（分类 \(volumes.count)，章节 \(renderedBaseline)）")
         } else if detailLooksSufficient {
@@ -1045,7 +1100,7 @@ final class CopyMangaAPI: @unchecked Sendable {
             }
         }
         volumes = stripPseudoShareVolumes(volumes, slug: slug)
-        if volumes.isEmpty, let shareEntry = parseCopyShareEntryChapter(html: html, slug: slug, site: site) {
+        if volumes.isEmpty, detailUnavailable, let shareEntry = parseCopyShareEntryChapter(html: html, slug: slug, site: site) {
             usedPaths.append("next-links")
             probeRequestCount += 1
             log("Copy 网页解析：识别到“开始阅读”入口，尝试通过章节链恢复")
@@ -1070,7 +1125,9 @@ final class CopyMangaAPI: @unchecked Sendable {
             }
         }
         // Only run next-link scan when current list is obviously incomplete.
-        if let shareEntry = parseCopyShareEntryChapter(html: html, slug: slug, site: site),
+        // Walking "下一话" costs one request per chapter; never do it when the endpoint answered.
+        if detailUnavailable,
+           let shareEntry = parseCopyShareEntryChapter(html: html, slug: slug, site: site),
            let entryURL = URL(string: String(shareEntry.id.dropFirst(5))),
            Self.shouldCrawlCopyNextLinks(
                currentCount: volumes.reduce(0, { $0 + $1.chapters.count }),
@@ -1334,11 +1391,9 @@ final class CopyMangaAPI: @unchecked Sendable {
         }
         let dnts = firstMatch(in: html, pattern: #"(?is)id\s*=\s*["']dnt["'][^>]*value\s*=\s*["']([^"']+)["']"#) ?? "3"
         let expectedChapters = parseCopyExpectedCounts(html: html).chapters
-        let endpointCandidates = [
-            "comicdetail/\(slug)/chapters",
-            "comicdetail/\(slug)/chapters?limit=500&offset=0",
-            "comicdetail/\(slug)/chapters?limit=500&page=1"
-        ]
+        // One request: the paged variants return the same full catalog, and each extra call counts
+        // toward Copy's per-IP limit.
+        let endpointCandidates = ["comicdetail/\(slug)/chapters"]
         var merged: [ComicVolume] = []
         var requestCount = 0
 
@@ -4014,37 +4069,77 @@ actor SiteHeuristicsCache {
     }
 }
 
+/// Parsed catalogs, kept on disk for 12 hours so reopening a comic (after a relaunch, from the
+/// bookshelf) doesn't re-crawl the site. Copy mirrors share entries: they are one site.
 actor ComicInfoCache {
-    private struct Entry {
+    struct Entry: Codable {
         let value: ComicInfo
-        let expiresAt: Date
+        let fetchedAt: Date
+    }
+
+    static let ttl: TimeInterval = 12 * 60 * 60
+    static let maxEntries = 80
+
+    static var defaultFileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("MangaGlass", isDirectory: true)
+            .appendingPathComponent("comic-catalogs-v1.json")
     }
 
     private var store: [String: Entry] = [:]
-    private let ttl: TimeInterval = 15 * 60
+    private let fileURL: URL?
+    private let now: @Sendable () -> Date
+
+    /// `fileURL == nil` keeps the cache in memory only (tests, previews).
+    init(fileURL: URL? = nil, now: @escaping @Sendable () -> Date = Date.init) {
+        self.fileURL = fileURL
+        self.now = now
+        if let fileURL, let data = try? Data(contentsOf: fileURL),
+           let saved = try? JSONDecoder().decode([String: Entry].self, from: data) {
+            let current = now()
+            store = saved.filter { current.timeIntervalSince($0.value.fetchedAt) < Self.ttl }
+        }
+    }
 
     func get(slug: String, site: MangaSiteConfig) -> ComicInfo? {
-        let key = cacheKey(slug: slug, site: site)
+        entry(slug: slug, site: site)?.value
+    }
+
+    func entry(slug: String, site: MangaSiteConfig) -> Entry? {
+        let key = Self.cacheKey(slug: slug, site: site)
         guard let entry = store[key] else { return nil }
-        if entry.expiresAt > Date() {
-            return entry.value
+        if now().timeIntervalSince(entry.fetchedAt) < Self.ttl {
+            return entry
         }
         store.removeValue(forKey: key)
+        persist()
         return nil
     }
 
     func set(_ info: ComicInfo, slug: String, site: MangaSiteConfig) {
-        let key = cacheKey(slug: slug, site: site)
-        store[key] = Entry(value: info, expiresAt: Date().addingTimeInterval(ttl))
+        store[Self.cacheKey(slug: slug, site: site)] = Entry(value: info, fetchedAt: now())
+        if store.count > Self.maxEntries {
+            let overflow = store.sorted { $0.value.fetchedAt < $1.value.fetchedAt }.prefix(store.count - Self.maxEntries)
+            for (key, _) in overflow { store.removeValue(forKey: key) }
+        }
+        persist()
     }
 
     func clear() {
         store.removeAll()
+        if let fileURL { try? FileManager.default.removeItem(at: fileURL) }
     }
 
-    private func cacheKey(slug: String, site: MangaSiteConfig) -> String {
-        let host = site.webBase.host?.lowercased() ?? site.displayName.lowercased()
-        return "\(host)::\(slug.lowercased())"
+    private func persist() {
+        guard let fileURL, let data = try? JSONEncoder().encode(store) else { return }
+        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: fileURL, options: .atomic)
+    }
+
+    static func cacheKey(slug: String, site: MangaSiteConfig) -> String {
+        let host = site.webBase.host?.lowercased()
+        let scope = CopyMangaMirror.mirror(for: host) != nil ? "copy" : (host ?? site.displayName.lowercased())
+        return "\(scope)::\(slug.lowercased())"
     }
 }
 
@@ -4239,6 +4334,10 @@ actor AntiBanGuard {
             return
         }
         blockedUntil[key] = until
+    }
+
+    func unblock(site: MangaSiteConfig) {
+        blockedUntil.removeValue(forKey: Self.key(for: site))
     }
 
     func clear() {

@@ -429,7 +429,27 @@ struct DownloadWorkspaceView: View {
                 Button("复制错误") { vm.copyCurrentError() }.buttonStyle(MGActionButtonStyle(variant: .ghost))
             }.font(MGFont.caption)
         } else if vm.showParseDone {
-            Label("目录已就绪", systemImage: "checkmark.circle").font(MGFont.caption).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                if let fetchedAt = vm.catalogFetchedAt {
+                    // Re-renders each minute so "x 分钟前" stays true.
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        let age = MainViewModel.relativeAge(of: fetchedAt, now: context.date)
+                        Label(age == "刚刚" ? "目录刚刚更新" : "目录更新于 \(age)", systemImage: "checkmark.circle")
+                    }
+                } else {
+                    Label("目录已就绪", systemImage: "checkmark.circle")
+                }
+                Button {
+                    vm.refreshComic()
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .fontWeight(.medium)
+                .help("重新从站点获取目录（会发起网络请求）")
+            }
+            .font(MGFont.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
