@@ -153,6 +153,8 @@ struct MGChapterTile: View {
                         .frame(width: 5, height: 5)
                         .padding(5)
                         .help("已下载")
+                        // Pops in when a chapter finishes while the grid is on screen.
+                        .transition(.scale(scale: 0.1).combined(with: .opacity))
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: MGRadius.small, style: .continuous))
@@ -160,6 +162,7 @@ struct MGChapterTile: View {
         .buttonStyle(MGTilePressStyle())
         .onHover { hovering = $0 }
         .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.75), value: selected)
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.55), value: downloaded)
         .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
         .help(title)
         .accessibilityLabel(title)

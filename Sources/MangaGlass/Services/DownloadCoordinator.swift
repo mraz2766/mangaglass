@@ -224,6 +224,8 @@ final class DownloadCoordinator: ObservableObject {
     @Published var speedText = ""
     @Published var currentTaskTitle = ""
     @Published var lastCompletedOutputURL: URL?
+    /// Bumped when a batch finishes with every chapter done (no failures): the UI's cue to celebrate.
+    @Published private(set) var celebrationTick = 0
     @Published var manhuaGuiSoftCircuit: ManhuaGuiSoftCircuit?
     @Published var copySoftCircuit: CopySoftCircuit?
 
@@ -789,6 +791,9 @@ final class DownloadCoordinator: ObservableObject {
                         return false
                     }
                 }.count
+                if failed == 0, self.taskItems.contains(where: { $0.state == .done }) {
+                    self.celebrationTick += 1
+                }
                 self.message = failed == 0 ? "全部下载完成。" : "完成，失败/取消 \(failed) 话。"
                 self.log(failed == 0 ? "下载全部完成" : "下载完成，失败/取消 \(failed) 话")
                 self.notifyCompletion(failedCount: failed)

@@ -33,6 +33,9 @@ struct DownloadWorkspaceView: View {
     @State private var isApplyingLinkUndo = false
     @FocusState private var linkFocused: Bool
     @Namespace private var heroSpace
+    @Namespace private var chipSpace
+    /// Bumped on a parse failure; the link field gives a short head-shake.
+    @State private var linkShakes: CGFloat = 0
     @State private var enqueueButtonCenter: CGPoint = .zero
     @Environment(\.mgFlyToQueue) private var flyToQueue
     /// Chapters whose folder already exists in the download directory (green dot on tiles).
@@ -90,6 +93,10 @@ struct DownloadWorkspaceView: View {
         }
         .onChange(of: vm.comic?.slug) { slug in
             if slug != nil { MGRevealClock.mark() }
+        }
+        .onChange(of: vm.errorText) { text in
+            guard !text.isEmpty, !reduceMotion else { return }
+            withAnimation(.linear(duration: 0.4)) { linkShakes += 1 }
         }
         .onDisappear {
             enqueueFeedbackTask?.cancel()
@@ -200,6 +207,7 @@ struct DownloadWorkspaceView: View {
             .mgQuietTextField()
             .frame(height: large ? 44 : 32)
             .overlay { Capsule().stroke(linkFocused ? MGTheme.accent : .clear, lineWidth: 2) }
+            .modifier(MGShakeEffect(animatableData: linkShakes))
             .matchedGeometryEffect(id: "link-field", in: heroSpace)
             .background {
                 Button(action: undoLinkInput) { Color.clear.frame(width: 1, height: 1) }
@@ -257,9 +265,13 @@ struct DownloadWorkspaceView: View {
                             .frame(width: 112, height: 155)
                     } else {
                         MGHeroCover(url: vm.comic?.coverURL, title: vm.comic?.name ?? "?")
+                            // A new comic's cover settles into place instead of swapping in.
+                            .id(vm.comic?.slug)
+                            .transition(reduceMotion ? .opacity : .scale(scale: 0.92).combined(with: .opacity))
                     }
                 }
                 .buttonStyle(.plain)
+                .animation(reduceMotion ? nil : MGMotion.page, value: vm.comic?.slug)
                 .disabled(vm.comic?.coverURL == nil)
                 .help("查看大图")
                 .accessibilityLabel("查看漫画封面大图")
@@ -345,14 +357,20 @@ struct DownloadWorkspaceView: View {
         return "无法解析此链接"
     }
 
+    /// One selected chip → its fill slides to the next; several selected → each fills on its own.
+    private var slidingChips: Namespace.ID? {
+        let allSelected = vm.selectedVolumeIDs.count == vm.displayVolumes.count
+        return allSelected || vm.selectedVolumeIDs.count == 1 ? chipSpace : nil
+    }
+
     private var categoryChips: some View {
         let allSelected = vm.selectedVolumeIDs.count == vm.displayVolumes.count
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                MGChip(title: "全部", count: vm.totalChapterCount, selected: allSelected) { vm.selectAllVolumes() }
+                MGChip(title: "全部", count: vm.totalChapterCount, selected: allSelected, selectionSpace: slidingChips) { vm.selectAllVolumes() }
                 ForEach(vm.displayVolumes) { volume in
                     let on = !allSelected && vm.selectedVolumeIDs.contains(volume.id)
-                    MGChip(title: volume.displayName, count: volume.chapters.count, selected: on) {
+                    MGChip(title: volume.displayName, count: volume.chapters.count, selected: on, selectionSpace: slidingChips) {
                         if allSelected {
                             // From "全部", tapping a category focuses on it alone.
                             vm.deselectAllVolumes()
@@ -366,6 +384,7 @@ struct DownloadWorkspaceView: View {
                 }
             }
             .padding(.vertical, 1)
+            .animation(reduceMotion ? nil : MGMotion.snappy, value: vm.selectedVolumeIDs)
         }
         .help("仅影响显示，已选章节会保留")
     }
@@ -397,8 +416,14 @@ struct DownloadWorkspaceView: View {
 
     @ViewBuilder private var parseStatus: some View {
         if vm.isLoading {
-            Label(vm.parseLiveText.isEmpty ? "正在解析" : vm.parseLiveText, systemImage: "arrow.triangle.2.circlepath")
-                .font(MGFont.caption).foregroundStyle(MGTheme.accent)
+            HStack(spacing: 6) {
+                MGSpinningIcon(systemName: "arrow.triangle.2.circlepath")
+                Text(vm.parseLiveText.isEmpty ? "正在解析" : vm.parseLiveText)
+                    .contentTransition(.opacity)
+                    .animation(MGMotion.regular, value: vm.parseLiveText)
+            }
+            .font(MGFont.caption).foregroundStyle(MGTheme.accent)
+            .transition(.opacity)
         } else if !vm.errorText.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Label("解析失败", systemImage: "exclamationmark.triangle").foregroundStyle(MGTheme.danger)
@@ -749,16 +774,17 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
 
     var body: some View {
         LazyVStack(spacing: 6, pinnedViews: [.sectionHeaders]) {
-            ForEach(Array(sections.enumerated()), id: \.element.id) { sectionIndex, section in
+            ForEach(sections) { section in
                 Section {
                     if !collapsedVolumeIDs.contains(section.id) {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 60), spacing: 6)], spacing: 6) {
                             ForEach(Array(section.chapters.enumerated()), id: \.element.id) { index, chapter in
                                 chapterCell(chapter)
-                                    .mgStaggerAppear(index: sectionIndex * 12 + index)
+                                    // Per-group index: a group expanded far down starts rippling at once.
+                                    .mgStaggerAppear(index: index)
                             }
                         }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .transition(.opacity)
                         .padding(.horizontal, 2)
                         .padding(.bottom, 12)
                         .contentShape(Rectangle())
@@ -781,10 +807,14 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
         }
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
             Button {
-                if collapsed {
-                    vm.collapsedVolumeIDs.remove(section.id)
-                } else {
-                    vm.collapsedVolumeIDs.insert(section.id)
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : MGMotion.page) {
+                    if collapsed {
+                        // Tiles built in the next moment ripple in instead of appearing at once.
+                        MGRevealClock.mark()
+                        vm.collapsedVolumeIDs.remove(section.id)
+                    } else {
+                        vm.collapsedVolumeIDs.insert(section.id)
+                    }
                 }
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -797,7 +827,7 @@ private struct ChapterGridContent<DragGestureType: Gesture>: View, @preconcurren
                         .font(MGFont.micro.weight(.bold))
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(collapsed ? -90 : 0))
-                        .animation(reduceMotion ? nil : MGMotion.fast, value: collapsed)
+                        .animation(reduceMotion ? nil : MGMotion.snappy, value: collapsed)
                 }
                 .contentShape(Rectangle())
             }

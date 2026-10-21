@@ -110,6 +110,7 @@ final class MainViewModel: ObservableObject {
         let raw = UserDefaults.standard.string(forKey: StorageKey.themeMode) ?? AppThemeMode.system.rawValue
         return AppThemeMode(rawValue: raw) ?? .system
     }() {
+        willSet { if persistsState, newValue != themeMode { MGWindowCrossfade.run() } }
         didSet {
             persistString(themeMode.rawValue, key: StorageKey.themeMode)
             updateAppAppearance()
@@ -119,6 +120,7 @@ final class MainViewModel: ObservableObject {
         let raw = UserDefaults.standard.string(forKey: AppThemeStyle.storageKey) ?? AppThemeStyle.ink.rawValue
         return AppThemeStyle(rawValue: raw) ?? .ink
     }() {
+        willSet { if persistsState, newValue != themeStyle { MGWindowCrossfade.run() } }
         didSet {
             MGTheme.style = themeStyle
             persistString(themeStyle.rawValue, key: AppThemeStyle.storageKey)
@@ -126,6 +128,7 @@ final class MainViewModel: ObservableObject {
     }
     /// Use the macOS accent color (System Settings › Appearance) instead of the theme's own.
     @Published var followsSystemAccent: Bool = UserDefaults.standard.bool(forKey: StorageKey.followsSystemAccent) {
+        willSet { if persistsState, newValue != followsSystemAccent { MGWindowCrossfade.run() } }
         didSet {
             MGTheme.followsSystemAccent = followsSystemAccent
             if persistsState { UserDefaults.standard.set(followsSystemAccent, forKey: StorageKey.followsSystemAccent) }

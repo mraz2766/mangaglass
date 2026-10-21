@@ -182,6 +182,79 @@ private struct MGArcFlight: ViewModifier, @preconcurrency Animatable {
     }
 }
 
+// MARK: - Progress sheen
+
+/// A soft highlight that sweeps along a progress fill while work is under way. Driven by a
+/// paused-when-idle `TimelineView`, so finished or paused bars cost nothing.
+private struct MGProgressSheen: ViewModifier {
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if active && !reduceMotion {
+                TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                    GeometryReader { proxy in
+                        let period = 1.6
+                        let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+                        let band = max(40, proxy.size.width * 0.35)
+                        LinearGradient(colors: [.white.opacity(0), .white.opacity(0.55), .white.opacity(0)],
+                                       startPoint: .leading, endPoint: .trailing)
+                            .frame(width: band)
+                            .offset(x: -band + (proxy.size.width + band) * phase)
+                    }
+                }
+                .blendMode(.plusLighter)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+            }
+        }
+        .clipShape(Capsule())
+    }
+}
+
+// MARK: - Spinning icon
+
+/// SF Symbol that turns continuously while `active` (macOS 13 has no symbol effects).
+struct MGSpinningIcon: View {
+    let systemName: String
+    var active = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !active || reduceMotion)) { context in
+            Image(systemName: systemName)
+                .rotationEffect(.degrees(active && !reduceMotion
+                    ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.2) / 1.2 * 360
+                    : 0))
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Press
+
+/// Plain button that shrinks a little while pressed and springs back.
+struct MGPressScaleStyle: ButtonStyle {
+    var scale: CGFloat = 0.95
+
+    func makeBody(configuration: Configuration) -> some View {
+        MGPressScaleBody(configuration: configuration, scale: scale)
+    }
+}
+
+private struct MGPressScaleBody: View {
+    let configuration: ButtonStyle.Configuration
+    let scale: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? scale : 1)
+            .animation(reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
 // MARK: - Hover lift
 
 private struct MGHoverLift: ViewModifier {
@@ -200,6 +273,7 @@ private struct MGHoverLift: ViewModifier {
 extension View {
     func mgStaggerAppear(index: Int) -> some View { modifier(MGStaggerAppear(index: index)) }
     func mgHoverLift() -> some View { modifier(MGHoverLift()) }
+    func mgProgressSheen(active: Bool) -> some View { modifier(MGProgressSheen(active: active)) }
 
     /// Panel surface that follows the theme: solid cell color, plus a light hairline on glass themes.
     func mgPanel(radius: CGFloat = MGRadius.card) -> some View {

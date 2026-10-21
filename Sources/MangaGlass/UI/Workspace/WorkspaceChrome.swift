@@ -5,7 +5,10 @@ struct WorkspaceSidebar: View {
     @ObservedObject var downloader: DownloadCoordinator
     @Binding var destination: WorkspaceDestination
     var bump = 0
+    @Namespace private var selectionSpace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Briefly true after a clean batch finishes: the 下载 icon turns into a green check.
+    @State private var celebrating = false
 
     var body: some View {
         let counts = downloader.countsSummary()
@@ -14,7 +17,9 @@ struct WorkspaceSidebar: View {
                 SidebarNavButton(item: item,
                                  selected: destination == item,
                                  badge: item == .queue ? counts.queued + counts.running : 0,
-                                 bump: bump) { destination = item }
+                                 bump: bump,
+                                 selectionSpace: selectionSpace,
+                                 celebrating: item == .queue && celebrating) { destination = item }
             }
             Spacer(minLength: 8)
             if downloader.isRunning {
@@ -37,6 +42,12 @@ struct WorkspaceSidebar: View {
             .ignoresSafeArea()
         }
         .animation(reduceMotion ? nil : MGMotion.regular, value: downloader.isRunning)
+        .onChange(of: downloader.celebrationTick) { _ in
+            withAnimation(MGMotion.snappy) { celebrating = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.8) {
+                withAnimation(MGMotion.page) { celebrating = false }
+            }
+        }
     }
 
     /// Small ring that fills with overall progress while downloading.
@@ -70,17 +81,25 @@ private struct SidebarNavButton: View {
     let selected: Bool
     let badge: Int
     let bump: Int
+    /// Shared by the rail's buttons so the selection fill slides from one to the next.
+    let selectionSpace: Namespace.ID
+    var celebrating = false
     let action: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
+    @State private var popped = false
 
     var body: some View {
         let palette = MGTheme.palette
         Button(action: action) {
             VStack(spacing: 3) {
-                Image(systemName: item.systemImage)
+                Image(systemName: celebrating ? "checkmark.circle.fill" : item.systemImage)
                     .font(.system(size: 17, weight: .medium))
-                    .symbolVariant(selected ? .fill : .none)
+                    .symbolVariant(selected || celebrating ? .fill : .none)
+                    .foregroundStyle(celebrating ? MGTheme.success : (selected ? palette.softSelectedText : Color.secondary))
+                    .scaleEffect(celebrating && !reduceMotion ? 1.15 : 1)
+                    .id(celebrating)
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
                     .overlay(alignment: .topTrailing) {
                         if badge > 0 {
                             SidebarBadge(count: badge, bump: bump)
@@ -90,18 +109,31 @@ private struct SidebarNavButton: View {
                 Text(item.title)
                     .font(MGFont.micro.weight(selected ? .semibold : .medium))
             }
+            .scaleEffect(popped ? 1.12 : 1)
             .foregroundStyle(selected ? palette.softSelectedText : Color.secondary)
             .frame(width: 52, height: 48)
-            .background(
-                selected ? palette.softSelectedFill : (hovering ? palette.cellHover.opacity(0.6) : Color.clear),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-            )
+            .background {
+                let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+                if selected {
+                    shape.fill(palette.softSelectedFill)
+                        .matchedGeometryEffect(id: "selection", in: selectionSpace)
+                } else if hovering {
+                    shape.fill(palette.cellHover.opacity(0.6))
+                }
+            }
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MGPressScaleStyle(scale: 0.9))
         .onHover { hovering = $0 }
         .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
-        .animation(reduceMotion ? nil : MGMotion.fast, value: selected)
+        .onChange(of: selected) { isSelected in
+            // A short pop on the icon that just became current.
+            guard isSelected, !reduceMotion else { return }
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.5)) { popped = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                withAnimation(MGMotion.snappy) { popped = false }
+            }
+        }
         .background {
             if item == .queue {
                 GeometryReader { proxy in

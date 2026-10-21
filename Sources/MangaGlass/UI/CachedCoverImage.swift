@@ -51,12 +51,16 @@ struct CachedCoverImage<Content: View>: View {
     init(url: URL, @ViewBuilder content: @escaping (Phase) -> Content) {
         self.url = url
         self.content = content
+        // Start from the memory cache: pages are rebuilt on every sidebar switch, and starting at
+        // .loading made already-loaded covers flash their placeholder for a frame.
+        _phase = State(initialValue: CoverImageCache.shared.cachedImage(for: url).map(Phase.success) ?? .loading)
     }
 
     var body: some View {
         content(phase)
             .task(id: url) {
                 if let cached = CoverImageCache.shared.cachedImage(for: url) {
+                    if case .success(let shown) = phase, shown === cached { return }
                     phase = .success(cached)
                     return
                 }

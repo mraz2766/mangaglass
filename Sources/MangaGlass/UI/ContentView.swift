@@ -57,6 +57,7 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             shell
+            MGCelebrationLayer(downloader: vm.downloader)
             ForEach(flightCenter.flights) { flight in
                 MGFlightView(flight: flight, target: CGPoint(x: queueTarget.midX, y: queueTarget.midY)) {
                     flightCenter.land(flight)
@@ -72,7 +73,7 @@ struct ContentView: View {
         .foregroundStyle(MGTheme.palette.text)
         .tint(MGTheme.accent)
         .preferredColorScheme(vm.preferredColorScheme)
-        .animation(reduceMotion ? nil : MGMotion.panel, value: destination)
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : MGMotion.page, value: destination)
         .onAppear(perform: presentRestoredQueuePromptIfNeeded)
         .sheet(isPresented: $showLogs) {
             ActivityLogSheet(vm: vm)
@@ -148,9 +149,13 @@ struct ContentView: View {
 
     private var workspaceTransition: AnyTransition {
         guard !reduceMotion else { return .opacity }
+        // The old page gets out of the way fast so the two never smear together; the new one
+        // rises a few points and settles.
         return .asymmetric(
-            insertion: .opacity.combined(with: .offset(y: 8)),
-            removal: .opacity.combined(with: .offset(y: -6))
+            insertion: .opacity
+                .combined(with: .offset(y: 12))
+                .combined(with: .scale(scale: 0.985, anchor: .top)),
+            removal: .opacity.animation(.easeOut(duration: 0.12))
         )
     }
 

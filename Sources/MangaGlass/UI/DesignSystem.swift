@@ -226,6 +226,10 @@ enum MGMotion {
     static let fast = Animation.easeOut(duration: 0.08)
     static let regular = Animation.easeInOut(duration: 0.16)
     static let panel = Animation.easeInOut(duration: 0.24)
+    /// Page switches and other "something new arrived" moments: quick, settles without bounce.
+    static let page = Animation.spring(response: 0.42, dampingFraction: 0.88)
+    /// Small confirmations (a selection pill sliding, an icon popping).
+    static let snappy = Animation.spring(response: 0.3, dampingFraction: 0.72)
 }
 
 struct MGActionButtonStyle: ButtonStyle {
@@ -416,11 +420,13 @@ struct MGSelectionButtonStyle: ButtonStyle {
     }
 }
 
-/// Rounded filter chip with a trailing count.
+/// Rounded filter chip with a trailing count. Chips given the same `selectionSpace` share one
+/// selected fill that slides between them.
 struct MGChip: View {
     let title: String
     let count: Int
     let selected: Bool
+    var selectionSpace: Namespace.ID? = nil
     let action: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
@@ -436,18 +442,32 @@ struct MGChip: View {
             .foregroundStyle(selected ? palette.selectedText : Color.primary.opacity(0.85))
             .padding(.horizontal, 11)
             .frame(height: 26)
-            .background(selected ? palette.selectedFill : (hovering ? palette.cellHover : palette.cell), in: Capsule())
+            .background {
+                if selected {
+                    selectedFill(palette)
+                } else {
+                    Capsule().fill(hovering ? palette.cellHover : palette.cell)
+                }
+            }
             .overlay {
                 Capsule().stroke(selected ? .clear : (palette.glass ? palette.cellStroke : palette.divider), lineWidth: 0.5)
             }
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MGPressScaleStyle(scale: 0.94))
         .onHover { hovering = $0 }
-        .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.75), value: selected)
+        .animation(reduceMotion ? nil : MGMotion.snappy, value: selected)
         .animation(reduceMotion ? nil : MGMotion.fast, value: hovering)
         .accessibilityLabel("\(title) \(count) 话")
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    @ViewBuilder private func selectedFill(_ palette: MGPalette) -> some View {
+        if let selectionSpace, !reduceMotion {
+            Capsule().fill(palette.selectedFill).matchedGeometryEffect(id: "chip-selection", in: selectionSpace)
+        } else {
+            Capsule().fill(palette.selectedFill)
+        }
     }
 }
 

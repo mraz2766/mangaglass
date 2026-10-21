@@ -270,7 +270,8 @@ struct QueueWorkspaceView: View {
                                     .transition(.scale.combined(with: .opacity))
                             }
                         }
-                        MGProgressBar(value: group.fraction, tint: group.isFinished ? MGTheme.success : MGTheme.accent)
+                        MGProgressBar(value: group.fraction, tint: group.isFinished ? MGTheme.success : MGTheme.accent,
+                                      active: group.runningCount > 0 && !downloader.isPaused)
                     }
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
@@ -596,7 +597,7 @@ private struct QueueSummaryCard: View {
                         .monospacedDigit()
                         .opacity(0.85)
                         .lineLimit(1)
-                    MGBannerProgress(value: downloader.progress)
+                    MGBannerProgress(value: downloader.progress, active: downloader.isRunning && !downloader.isPaused)
                         .frame(maxWidth: 360)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -675,6 +676,7 @@ private struct QueueSummaryCard: View {
 /// White progress bar for use on a banner.
 struct MGBannerProgress: View {
     let value: Double
+    var active = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -683,6 +685,7 @@ struct MGBannerProgress: View {
                 Capsule().fill(Color.primary.opacity(0.10))
                 Capsule().fill(MGTheme.accent)
                     .frame(width: max(value > 0 ? 6 : 0, proxy.size.width * min(1, max(0, value))))
+                    .mgProgressSheen(active: active && value > 0 && value < 1)
             }
         }
         .frame(height: 6)
@@ -697,6 +700,7 @@ struct MGProgressBar: View {
     let value: Double
     var tint: Color = MGTheme.accent
     var height: CGFloat = 4
+    var active = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -705,6 +709,7 @@ struct MGProgressBar: View {
                 Capsule().fill(MGTheme.palette.divider.opacity(0.7))
                 Capsule().fill(tint)
                     .frame(width: max(value > 0 ? height : 0, proxy.size.width * min(1, max(0, value))))
+                    .mgProgressSheen(active: active && value > 0 && value < 1)
             }
         }
         .frame(height: height)
