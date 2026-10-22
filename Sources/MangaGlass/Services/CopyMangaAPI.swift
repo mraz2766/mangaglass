@@ -3228,7 +3228,8 @@ final class CopyMangaAPI: @unchecked Sendable {
 
     private func manhuaGuiFallbackHost(site: MangaSiteConfig, path: String) -> String? {
         guard isManhuaGui(site), !path.isEmpty else { return nil }
-        return "https://cf.hamreus.com"
+        // Keep in step with DownloadCoordinator.manhuaGuiImageHosts (first entry).
+        return "https://i.hamreus.com"
     }
 
     private func scriptContents(from html: String) -> [String] {

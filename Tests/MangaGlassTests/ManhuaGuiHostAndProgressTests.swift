@@ -7,7 +7,8 @@ final class ManhuaGuiHostAndProgressTests: XCTestCase {
     func testCandidatesIncludeReachableMirrorAndKeepSignature() {
         let urls = DownloadCoordinator.manhuaGuiImageCandidates(for: signed, preferredHost: nil)
         XCTAssertEqual(urls.first?.host, "i.hamreus.com", "payload host is tried first when nothing has worked yet")
-        XCTAssertEqual(urls.dropFirst().first?.host, "cf.hamreus.com", "cf is the first fallback")
+        XCTAssertEqual(urls.dropFirst().first?.host, "us.hamreus.com")
+        XCTAssertEqual(urls.last?.host, "cf.hamreus.com", "cf (404s for everything lately) is the last resort")
         XCTAssertTrue(urls.allSatisfy { $0.query == signed.query && $0.path == signed.path })
         XCTAssertEqual(Set(urls.map(\.absoluteString)).count, urls.count)
     }
@@ -15,6 +16,14 @@ final class ManhuaGuiHostAndProgressTests: XCTestCase {
     func testPreferredHostGoesFirst() {
         let urls = DownloadCoordinator.manhuaGuiImageCandidates(for: signed, preferredHost: "cf.hamreus.com")
         XCTAssertEqual(urls.map { $0.host! }.prefix(2), ["cf.hamreus.com", "i.hamreus.com"])
+    }
+
+    /// TLS resets / timeouts on 漫画柜 mean an IP block: those never rotate hosts or retry there.
+    func testManhuaGuiConnectionFailuresDoNotRotateHosts() {
+        XCTAssertTrue(DownloadCoordinator.isManhuaGuiHost(.manhuaGui))
+        XCTAssertFalse(DownloadCoordinator.isManhuaGuiHost(.baoziManga))
+        XCTAssertTrue(DownloadCoordinator.isConnectionThrottle(URLError(.secureConnectionFailed)))
+        XCTAssertTrue(DownloadCoordinator.isConnectionThrottle(URLError(.timedOut)))
     }
 
     func testNonHamreusImagesAreLeftAlone() {

@@ -251,6 +251,8 @@ final class DownloadCoordinator: ObservableObject {
     private var masterTask: Task<Void, Never>?
     private var logger: ((String) -> Void)?
     private var manhuaGuiPreferredHost: String?
+    /// 漫画柜 cooldowns since the last chapter that finished: each one doubles the next cooldown.
+    private var manhuaGuiCooldownStrikes = 0
     private var chapterExpectedPages: [UUID: Int] = [:] {
         didSet { cachedProgressSummary = nil }
     }
@@ -412,12 +414,15 @@ final class DownloadCoordinator: ObservableObject {
         connectionResetFailedIDs.insert(item.id)
         let streak = (connectionResetStreak[family] ?? 0) + 1
         connectionResetStreak[family] = streak
-        guard streak >= 2 else { return }
+        // 漫画柜 blocks by IP after short bursts: stop on the first reset rather than the second.
+        guard streak >= (family == .manhuaGui ? 1 : 2) else { return }
         let cooldown = pacingState(for: family).pacing.throttleCooldown
         switch family {
         case .manhuaGui:
             guard manhuaGuiSoftCircuit == nil else { return }
-            startManhuaGuiCooldown(after: item, cooldown: cooldown)
+            let escalated = Self.escalatedCooldown(base: cooldown, strikes: manhuaGuiCooldownStrikes)
+            manhuaGuiCooldownStrikes += 1
+            startManhuaGuiCooldown(after: item, cooldown: escalated)
         case .other:
             var state = pacingState(for: family)
             state.postpone(until: Date().addingTimeInterval(cooldown))
@@ -426,6 +431,12 @@ final class DownloadCoordinator: ObservableObject {
         case .copy:
             break  // handled by the Copy soft circuit (`copyFailureOutcome`)
         }
+    }
+
+    /// Base cooldown doubled per strike, capped at an hour: a block that is still on when the
+    /// cooldown ends (the first image of the resumed queue fails again) waits longer next time.
+    nonisolated static func escalatedCooldown(base: TimeInterval, strikes: Int) -> TimeInterval {
+        min(60 * 60, base * pow(2, Double(min(strikes, 6))))
     }
 
     private func startManhuaGuiCooldown(after item: DownloadTaskItem, cooldown: TimeInterval) {
@@ -1094,6 +1105,9 @@ final class DownloadCoordinator: ObservableObject {
                 self.scheduleProgressRefresh(force: true)
             }
             log("章节完成：[\(item.comic.name)] [\(item.chapter.volumeName)] \(item.chapter.displayName)，共 \(imageURLs.count) 张")
+            if Self.isManhuaGuiHost(item.comic.site) {
+                await MainActor.run { self.manhuaGuiCooldownStrikes = 0 }
+            }
         } catch is CancellationError {
             await MainActor.run {
                 guard self.currentRunID == runID || self.explicitlyCanceledItemIDs.contains(item.id) else { return }
@@ -1505,10 +1519,11 @@ final class DownloadCoordinator: ObservableObject {
                 throw DownloadCircuitBreakError(message: "图片 host 风控冷却中，已暂停该章节请求。")
             }
             do {
-                // Mirror hosts (漫画柜/包子) fail over on connection errors instead of retrying a dead host.
-                let hasMirrorFallback = index + 1 < candidates.count
-                    && (site == .baoziManga || site.webBase.host?.lowercased().contains("manhuagui.com") == true)
-                let page = try await retrying(times: 3, failFastOnConnectionError: hasMirrorFallback) {
+                // 包子 fails over to its mirror hosts on connection errors. 漫画柜 never retries one: a TLS reset
+                // or timeout there means the IP is being blocked, and every retry extends the block.
+                let isManhuaGuiSite = site.webBase.host?.lowercased().contains("manhuagui.com") == true
+                let hasMirrorFallback = index + 1 < candidates.count && site == .baoziManga
+                let page = try await retrying(times: 3, failFastOnConnectionError: hasMirrorFallback || isManhuaGuiSite) {
                     try Task.checkCancellation()
                     guard self.shouldContinue(runID: runID, itemID: itemID) else { throw CancellationError() }
                     let isCopy = self.isCopyFamily(site)
@@ -1648,7 +1663,8 @@ final class DownloadCoordinator: ObservableObject {
                 }
                 log("图片 404，切换备用域名重试：\(candidate.host ?? "-") -> \(candidates[index + 1].host ?? "-")")
                 continue
-            } catch let error as URLError where Self.shouldTryNextBaoziImageHost(after: error) && index + 1 < candidates.count {
+            } catch let error as URLError where Self.shouldTryNextBaoziImageHost(after: error) && index + 1 < candidates.count
+                        && !Self.isManhuaGuiHost(site) {
                 lastError = error
                 log("图片连接异常（\(error.code.rawValue)），切换备用域名：\(candidate.host ?? "-") -> \(candidates[index + 1].host ?? "-")")
                 continue
@@ -2287,10 +2303,10 @@ final class DownloadCoordinator: ObservableObject {
         return Self.manhuaGuiImageCandidates(for: original, preferredHost: manhuaGuiPreferredHost)
     }
 
-    /// Image mirrors for 漫画柜. `cf` comes first: in user networks the older i/eu/us hosts can be
-    /// unreachable (TLS reset or timeout) while `cf` still serves the same signed paths.
+    /// Image mirrors for 漫画柜, tried in order on a 404. `cf` is last: it currently answers 404 for
+    /// every image, and a run of 404s at the start of each chapter looks like a scanner.
     nonisolated static let manhuaGuiImageHosts = [
-        "cf.hamreus.com", "i.hamreus.com", "eu.hamreus.com", "us.hamreus.com", "us2.hamreus.com", "eu2.hamreus.com"
+        "i.hamreus.com", "us.hamreus.com", "eu.hamreus.com", "us2.hamreus.com", "eu2.hamreus.com", "cf.hamreus.com"
     ]
 
     /// A host that already served images this session goes first, then the payload's own host, then mirrors.
@@ -2327,6 +2343,10 @@ final class DownloadCoordinator: ObservableObject {
             candidates.append(candidate)
         }
         return candidates
+    }
+
+    nonisolated static func isManhuaGuiHost(_ site: MangaSiteConfig) -> Bool {
+        site.webBase.host?.lowercased().contains("manhuagui.com") == true
     }
 
     nonisolated static func shouldTryNextBaoziImageHost(after error: URLError) -> Bool {

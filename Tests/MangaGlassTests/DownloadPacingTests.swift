@@ -26,17 +26,35 @@ final class DownloadPacingTests: XCTestCase {
         XCTAssertGreaterThan(smart.restEveryChapters, 0)
     }
 
-    func testSmartStepsUpOnSuccessAndDropsToFloorOnThrottle() {
-        var state = AdaptivePacingState(pacing: .make(mode: .smart, family: .manhuaGui))
-        XCTAssertEqual(state.chapterConcurrency, 2)
+    func testEfficientStepsUpOnSuccessAndDropsToFloorOnThrottle() {
+        var state = AdaptivePacingState(pacing: .make(mode: .efficient, family: .manhuaGui))
+        XCTAssertEqual(state.chapterConcurrency, 1)
         for _ in 0..<59 { XCTAssertFalse(state.noteSuccess()) }
         XCTAssertTrue(state.noteSuccess())
-        XCTAssertEqual(state.chapterConcurrency, 3)
+        XCTAssertEqual(state.chapterConcurrency, 2)
         for _ in 0..<200 { _ = state.noteSuccess() }
-        XCTAssertEqual(state.chapterConcurrency, 3, "capped at the range top")
+        XCTAssertEqual(state.chapterConcurrency, 2, "capped at the range top")
         XCTAssertTrue(state.noteThrottle())
         XCTAssertEqual(state.chapterConcurrency, 1)
         XCTAssertFalse(state.noteThrottle(), "already at the floor")
+    }
+
+    /// 漫画柜 bans the IP after bursts: every mode fetches one image at a time, about a second apart,
+    /// and only 偏效率 ever runs a second chapter.
+    func testManhuaGuiReadsLikeAPerson() {
+        for mode in DownloadPacingMode.allCases {
+            let pacing = SitePacing.make(mode: mode, family: .manhuaGui)
+            XCTAssertEqual(pacing.imageConcurrencyPerChapter, 1, "\(mode)")
+            XCTAssertGreaterThanOrEqual(pacing.imageSpacingMS.lowerBound, 600, "\(mode)")
+            XCTAssertLessThanOrEqual(pacing.chapterConcurrency.upperBound, mode == .efficient ? 2 : 1, "\(mode)")
+        }
+    }
+
+    func testManhuaGuiCooldownDoublesPerStrikeUpToAnHour() {
+        XCTAssertEqual(DownloadCoordinator.escalatedCooldown(base: 8 * 60, strikes: 0), 8 * 60)
+        XCTAssertEqual(DownloadCoordinator.escalatedCooldown(base: 8 * 60, strikes: 1), 16 * 60)
+        XCTAssertEqual(DownloadCoordinator.escalatedCooldown(base: 8 * 60, strikes: 2), 32 * 60)
+        XCTAssertEqual(DownloadCoordinator.escalatedCooldown(base: 8 * 60, strikes: 9), 60 * 60)
     }
 
     func testCopyGlobalImageConcurrencyAdapts() {

@@ -81,22 +81,23 @@ struct SitePacing: Equatable, Sendable {
 
     static func make(mode: DownloadPacingMode, family: SiteFamily) -> SitePacing {
         switch (family, mode) {
-        // 漫画柜: the old fixed pace (4 chapters, 240–460ms, no rests) is now "efficient".
+        // 漫画柜 bans the IP (TLS resets on every host, site included) after short bursts, so every
+        // mode reads like a person paging through: one image at a time, about a second apart.
         case (.manhuaGui, .safe):
-            return SitePacing(chapterConcurrency: 1...1, imageConcurrencyPerChapter: 2, globalImageConcurrency: 1...1,
-                              imageSpacingMS: 500...900, chapterGapMS: 5000...8000,
-                              restEveryChapters: 10, restSeconds: 90...150, throttleCooldown: 15 * 60,
+            return SitePacing(chapterConcurrency: 1...1, imageConcurrencyPerChapter: 1, globalImageConcurrency: 1...1,
+                              imageSpacingMS: 1000...1800, chapterGapMS: 8000...12000,
+                              restEveryChapters: 8, restSeconds: 120...180, throttleCooldown: 15 * 60,
                               successesToStepUp: 0, startLevel: 0)
         case (.manhuaGui, .smart):
-            return SitePacing(chapterConcurrency: 1...3, imageConcurrencyPerChapter: 2, globalImageConcurrency: 1...1,
-                              imageSpacingMS: 320...600, chapterGapMS: 2500...4500,
-                              restEveryChapters: 20, restSeconds: 45...90, throttleCooldown: 8 * 60,
-                              successesToStepUp: 60, startLevel: 1)
+            return SitePacing(chapterConcurrency: 1...1, imageConcurrencyPerChapter: 1, globalImageConcurrency: 1...1,
+                              imageSpacingMS: 800...1500, chapterGapMS: 5000...8000,
+                              restEveryChapters: 12, restSeconds: 90...150, throttleCooldown: 8 * 60,
+                              successesToStepUp: 0, startLevel: 0)
         case (.manhuaGui, .efficient):
-            return SitePacing(chapterConcurrency: 2...4, imageConcurrencyPerChapter: 2, globalImageConcurrency: 1...1,
-                              imageSpacingMS: 240...460, chapterGapMS: 1000...2000,
-                              restEveryChapters: 40, restSeconds: 20...40, throttleCooldown: 4 * 60,
-                              successesToStepUp: 30, startLevel: 2)
+            return SitePacing(chapterConcurrency: 1...2, imageConcurrencyPerChapter: 1, globalImageConcurrency: 1...1,
+                              imageSpacingMS: 600...1100, chapterGapMS: 3000...5000,
+                              restEveryChapters: 20, restSeconds: 60...90, throttleCooldown: 6 * 60,
+                              successesToStepUp: 60, startLevel: 0)
         case (.copy, .safe):
             return SitePacing(chapterConcurrency: 2...2, imageConcurrencyPerChapter: 2, globalImageConcurrency: 3...3,
                               imageSpacingMS: 150...300, chapterGapMS: 1500...2500,
