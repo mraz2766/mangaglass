@@ -1589,7 +1589,9 @@ final class DownloadCoordinator: ObservableObject {
                             ) {
                                 throw DownloadCircuitBreakError(message: stopMessage)
                             }
-                        } else if http.statusCode == 404 {
+                        } else if http.statusCode == 404, index + 1 >= candidates.count {
+                            // A 404 with another mirror still to try is a host problem (e.g. cf.hamreus.com
+                            // dropping files), not a missing page: only count it once every host has said 404.
                             if let stopMessage = self.noteImageFailure(itemID: itemID, host: candidate.host?.lowercased(), kind: .notFound) {
                                 throw DownloadCircuitBreakError(message: stopMessage)
                             }
@@ -1705,9 +1707,7 @@ final class DownloadCoordinator: ObservableObject {
     }
 
     private func sanitize(_ value: String) -> String {
-        let forbidden = CharacterSet(charactersIn: "\\/:*?\"<>|")
-        let comps = value.components(separatedBy: forbidden)
-        return comps.joined(separator: "_").trimmingCharacters(in: .whitespacesAndNewlines)
+        DownloadOutputLayout.sanitize(value)
     }
 
     private func retrying<T>(

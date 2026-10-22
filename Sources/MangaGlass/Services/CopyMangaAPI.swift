@@ -587,23 +587,23 @@ final class CopyMangaAPI: @unchecked Sendable {
             fetchComic: { [weak self] slug, site, cookie in
                 guard let self else { throw CopyMangaError.unexpectedPayload }
                 self.log("使用网页解析分支：包子漫画")
-                let url = site.webBase.appendingPathComponent("comic/\(slug)")
-                let html = try await self.getHTML(url: url, cookie: cookie, site: site, retryTimes: 2)
+                let (html, _) = try await self.fetchBaoziHTML(cookie: cookie, label: "目录") { base in
+                    base.webBase.appendingPathComponent("comic/\(slug)")
+                }
                 return try self.parseBaoziComicHTML(html, slug: slug, site: site)
             },
             fetchImageURLs: { [weak self] slug, chapterUUID, chapterName, site, cookie in
                 guard let self else { throw CopyMangaError.unexpectedPayload }
-                guard let url = self.baoziChapterURL(chapterUUID: chapterUUID, slug: slug, site: site) else {
-                    throw CopyMangaError.invalidURL
-                }
                 self.log("章节图片解析：包子漫画 \(chapterName)")
-                let html = try await self.getHTML(url: url, cookie: cookie, site: site, retryTimes: 2)
-                let urls = self.parseBaoziImageURLs(html, site: site)
+                let (html, mirror) = try await self.fetchBaoziHTML(cookie: cookie, label: chapterName) { base in
+                    self.baoziChapterURL(chapterUUID: chapterUUID, slug: slug, base: base.webBase)
+                }
+                let urls = self.parseBaoziImageURLs(html, site: mirror)
                 guard !urls.isEmpty else { throw CopyMangaError.noImageInChapter(chapterName) }
                 return urls
             },
             imageRefererURL: { [weak self] slug, chapterUUID, site in
-                self?.baoziChapterURL(chapterUUID: chapterUUID, slug: slug, site: site) ?? site.webBase
+                self?.baoziChapterURL(chapterUUID: chapterUUID, slug: slug, base: Self.baoziMirrors[0].webBase) ?? site.webBase
             }
         )
     }
@@ -704,10 +704,60 @@ final class CopyMangaAPI: @unchecked Sendable {
         return urls
     }
 
-    private func baoziChapterURL(chapterUUID: String, slug: String, site: MangaSiteConfig) -> URL? {
-        if let url = URL(string: chapterUUID), url.scheme != nil { return url }
-        if let url = URL(string: chapterUUID, relativeTo: site.webBase)?.absoluteURL { return url }
-        return site.webBase.appendingPathComponent("comic/\(slug)")
+    /// Page hosts for 包子漫画, tried in order. www.baozimh.com now answers non-browsers with a
+    /// JavaScript check ("正在验证浏览器", HTTP 403); twmanga.com serves the same pages and chapter
+    /// redirects. The site config (and saved queues) keep baozimh.com; only requests are routed.
+    static let baoziMirrors: [MangaSiteConfig] = ["https://www.twmanga.com", "https://www.baozimh.com"].map {
+        MangaSiteConfig(displayName: "包子漫画", webBase: URL(string: $0)!, apiBaseURLs: [URL(string: $0)!])
+    }
+
+    /// A chapter link on the given page host: relative links resolve against it, and absolute links
+    /// on another 包子 host are moved onto it.
+    func baoziChapterURL(chapterUUID: String, slug: String, base: URL) -> URL? {
+        if let absolute = MGURL.lenient(chapterUUID), absolute.scheme != nil {
+            guard let host = absolute.host?.lowercased(), Self.isBaoziPageHost(host),
+                  var components = URLComponents(url: absolute, resolvingAgainstBaseURL: false) else { return absolute }
+            components.host = base.host
+            return components.url ?? absolute
+        }
+        if let relative = MGURL.lenient(chapterUUID, relativeTo: base) { return relative }
+        return base.appendingPathComponent("comic/\(slug)")
+    }
+
+    private static func isBaoziPageHost(_ host: String) -> Bool {
+        host.hasSuffix("baozimh.com") || host.hasSuffix("twmanga.com")
+    }
+
+    static func isBaoziBrowserCheck(_ text: String) -> Bool {
+        text.contains("gatekeeperChallenge") || text.contains("正在验证浏览器") || text.contains("正在驗證瀏覽器")
+    }
+
+    /// Fetches a 包子 page from the first mirror that serves real content; a browser-check page or
+    /// a blocked/unreachable host moves on to the next mirror.
+    private func fetchBaoziHTML(
+        cookie: String?,
+        label: String,
+        url: (MangaSiteConfig) -> URL?
+    ) async throws -> (String, MangaSiteConfig) {
+        var lastError: Error = CopyMangaError.invalidURL
+        for mirror in Self.baoziMirrors {
+            guard let target = url(mirror) else { continue }
+            do {
+                let html = try await getHTML(url: target, cookie: cookie, site: mirror, retryTimes: 2)
+                if Self.isBaoziBrowserCheck(html) {
+                    log("包子漫画：\(mirror.webBase.host ?? "-") 返回浏览器验证页，换下一个域名（\(label)）")
+                    lastError = CopyMangaError.parseBlocked("包子漫画要求浏览器验证")
+                    continue
+                }
+                return (html, mirror)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+                log("包子漫画：\(mirror.webBase.host ?? "-") 请求失败，换下一个域名（\(label)）：\(error.localizedDescription)")
+            }
+        }
+        throw lastError
     }
 
     private func normalizeSiteError(_ error: Error, site: MangaSiteConfig, phase: String) -> CopyMangaError {
@@ -1104,7 +1154,7 @@ final class CopyMangaAPI: @unchecked Sendable {
             usedPaths.append("next-links")
             probeRequestCount += 1
             log("Copy 网页解析：识别到“开始阅读”入口，尝试通过章节链恢复")
-            if let entryURL = URL(string: String(shareEntry.id.dropFirst(5))) {
+            if let entryURL = MGURL.lenient(String(shareEntry.id.dropFirst(5))) {
                 let crawled = try await crawlCopyChaptersByNextLinks(
                     from: entryURL,
                     slug: slug,
@@ -1128,7 +1178,7 @@ final class CopyMangaAPI: @unchecked Sendable {
         // Walking "下一话" costs one request per chapter; never do it when the endpoint answered.
         if detailUnavailable,
            let shareEntry = parseCopyShareEntryChapter(html: html, slug: slug, site: site),
-           let entryURL = URL(string: String(shareEntry.id.dropFirst(5))),
+           let entryURL = MGURL.lenient(String(shareEntry.id.dropFirst(5))),
            Self.shouldCrawlCopyNextLinks(
                currentCount: volumes.reduce(0, { $0 + $1.chapters.count }),
                expectedChapters: expectedChapters,
@@ -1994,7 +2044,7 @@ final class CopyMangaAPI: @unchecked Sendable {
     ) async throws -> [URL] {
         if chapterID.hasPrefix("url::") {
             let raw = String(chapterID.dropFirst(5))
-            if let directURL = URL(string: raw) {
+            if let directURL = MGURL.lenient(raw) {
                 log("Copy 图片解析：使用分享入口页面 \(directURL.absoluteString)")
                 let html = try await getHTML(url: directURL, cookie: cookie, site: site, retryTimes: 1)
                 let urls = parseCopyImageURLs(html: html, site: site, slugHint: slug)
@@ -3064,7 +3114,9 @@ final class CopyMangaAPI: @unchecked Sendable {
                 url = normalizedURL(file, site: site)
             } else if let effectiveHost {
                 let prefix = normalizedPath.isEmpty ? "" : "/\(normalizedPath)"
-                url = URL(string: "\(effectiveHost)\(prefix)/\(file)")
+                // The folder arrives raw (番外篇13) and file names often already encoded
+                // (IMG_5052%E5%89%AF…); encode each character once.
+                url = MGURL.lenient("\(effectiveHost)\(prefix)/\(file)")
             } else {
                 var combined = normalizedPath
                 if !combined.isEmpty {
@@ -3715,10 +3767,10 @@ final class CopyMangaAPI: @unchecked Sendable {
 
     private func normalizedURL(_ raw: String?, site: MangaSiteConfig) -> URL? {
         guard let raw, !raw.isEmpty else { return nil }
-        if raw.hasPrefix("//") { return URL(string: "https:\(raw)") }
-        if raw.hasPrefix("http://") || raw.hasPrefix("https://") { return URL(string: raw) }
-        if raw.hasPrefix("/") { return URL(string: site.webBase.absoluteString + raw) }
-        return URL(string: raw)
+        if raw.hasPrefix("//") { return MGURL.lenient("https:\(raw)") }
+        if raw.hasPrefix("http://") || raw.hasPrefix("https://") { return MGURL.lenient(raw) }
+        if raw.hasPrefix("/") { return MGURL.lenient(site.webBase.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + raw) }
+        return MGURL.lenient(raw)
     }
 
     private func retrying<T>(times: Int, operation: @escaping () async throws -> T) async throws -> T {

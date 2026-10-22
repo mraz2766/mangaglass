@@ -151,12 +151,19 @@ enum DownloadOutputLayout {
         }
     }
 
+    /// Folder/file name safe for macOS: forbidden characters become `_`; no leading dot (it would
+    /// hide the folder); never empty; at most 200 UTF-8 bytes (the limit is 255).
     static func sanitize(_ value: String) -> String {
-        let forbidden = CharacterSet(charactersIn: "\\/:*?\"<>|")
-        return value
+        let forbidden = CharacterSet(charactersIn: "\\/:*?\"<>|").union(.controlCharacters)
+        var name = value
             .components(separatedBy: forbidden)
             .joined(separator: "_")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        while name.hasPrefix(".") { name.removeFirst() }
+        name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { name = "未命名" }
+        while name.utf8.count > 200 { name.removeLast() }
+        return name
     }
 
     private static func matchesComicFolderName(_ folderURL: URL, comicName: String) -> Bool {
